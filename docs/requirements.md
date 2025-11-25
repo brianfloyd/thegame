@@ -35,10 +35,20 @@ thegame/
   - **Resources**: `hit_points` (default 50), `max_hit_points` (default 50), `mana` (default 0), `max_mana` (default 0)
 - Database migration: Automatically adds new columns to existing databases
 - Insert initial data:
-  - Room 1: name="town square", description="You stand in the center of a bustling town square...", x=0, y=0 (center)
-  - Room 2: name="northern room", description="You find yourself in a quiet northern chamber...", x=0, y=1 (north)
-  - Room 3: name="southern room", description="You enter a warm southern chamber...", x=0, y=-1 (south)
+  - **Map Structure**: 20x20 grid (coordinates -10 to +9)
+    - **Perimeter Rooms**: Outer square boundary
+      - Westwall Street (x = -10): 20 rooms along western edge
+      - Eastwall Street (x = 9): 20 rooms along eastern edge
+      - North Street (y = 9): 20 rooms along northern edge
+      - South Street (y = -10): 20 rooms along southern edge
+    - **Center Street**: Vertical road (x = 0) connecting north to south
+      - 20 rooms total, including the 3 original special rooms
+      - Town Square at (0, 0) - center intersection
+      - Northern Room at (0, 1) - on Center Street
+      - Southern Room at (0, -1) - on Center Street
+  - **Total Rooms**: ~80 rooms (perimeter + center street, with corner overlap)
   - Players: "Fliz" and "Hebron" (both start in town square, current_room_id=1)
+  - **Database Cleanup**: Automatic migration removes invalid rooms (district/interior rooms) while preserving player data
   - **Player Stats**:
     - Fliz: All stats 10, all abilities 0, 50/50 HP, 0 Mana (not a caster)
     - Hebron: All stats 10, all abilities 0, 50/50 HP, 10/10 Mana
@@ -72,7 +82,8 @@ thegame/
   - **Right 1/3**: Divided into 4 quadrants
     - Top-left quadrant: Player Stats widget
     - Top-right quadrant: Compass widget
-    - Bottom quadrants: Reserved for future features
+    - Bottom-left quadrant: Map widget (25x25 grid view)
+    - Bottom-right quadrant: Reserved for future features
 - Text terminal displays:
   - Room name (yellow, uppercase)
   - Room description (green, formatted text)
@@ -136,6 +147,13 @@ thegame/
   - Room name, description, and players displayed in terminal
   - Auto-scroll to bottom on updates
   - Error messages displayed in terminal
+- Map display:
+  - 25x25 grid view centered on player's current room
+  - Rooms displayed as squares (current room highlighted in green with yellow border)
+  - Connection lines between adjacent rooms in all 8 directions
+  - Automatically re-centers when player moves
+  - Canvas-based rendering with retro terminal aesthetic
+  - Shows all rooms within 25x25 viewport
 - Player stats display:
   - Receives player stats from server on connection
   - Displays all 5 attributes (Brute Strength, Life Force, Cunning, Intelligence, Wisdom)
@@ -154,6 +172,8 @@ thegame/
   - `{ type: 'playerLeft', playerName: 'Fliz' }` - when someone leaves current room
   - `{ type: 'moved', room: { id, name, description, x, y }, players: [...], exits: {...} }` - when player successfully moves to new room
   - `{ type: 'playerStats', stats: { bruteStrength, lifeForce, cunning, intelligence, wisdom, crafting, lockpicking, stealth, dodge, criticalHit, hitPoints, maxHitPoints, mana, maxMana } }` - player stats sent on connection
+  - `{ type: 'mapData', rooms: [{ id, name, x, y }, ...], currentRoom: { x, y } }` - all rooms data sent on connection
+  - `{ type: 'mapUpdate', currentRoom: { x, y } }` - map position update when player moves
   - `{ type: 'error', message: 'Ouch! You walked into the wall to the east.' }` - error messages
 
 ## Key Files
@@ -193,6 +213,11 @@ thegame/
   - Abilities section (5 abilities)
   - Hit Points bar with current/max display
   - Mana bar with current/max display (caster only)
+- **Map**: 25x25 grid view in bottom-left quadrant
+  - Shows rooms as squares with connection lines
+  - Current room highlighted (green with yellow border)
+  - Automatically centers on player
+  - Displays all rooms within viewport
 - **Compass**: Visual navigation widget with all directions visible
 - **Commands**: Text-based with multiple input formats
 - **Player List**: Inline display with automatic "No one else is here." management
@@ -223,12 +248,42 @@ thegame/
 - **Fliz**: Non-caster, 0 Mana
 - **Hebron**: Caster, 10/10 Mana
 
+## Map System
+
+### Structure
+- **20x20 Grid**: Coordinates range from -10 to +9 in both X and Y directions
+- **Perimeter**: Outer square boundary roads
+  - Westwall Street (x = -10): Western boundary
+  - Eastwall Street (x = 9): Eastern boundary
+  - North Street (y = 9): Northern boundary
+  - South Street (y = -10): Southern boundary
+- **Center Street**: Vertical road (x = 0) connecting north to south
+  - Passes through Town Square at center (0, 0)
+  - Includes original special rooms (Northern Room, Southern Room)
+
+### Map Widget Features
+- **25x25 Viewport**: Shows 25x25 grid area centered on player
+- **Dynamic Centering**: Automatically re-centers when player moves
+- **Room Visualization**: 
+  - Rooms as squares (8x8 pixels)
+  - Current room: Green fill with yellow border
+  - Other rooms: Gray fill with dark border
+- **Connection Lines**: Gray lines connecting adjacent rooms in all 8 directions
+- **Coordinate System**: Y-axis properly inverted (north = up on screen)
+
+### Database Management
+- **Automatic Cleanup**: Removes invalid rooms (not on perimeter or center street)
+- **Player Safety**: Moves players to Town Square before deleting their current room
+- **Migration**: Handles existing databases gracefully
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database
 - Additional UI panels in remaining quadrants
-- More rooms and expanded world map
+- Expanded world map with more areas
 - Additional player commands and interactions
 - Ability calculation algorithms based on stats and game elements
 - Stat progression and leveling system
 - Combat system utilizing stats and abilities
+- Map zoom and pan controls
+- Room labels on map
