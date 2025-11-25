@@ -128,6 +128,22 @@ wss.on('connection', (ws) => {
           }
         }));
 
+        // Send map data
+        const allRooms = db.getAllRooms();
+        ws.send(JSON.stringify({
+          type: 'mapData',
+          rooms: allRooms.map(r => ({
+            id: r.id,
+            name: r.name,
+            x: r.x,
+            y: r.y
+          })),
+          currentRoom: {
+            x: room.x,
+            y: room.y
+          }
+        }));
+
         // Notify others in the room
         broadcastToRoom(room.id, {
           type: 'playerJoined',
@@ -244,6 +260,15 @@ wss.on('connection', (ws) => {
             },
             players: playersInNewRoom,
             exits: exits
+          }));
+
+          // Update map with new current room
+          playerData.ws.send(JSON.stringify({
+            type: 'mapUpdate',
+            currentRoom: {
+              x: targetRoom.x,
+              y: targetRoom.y
+            }
           }));
         }
 

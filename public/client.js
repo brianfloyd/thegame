@@ -47,6 +47,12 @@ function handleMessage(data) {
         case 'playerStats':
             updatePlayerStats(data.stats);
             break;
+        case 'mapData':
+            initializeMap(data.rooms, data.currentRoom);
+            break;
+        case 'mapUpdate':
+            updateMapPosition(data.currentRoom);
+            break;
         case 'error':
             addToTerminal('Error: ' + data.message, 'error');
             break;
@@ -440,6 +446,150 @@ function updatePlayerStats(stats) {
         statsContent.appendChild(manaSection);
     }
 }
+
+// Map rendering variables
+let mapRooms = [];
+let currentRoomPos = { x: 0, y: 0 };
+let mapCanvas = null;
+let mapCtx = null;
+const MAP_SIZE = 25; // 25x25 grid
+const CELL_SIZE = 8; // Size of each cell in pixels
+
+// Initialize map
+function initializeMap(rooms, currentRoom) {
+    mapRooms = rooms;
+    currentRoomPos = { x: currentRoom.x, y: currentRoom.y };
+    
+    mapCanvas = document.getElementById('mapCanvas');
+    if (!mapCanvas) return;
+    
+    mapCtx = mapCanvas.getContext('2d');
+    
+    // Set canvas size
+    const viewport = document.querySelector('.map-viewport');
+    if (viewport) {
+        mapCanvas.width = viewport.clientWidth;
+        mapCanvas.height = viewport.clientHeight;
+    }
+    
+    renderMap();
+}
+
+// Update map position when player moves
+function updateMapPosition(newRoom) {
+    currentRoomPos = { x: newRoom.x, y: newRoom.y };
+    if (mapCanvas && mapCtx) {
+        renderMap();
+    }
+}
+
+// Render the map
+function renderMap() {
+    if (!mapCanvas || !mapCtx) return;
+    
+    // Clear canvas
+    mapCtx.fillStyle = '#0a0a0a';
+    mapCtx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+    
+    // Calculate viewport bounds (centered on player)
+    const centerX = Math.floor(MAP_SIZE / 2);
+    const centerY = Math.floor(MAP_SIZE / 2);
+    
+    const minX = currentRoomPos.x - centerX;
+    const maxX = currentRoomPos.x + centerX;
+    const minY = currentRoomPos.y - centerY;
+    const maxY = currentRoomPos.y + centerY;
+    
+    // Create a map of rooms by coordinates
+    const roomMap = new Map();
+    mapRooms.forEach(room => {
+        roomMap.set(`${room.x},${room.y}`, room);
+    });
+    
+    // Draw grid and rooms
+    const offsetX = (mapCanvas.width - MAP_SIZE * CELL_SIZE) / 2;
+    const offsetY = (mapCanvas.height - MAP_SIZE * CELL_SIZE) / 2;
+    
+    // Draw connections first (so they appear behind rooms)
+    mapCtx.strokeStyle = '#333';
+    mapCtx.lineWidth = 1;
+    
+    mapRooms.forEach(room => {
+        if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
+            // Flip Y coordinate (screen Y increases downward, game Y increases upward)
+            const screenX = offsetX + (room.x - minX) * CELL_SIZE;
+            const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
+            const roomCenterX = screenX + CELL_SIZE / 2;
+            const roomCenterY = screenY + CELL_SIZE / 2;
+            
+            // Check for adjacent rooms and draw connections
+            const directions = [
+                { dx: 0, dy: -1 }, // N
+                { dx: 1, dy: -1 }, // NE
+                { dx: 1, dy: 0 },  // E
+                { dx: 1, dy: 1 },  // SE
+                { dx: 0, dy: 1 },  // S
+                { dx: -1, dy: 1 }, // SW
+                { dx: -1, dy: 0 }, // W
+                { dx: -1, dy: -1 } // NW
+            ];
+            
+            directions.forEach(dir => {
+                const adjX = room.x + dir.dx;
+                const adjY = room.y + dir.dy;
+                const adjKey = `${adjX},${adjY}`;
+                
+                if (roomMap.has(adjKey)) {
+                    const adjRoom = roomMap.get(adjKey);
+                    if (adjRoom.x >= minX && adjRoom.x <= maxX && adjRoom.y >= minY && adjRoom.y <= maxY) {
+                        const adjScreenX = offsetX + (adjRoom.x - minX) * CELL_SIZE;
+                        const adjScreenY = offsetY + (maxY - adjRoom.y) * CELL_SIZE;
+                        const adjCenterX = adjScreenX + CELL_SIZE / 2;
+                        const adjCenterY = adjScreenY + CELL_SIZE / 2;
+                        
+                        mapCtx.beginPath();
+                        mapCtx.moveTo(roomCenterX, roomCenterY);
+                        mapCtx.lineTo(adjCenterX, adjCenterY);
+                        mapCtx.stroke();
+                    }
+                }
+            });
+        }
+    });
+    
+    // Draw rooms
+    mapRooms.forEach(room => {
+        if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
+            // Flip Y coordinate (screen Y increases downward, game Y increases upward)
+            const screenX = offsetX + (room.x - minX) * CELL_SIZE;
+            const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
+            
+            // Check if this is the current room
+            const isCurrentRoom = room.x === currentRoomPos.x && room.y === currentRoomPos.y;
+            
+            // Draw room square
+            mapCtx.fillStyle = isCurrentRoom ? '#00ff00' : '#666';
+            mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+            
+            // Draw border
+            mapCtx.strokeStyle = isCurrentRoom ? '#ffff00' : '#333';
+            mapCtx.lineWidth = isCurrentRoom ? 2 : 1;
+            mapCtx.strokeRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        }
+    });
+}
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    if (mapCanvas && mapCtx) {
+        const viewport = document.querySelector('.map-viewport');
+        if (viewport) {
+            mapCanvas.width = viewport.clientWidth;
+            mapCanvas.height = viewport.clientHeight;
+            renderMap();
+        }
+    }
+});
 
 // Initialize WebSocket connection when page loads
 connectWebSocket();
