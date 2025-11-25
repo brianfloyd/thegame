@@ -44,6 +44,9 @@ function handleMessage(data) {
         case 'moved':
             updateRoomView(data.room, data.players, data.exits);
             break;
+        case 'playerStats':
+            updatePlayerStats(data.stats);
+            break;
         case 'error':
             addToTerminal('Error: ' + data.message, 'error');
             break;
@@ -310,6 +313,132 @@ function movePlayer(direction) {
         type: 'move',
         direction: direction
     }));
+}
+
+// Update player stats display
+function updatePlayerStats(stats) {
+    const statsContent = document.getElementById('playerStatsContent');
+    if (!statsContent) return;
+    
+    statsContent.innerHTML = '';
+    
+    // Stats Section
+    const statsSection = document.createElement('div');
+    statsSection.className = 'stats-section';
+    
+    const statsTitle = document.createElement('div');
+    statsTitle.className = 'stats-section-title';
+    statsTitle.textContent = 'Attributes';
+    statsSection.appendChild(statsTitle);
+    
+    const statItems = [
+        { label: 'Brute Strength', value: stats.bruteStrength },
+        { label: 'Life Force', value: stats.lifeForce },
+        { label: 'Cunning', value: stats.cunning },
+        { label: 'Intelligence', value: stats.intelligence },
+        { label: 'Wisdom', value: stats.wisdom }
+    ];
+    
+    statItems.forEach(stat => {
+        const item = document.createElement('div');
+        item.className = 'stat-item';
+        const label = document.createElement('span');
+        label.className = 'stat-label';
+        label.textContent = stat.label + ':';
+        const value = document.createElement('span');
+        value.className = 'stat-value';
+        value.textContent = stat.value;
+        item.appendChild(label);
+        item.appendChild(value);
+        statsSection.appendChild(item);
+    });
+    
+    statsContent.appendChild(statsSection);
+    
+    // Abilities Section
+    const abilitiesSection = document.createElement('div');
+    abilitiesSection.className = 'stats-section';
+    
+    const abilitiesTitle = document.createElement('div');
+    abilitiesTitle.className = 'stats-section-title';
+    abilitiesTitle.textContent = 'Abilities';
+    abilitiesSection.appendChild(abilitiesTitle);
+    
+    const abilityItems = [
+        { label: 'Crafting', value: stats.crafting },
+        { label: 'Lockpicking', value: stats.lockpicking },
+        { label: 'Stealth', value: stats.stealth },
+        { label: 'Dodge', value: stats.dodge },
+        { label: 'Critical Hit', value: stats.criticalHit }
+    ];
+    
+    abilityItems.forEach(ability => {
+        const item = document.createElement('div');
+        item.className = 'stat-item';
+        const label = document.createElement('span');
+        label.className = 'stat-label';
+        label.textContent = ability.label + ':';
+        const value = document.createElement('span');
+        value.className = 'stat-value';
+        value.textContent = ability.value;
+        item.appendChild(label);
+        item.appendChild(value);
+        abilitiesSection.appendChild(item);
+    });
+    
+    statsContent.appendChild(abilitiesSection);
+    
+    // Hit Points Section
+    const hpSection = document.createElement('div');
+    hpSection.className = 'stats-section';
+    
+    const hpTitle = document.createElement('div');
+    hpTitle.className = 'stats-section-title';
+    hpTitle.textContent = 'Hit Points';
+    hpSection.appendChild(hpTitle);
+    
+    const hpValue = document.createElement('div');
+    hpValue.className = 'stat-item';
+    hpValue.innerHTML = `<span class="stat-value">${stats.hitPoints}/${stats.maxHitPoints}</span>`;
+    hpSection.appendChild(hpValue);
+    
+    const hpBar = document.createElement('div');
+    hpBar.className = 'hp-bar';
+    const hpFill = document.createElement('div');
+    hpFill.className = 'hp-fill';
+    const hpPercent = (stats.hitPoints / stats.maxHitPoints) * 100;
+    hpFill.style.width = hpPercent + '%';
+    hpBar.appendChild(hpFill);
+    hpSection.appendChild(hpBar);
+    
+    statsContent.appendChild(hpSection);
+    
+    // Mana Section (only if player has mana)
+    if (stats.maxMana > 0) {
+        const manaSection = document.createElement('div');
+        manaSection.className = 'stats-section';
+        
+        const manaTitle = document.createElement('div');
+        manaTitle.className = 'stats-section-title';
+        manaTitle.textContent = 'Mana';
+        manaSection.appendChild(manaTitle);
+        
+        const manaValue = document.createElement('div');
+        manaValue.className = 'stat-item';
+        manaValue.innerHTML = `<span class="stat-value">${stats.mana}/${stats.maxMana}</span>`;
+        manaSection.appendChild(manaValue);
+        
+        const manaBar = document.createElement('div');
+        manaBar.className = 'mana-bar';
+        const manaFill = document.createElement('div');
+        manaFill.className = 'mana-fill';
+        const manaPercent = (stats.mana / stats.maxMana) * 100;
+        manaFill.style.width = manaPercent + '%';
+        manaBar.appendChild(manaFill);
+        manaSection.appendChild(manaBar);
+        
+        statsContent.appendChild(manaSection);
+    }
 }
 
 // Initialize WebSocket connection when page loads

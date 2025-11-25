@@ -21,9 +21,51 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     current_room_id INTEGER NOT NULL,
+    brute_strength INTEGER DEFAULT 10,
+    life_force INTEGER DEFAULT 10,
+    cunning INTEGER DEFAULT 10,
+    intelligence INTEGER DEFAULT 10,
+    wisdom INTEGER DEFAULT 10,
+    crafting INTEGER DEFAULT 0,
+    lockpicking INTEGER DEFAULT 0,
+    stealth INTEGER DEFAULT 0,
+    dodge INTEGER DEFAULT 0,
+    critical_hit INTEGER DEFAULT 0,
+    hit_points INTEGER DEFAULT 50,
+    max_hit_points INTEGER DEFAULT 50,
+    mana INTEGER DEFAULT 0,
+    max_mana INTEGER DEFAULT 0,
     FOREIGN KEY (current_room_id) REFERENCES rooms(id)
   )
 `);
+
+// Add new columns to existing table if they don't exist (for migration)
+const addColumnIfNotExists = (columnName, defaultValue) => {
+  try {
+    db.exec(`ALTER TABLE players ADD COLUMN ${columnName} INTEGER DEFAULT ${defaultValue}`);
+  } catch (err) {
+    // Column already exists, ignore error
+    if (!err.message.includes('duplicate column name')) {
+      throw err;
+    }
+  }
+};
+
+// Migrate existing table
+addColumnIfNotExists('brute_strength', 10);
+addColumnIfNotExists('life_force', 10);
+addColumnIfNotExists('cunning', 10);
+addColumnIfNotExists('intelligence', 10);
+addColumnIfNotExists('wisdom', 10);
+addColumnIfNotExists('crafting', 0);
+addColumnIfNotExists('lockpicking', 0);
+addColumnIfNotExists('stealth', 0);
+addColumnIfNotExists('dodge', 0);
+addColumnIfNotExists('critical_hit', 0);
+addColumnIfNotExists('hit_points', 50);
+addColumnIfNotExists('max_hit_points', 50);
+addColumnIfNotExists('mana', 0);
+addColumnIfNotExists('max_mana', 0);
 
 // Insert initial rooms if they don't exist
 const insertRoom = db.prepare(`
@@ -41,12 +83,51 @@ const townSquare = getTownSquare.get('town square');
 
 // Insert initial players if they don't exist
 const insertPlayer = db.prepare(`
-  INSERT OR IGNORE INTO players (name, current_room_id) 
-  VALUES (?, ?)
+  INSERT OR IGNORE INTO players (
+    name, current_room_id, 
+    brute_strength, life_force, cunning, intelligence, wisdom,
+    crafting, lockpicking, stealth, dodge, critical_hit,
+    hit_points, max_hit_points, mana, max_mana
+  ) 
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-insertPlayer.run('Fliz', townSquare.id);
-insertPlayer.run('Hebron', townSquare.id);
+// Update existing players with stats if they don't have them set
+const updatePlayerStats = db.prepare(`
+  UPDATE players SET
+    brute_strength = COALESCE(brute_strength, 10),
+    life_force = COALESCE(life_force, 10),
+    cunning = COALESCE(cunning, 10),
+    intelligence = COALESCE(intelligence, 10),
+    wisdom = COALESCE(wisdom, 10),
+    crafting = COALESCE(crafting, 0),
+    lockpicking = COALESCE(lockpicking, 0),
+    stealth = COALESCE(stealth, 0),
+    dodge = COALESCE(dodge, 0),
+    critical_hit = COALESCE(critical_hit, 0),
+    hit_points = COALESCE(hit_points, 50),
+    max_hit_points = COALESCE(max_hit_points, 50),
+    mana = COALESCE(mana, 0),
+    max_mana = COALESCE(max_mana, 0)
+  WHERE name = ?
+`);
+
+// Set specific values for Fliz and Hebron
+const setPlayerStats = db.prepare(`
+  UPDATE players SET
+    brute_strength = ?, life_force = ?, cunning = ?, intelligence = ?, wisdom = ?,
+    crafting = ?, lockpicking = ?, stealth = ?, dodge = ?, critical_hit = ?,
+    hit_points = ?, max_hit_points = ?, mana = ?, max_mana = ?
+  WHERE name = ?
+`);
+
+// Fliz: 50/50 HP, 0 Mana (not a caster)
+insertPlayer.run('Fliz', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0);
+setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0, 'Fliz');
+
+// Hebron: 50/50 HP, 10/10 Mana
+insertPlayer.run('Hebron', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
+setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 'Hebron');
 
 // Database query functions
 const getRoomById = db.prepare('SELECT * FROM rooms WHERE id = ?');

@@ -107,6 +107,27 @@ wss.on('connection', (ws) => {
         // Send initial room update
         sendRoomUpdate(playerName, room);
 
+        // Send player stats
+        ws.send(JSON.stringify({
+          type: 'playerStats',
+          stats: {
+            bruteStrength: player.brute_strength,
+            lifeForce: player.life_force,
+            cunning: player.cunning,
+            intelligence: player.intelligence,
+            wisdom: player.wisdom,
+            crafting: player.crafting,
+            lockpicking: player.lockpicking,
+            stealth: player.stealth,
+            dodge: player.dodge,
+            criticalHit: player.critical_hit,
+            hitPoints: player.hit_points,
+            maxHitPoints: player.max_hit_points,
+            mana: player.mana,
+            maxMana: player.max_mana
+          }
+        }));
+
         // Notify others in the room
         broadcastToRoom(room.id, {
           type: 'playerJoined',
