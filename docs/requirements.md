@@ -28,12 +28,20 @@ thegame/
 ### 2. Database Setup (`database.js`)
 - Initialize SQLite database connection
 - Create `rooms` table with columns: `id`, `name`, `description`, `x`, `y` (coordinate-based map)
-- Create `players` table with columns: `id`, `name` (unique constraint), `current_room_id` (foreign key to rooms)
+- Create `players` table with columns:
+  - Basic: `id`, `name` (unique constraint), `current_room_id` (foreign key to rooms)
+  - **Stats** (all default 10): `brute_strength`, `life_force`, `cunning`, `intelligence`, `wisdom`
+  - **Abilities** (all default 0): `crafting`, `lockpicking`, `stealth`, `dodge`, `critical_hit`
+  - **Resources**: `hit_points` (default 50), `max_hit_points` (default 50), `mana` (default 0), `max_mana` (default 0)
+- Database migration: Automatically adds new columns to existing databases
 - Insert initial data:
   - Room 1: name="town square", description="You stand in the center of a bustling town square...", x=0, y=0 (center)
   - Room 2: name="northern room", description="You find yourself in a quiet northern chamber...", x=0, y=1 (north)
   - Room 3: name="southern room", description="You enter a warm southern chamber...", x=0, y=-1 (south)
   - Players: "Fliz" and "Hebron" (both start in town square, current_room_id=1)
+  - **Player Stats**:
+    - Fliz: All stats 10, all abilities 0, 50/50 HP, 0 Mana (not a caster)
+    - Hebron: All stats 10, all abilities 0, 50/50 HP, 10/10 Mana
 - Enhanced room descriptions with detailed narrative text
 
 ### 3. Server Setup (`server.js`)
@@ -48,6 +56,7 @@ thegame/
   - Broadcast player movement events when players change rooms
   - Handle player selection and room entry messages
   - Only show connected players in room (not all players from database)
+  - Send player stats to client on connection via WebSocket
 - Movement logic: 
   - Calculate target coordinates (N: y+1, S: y-1, E: x+1, W: x-1, NE: x+1,y+1, etc.)
   - Query database for room at those coordinates
@@ -61,8 +70,9 @@ thegame/
 - Game view with split layout:
   - **Left 2/3**: Text terminal (MUD-style interface)
   - **Right 1/3**: Divided into 4 quadrants
+    - Top-left quadrant: Player Stats widget
     - Top-right quadrant: Compass widget
-    - Other quadrants: Reserved for future features
+    - Bottom quadrants: Reserved for future features
 - Text terminal displays:
   - Room name (yellow, uppercase)
   - Room description (green, formatted text)
@@ -83,12 +93,20 @@ thegame/
   - Command line with prompt
 - Right panel (1/3 width):
   - 4-quadrant grid layout
+  - Player Stats widget in top-left quadrant
   - Compass widget in top-right quadrant
-  - Smaller compass buttons (35px) for compact display
+  - Smaller widgets (max-width 200px) for compact display
 - Compass button states:
   - Available: Bright green border and text
   - Unavailable: Lowlighted (40% opacity, dark colors) but still visible
   - All buttons always visible for centered appearance
+- Player Stats widget styling:
+  - Retro terminal aesthetic matching game theme
+  - Green borders and text (#00ff00)
+  - Yellow section titles (#ffff00)
+  - Cyan stat labels (#00ffff)
+  - Visual HP bar (red) and Mana bar (blue)
+  - Compact layout with organized sections
 - Responsive design for smaller screens
 
 ### 6. Frontend WebSocket Client (`public/client.js`)
@@ -118,6 +136,13 @@ thegame/
   - Room name, description, and players displayed in terminal
   - Auto-scroll to bottom on updates
   - Error messages displayed in terminal
+- Player stats display:
+  - Receives player stats from server on connection
+  - Displays all 5 attributes (Brute Strength, Life Force, Cunning, Intelligence, Wisdom)
+  - Displays all 5 abilities (Crafting, Lockpicking, Stealth, Dodge, Critical Hit)
+  - Shows Hit Points with current/max and visual bar
+  - Shows Mana with current/max and visual bar (only if maxMana > 0)
+  - Updates automatically when stats change
 
 ### 7. WebSocket Message Protocol
 - Client → Server:
@@ -128,6 +153,7 @@ thegame/
   - `{ type: 'playerJoined', playerName: 'Hebron' }` - when someone joins current room
   - `{ type: 'playerLeft', playerName: 'Fliz' }` - when someone leaves current room
   - `{ type: 'moved', room: { id, name, description, x, y }, players: [...], exits: {...} }` - when player successfully moves to new room
+  - `{ type: 'playerStats', stats: { bruteStrength, lifeForce, cunning, intelligence, wisdom, crafting, lockpicking, stealth, dodge, criticalHit, hitPoints, maxHitPoints, mana, maxMana } }` - player stats sent on connection
   - `{ type: 'error', message: 'Ouch! You walked into the wall to the east.' }` - error messages
 
 ## Key Files
@@ -162,11 +188,40 @@ thegame/
 
 - **Layout**: 2/3 terminal, 1/3 right panel (4 quadrants)
 - **Terminal**: Retro green-on-black text interface
+- **Player Stats**: Comprehensive stat display in top-left quadrant
+  - Attributes section (5 stats)
+  - Abilities section (5 abilities)
+  - Hit Points bar with current/max display
+  - Mana bar with current/max display (caster only)
 - **Compass**: Visual navigation widget with all directions visible
 - **Commands**: Text-based with multiple input formats
 - **Player List**: Inline display with automatic "No one else is here." management
 - **Error Messages**: Descriptive wall collision messages
 - **Real-time Updates**: Instant visibility of players entering/leaving rooms
+
+## Player Character System
+
+### Stats (Base 10 for all players)
+- **Brute Strength**: Physical power and melee damage potential
+- **Life Force**: Vitality and health capacity
+- **Cunning**: Deception and tactical thinking
+- **Intelligence**: Mental acuity and problem-solving
+- **Wisdom**: Insight and magical understanding
+
+### Abilities (Base 0, algorithm-driven later)
+- **Crafting**: Ability to create items
+- **Lockpicking**: Ability to open locks and containers
+- **Stealth**: Ability to move undetected
+- **Dodge**: Ability to avoid attacks
+- **Critical Hit**: Chance for enhanced damage
+
+### Resources
+- **Hit Points**: Current health (50/50 for both players)
+- **Mana**: Magical energy (0 for Fliz, 10/10 for Hebron)
+
+### Character Differences
+- **Fliz**: Non-caster, 0 Mana
+- **Hebron**: Caster, 10/10 Mana
 
 ## Future Enhancements (Prepared)
 
@@ -174,3 +229,6 @@ thegame/
 - Additional UI panels in remaining quadrants
 - More rooms and expanded world map
 - Additional player commands and interactions
+- Ability calculation algorithms based on stats and game elements
+- Stat progression and leveling system
+- Combat system utilizing stats and abilities
