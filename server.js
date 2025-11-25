@@ -17,17 +17,52 @@ const connectedPlayers = new Map();
 // Helper function to get available exits for a room
 function getExits(room) {
   const exits = {
-    north: db.getRoomByCoords(room.x, room.y + 1) !== undefined,
-    south: db.getRoomByCoords(room.x, room.y - 1) !== undefined,
-    east: db.getRoomByCoords(room.x + 1, room.y) !== undefined,
-    west: db.getRoomByCoords(room.x - 1, room.y) !== undefined,
-    northeast: db.getRoomByCoords(room.x + 1, room.y + 1) !== undefined,
-    northwest: db.getRoomByCoords(room.x - 1, room.y + 1) !== undefined,
-    southeast: db.getRoomByCoords(room.x + 1, room.y - 1) !== undefined,
-    southwest: db.getRoomByCoords(room.x - 1, room.y - 1) !== undefined,
+    north: false,
+    south: false,
+    east: false,
+    west: false,
+    northeast: false,
+    northwest: false,
+    southeast: false,
+    southwest: false,
     up: false, // Will be implemented when z coordinate is added
     down: false // Will be implemented when z coordinate is added
   };
+  
+  // Check for map connections first
+  if (room.connection_direction === 'N' && room.connected_map_id) {
+    exits.north = true;
+  }
+  if (room.connection_direction === 'S' && room.connected_map_id) {
+    exits.south = true;
+  }
+  if (room.connection_direction === 'E' && room.connected_map_id) {
+    exits.east = true;
+  }
+  if (room.connection_direction === 'W' && room.connected_map_id) {
+    exits.west = true;
+  }
+  
+  // Check for adjacent rooms in same map (only if no map connection in that direction)
+  if (!exits.north) {
+    exits.north = db.getRoomByCoords(room.map_id, room.x, room.y + 1) !== undefined;
+  }
+  if (!exits.south) {
+    exits.south = db.getRoomByCoords(room.map_id, room.x, room.y - 1) !== undefined;
+  }
+  if (!exits.east) {
+    exits.east = db.getRoomByCoords(room.map_id, room.x + 1, room.y) !== undefined;
+  }
+  if (!exits.west) {
+    exits.west = db.getRoomByCoords(room.map_id, room.x - 1, room.y) !== undefined;
+  }
+  
+  // Diagonal directions (no map connections for these yet)
+  exits.northeast = db.getRoomByCoords(room.map_id, room.x + 1, room.y + 1) !== undefined;
+  exits.northwest = db.getRoomByCoords(room.map_id, room.x - 1, room.y + 1) !== undefined;
+  exits.southeast = db.getRoomByCoords(room.map_id, room.x + 1, room.y - 1) !== undefined;
+  exits.southwest = db.getRoomByCoords(room.map_id, room.x - 1, room.y - 1) !== undefined;
+  
   return exits;
 }
 
@@ -52,6 +87,10 @@ function sendRoomUpdate(playerName, room) {
   // Only get connected players in the room, excluding the current player
   const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerName);
   const exits = getExits(room);
+  
+  // Get map name
+  const map = db.getMapById(room.map_id);
+  const mapName = map ? map.name : '';
 
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
@@ -60,7 +99,8 @@ function sendRoomUpdate(playerName, room) {
       name: room.name,
       description: room.description,
       x: room.x,
-      y: room.y
+      y: room.y,
+      mapName: mapName
     },
     players: playersInRoom,
     exits: exits
@@ -128,20 +168,65 @@ wss.on('connection', (ws) => {
           }
         }));
 
-        // Send map data
-        const allRooms = db.getAllRooms();
+        // Send map data (rooms from current map + preview of connected maps)
+        const mapRooms = db.getRoomsByMap(room.map_id);
+        const allRooms = mapRooms.map(r => ({
+          id: r.id,
+          name: r.name,
+          x: r.x,
+          y: r.y,
+          mapId: r.map_id
+        }));
+        
+        // Connection info for coordinate transformation
+        let connectionInfo = null;
+        
+        // If this room has a map connection, include preview rooms from connected map
+        if (room.connected_map_id) {
+          connectionInfo = {
+            direction: room.connection_direction,
+            currentMapX: room.x,
+            currentMapY: room.y,
+            connectedMapX: room.connected_room_x,
+            connectedMapY: room.connected_room_y
+          };
+          
+          const connectedMapRooms = db.getRoomsByMap(room.connected_map_id);
+          // Get rooms near the connection point (within 5 units)
+          // Always include the connection room itself
+          const connectionX = room.connected_room_x;
+          const connectionY = room.connected_room_y;
+          const previewRooms = connectedMapRooms
+            .filter(r => {
+              // Always include the exact connection room
+              if (r.x === connectionX && r.y === connectionY) return true;
+              // Include rooms within 5 units of connection
+              const dx = Math.abs(r.x - connectionX);
+              const dy = Math.abs(r.y - connectionY);
+              return dx <= 5 && dy <= 5;
+            })
+            .map(r => ({
+              id: r.id,
+              name: r.name,
+              x: r.x,
+              y: r.y,
+              mapId: r.map_id,
+              isPreview: true, // Mark as preview room
+              originalX: r.x,
+              originalY: r.y
+            }));
+          allRooms.push(...previewRooms);
+        }
+        
         ws.send(JSON.stringify({
           type: 'mapData',
-          rooms: allRooms.map(r => ({
-            id: r.id,
-            name: r.name,
-            x: r.x,
-            y: r.y
-          })),
+          rooms: allRooms,
           currentRoom: {
             x: room.x,
             y: room.y
-          }
+          },
+          mapId: room.map_id,
+          connectionInfo: connectionInfo
         }));
 
         // Notify others in the room
@@ -179,47 +264,63 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        // Calculate target coordinates
-        let targetX = currentRoom.x;
-        let targetY = currentRoom.y;
         const direction = data.direction.toUpperCase();
-
-        // Handle all direction variations
-        if (direction === 'N') {
-          targetY += 1;
-        } else if (direction === 'S') {
-          targetY -= 1;
-        } else if (direction === 'E') {
-          targetX += 1;
-        } else if (direction === 'W') {
-          targetX -= 1;
-        } else if (direction === 'NE') {
-          targetX += 1;
-          targetY += 1;
-        } else if (direction === 'NW') {
-          targetX -= 1;
-          targetY += 1;
-        } else if (direction === 'SE') {
-          targetX += 1;
-          targetY -= 1;
-        } else if (direction === 'SW') {
-          targetX -= 1;
-          targetY -= 1;
-        } else if (direction === 'U' || direction === 'UP') {
-          // Up/Down not yet implemented (requires z coordinate)
-          ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
-          return;
-        } else if (direction === 'D' || direction === 'DOWN') {
-          // Up/Down not yet implemented (requires z coordinate)
-          ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
-          return;
+        
+        // Check if current room has a map connection in this direction
+        let targetRoom = null;
+        let isMapTransition = false;
+        
+        if (currentRoom.connection_direction === direction && currentRoom.connected_map_id) {
+          // This is a map transition
+          isMapTransition = true;
+          targetRoom = db.getRoomByCoords(
+            currentRoom.connected_map_id,
+            currentRoom.connected_room_x,
+            currentRoom.connected_room_y
+          );
         } else {
-          ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction' }));
-          return;
-        }
+          // Normal movement within same map
+          let targetX = currentRoom.x;
+          let targetY = currentRoom.y;
 
-        // Check if target room exists
-        const targetRoom = db.getRoomByCoords(targetX, targetY);
+          // Handle all direction variations
+          if (direction === 'N') {
+            targetY += 1;
+          } else if (direction === 'S') {
+            targetY -= 1;
+          } else if (direction === 'E') {
+            targetX += 1;
+          } else if (direction === 'W') {
+            targetX -= 1;
+          } else if (direction === 'NE') {
+            targetX += 1;
+            targetY += 1;
+          } else if (direction === 'NW') {
+            targetX -= 1;
+            targetY += 1;
+          } else if (direction === 'SE') {
+            targetX += 1;
+            targetY -= 1;
+          } else if (direction === 'SW') {
+            targetX -= 1;
+            targetY -= 1;
+          } else if (direction === 'U' || direction === 'UP') {
+            // Up/Down not yet implemented (requires z coordinate)
+            ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
+            return;
+          } else if (direction === 'D' || direction === 'DOWN') {
+            // Up/Down not yet implemented (requires z coordinate)
+            ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
+            return;
+          } else {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction' }));
+            return;
+          }
+
+          // Check if target room exists in same map
+          targetRoom = db.getRoomByCoords(currentRoom.map_id, targetX, targetY);
+        }
+        
         if (!targetRoom) {
           // Convert direction code to readable name
           const directionNames = {
@@ -248,6 +349,11 @@ wss.on('connection', (ws) => {
         // Only get connected players in the new room, excluding the current player
         const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== currentPlayerName);
         const exits = getExits(targetRoom);
+        
+        // Get map name
+        const map = db.getMapById(targetRoom.map_id);
+        const mapName = map ? map.name : '';
+        
         if (playerData.ws.readyState === WebSocket.OPEN) {
           playerData.ws.send(JSON.stringify({
             type: 'moved',
@@ -256,20 +362,80 @@ wss.on('connection', (ws) => {
               name: targetRoom.name,
               description: targetRoom.description,
               x: targetRoom.x,
-              y: targetRoom.y
+              y: targetRoom.y,
+              mapName: mapName
             },
             players: playersInNewRoom,
             exits: exits
           }));
 
-          // Update map with new current room
-          playerData.ws.send(JSON.stringify({
-            type: 'mapUpdate',
-            currentRoom: {
-              x: targetRoom.x,
-              y: targetRoom.y
+          // If this was a map transition, send new map data
+          if (isMapTransition) {
+            const newMapRooms = db.getRoomsByMap(targetRoom.map_id);
+            const allRooms = newMapRooms.map(r => ({
+              id: r.id,
+              name: r.name,
+              x: r.x,
+              y: r.y,
+              mapId: r.map_id
+            }));
+            
+            // Include connection info if this room has a connection back
+            let connectionInfo = null;
+            if (targetRoom.connected_map_id) {
+              connectionInfo = {
+                direction: targetRoom.connection_direction,
+                currentMapX: targetRoom.x,
+                currentMapY: targetRoom.y,
+                connectedMapX: targetRoom.connected_room_x,
+                connectedMapY: targetRoom.connected_room_y
+              };
+              
+              // Include preview rooms from connected map
+              const connectedMapRooms = db.getRoomsByMap(targetRoom.connected_map_id);
+              const connectionX = targetRoom.connected_room_x;
+              const connectionY = targetRoom.connected_room_y;
+              const previewRooms = connectedMapRooms
+                .filter(r => {
+                  if (r.x === connectionX && r.y === connectionY) return true;
+                  const dx = Math.abs(r.x - connectionX);
+                  const dy = Math.abs(r.y - connectionY);
+                  return dx <= 5 && dy <= 5;
+                })
+                .map(r => ({
+                  id: r.id,
+                  name: r.name,
+                  x: r.x,
+                  y: r.y,
+                  mapId: r.map_id,
+                  isPreview: true,
+                  originalX: r.x,
+                  originalY: r.y
+                }));
+              allRooms.push(...previewRooms);
             }
-          }));
+            
+            playerData.ws.send(JSON.stringify({
+              type: 'mapData',
+              rooms: allRooms,
+              currentRoom: {
+                x: targetRoom.x,
+                y: targetRoom.y
+              },
+              mapId: targetRoom.map_id,
+              connectionInfo: connectionInfo
+            }));
+          } else {
+            // Just update map position
+            playerData.ws.send(JSON.stringify({
+              type: 'mapUpdate',
+              currentRoom: {
+                x: targetRoom.x,
+                y: targetRoom.y
+              },
+              mapId: targetRoom.map_id
+            }));
+          }
         }
 
         // Notify players in new room

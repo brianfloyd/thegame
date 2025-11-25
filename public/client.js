@@ -48,13 +48,13 @@ function handleMessage(data) {
             updatePlayerStats(data.stats);
             break;
         case 'mapData':
-            initializeMap(data.rooms, data.currentRoom);
+            initializeMap(data.rooms, data.currentRoom, data.mapId, data.connectionInfo);
             break;
         case 'mapUpdate':
-            updateMapPosition(data.currentRoom);
+            updateMapPosition(data.currentRoom, data.mapId);
             break;
         case 'error':
-            addToTerminal('Error: ' + data.message, 'error');
+            addToTerminal(data.message, 'error');
             break;
     }
 }
@@ -86,10 +86,11 @@ function updateRoomView(room, players, exits) {
     // Clear terminal
     terminalContent.innerHTML = '';
     
-    // Display room name
+    // Display room name with map name prefix
     const roomNameDiv = document.createElement('div');
     roomNameDiv.className = 'room-name';
-    roomNameDiv.textContent = room.name;
+    const displayName = room.mapName ? `${room.mapName}, ${room.name}` : room.name;
+    roomNameDiv.textContent = displayName;
     terminalContent.appendChild(roomNameDiv);
     
     // Display room description
@@ -136,6 +137,12 @@ function updateRoomView(room, players, exits) {
     
     // Update compass buttons
     updateCompassButtons(exits);
+    
+    // Update coordinates display
+    if (room.mapName) {
+        currentMapName = room.mapName;
+    }
+    updateCompassCoordinates(room.x, room.y);
 }
 
 // Add player to terminal
@@ -208,6 +215,15 @@ function addToTerminal(message, type = 'info') {
     msgDiv.textContent = message;
     terminalContent.appendChild(msgDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Update compass coordinates display
+function updateCompassCoordinates(x, y) {
+    const coordsElement = document.getElementById('compassCoordinates');
+    if (coordsElement) {
+        const mapName = currentMapName || 'Unknown';
+        coordsElement.textContent = `${mapName}\n(${x}, ${y})`;
+    }
 }
 
 // Update compass buttons based on available exits
@@ -450,15 +466,64 @@ function updatePlayerStats(stats) {
 // Map rendering variables
 let mapRooms = [];
 let currentRoomPos = { x: 0, y: 0 };
+let currentMapId = null;
+let currentMapName = null;
 let mapCanvas = null;
 let mapCtx = null;
 const MAP_SIZE = 25; // 25x25 grid
-const CELL_SIZE = 8; // Size of each cell in pixels
+const CELL_SIZE = 10; // Size of each cell in pixels
+
+// Store connection info for coordinate transformation
+let connectionInfo = null;
 
 // Initialize map
-function initializeMap(rooms, currentRoom) {
-    mapRooms = rooms;
+function initializeMap(rooms, currentRoom, mapId, connInfo) {
+    connectionInfo = connInfo;
+    
+    // Transform preview room coordinates to appear in the correct position
+    mapRooms = rooms.map(room => {
+        if (room.isPreview && connectionInfo) {
+            // Transform preview room coordinates based on connection direction
+            const offsetX = room.originalX - connectionInfo.connectedMapX;
+            const offsetY = room.originalY - connectionInfo.connectedMapY;
+            
+            // Apply offset based on connection direction
+            let transformedX = connectionInfo.currentMapX;
+            let transformedY = connectionInfo.currentMapY;
+            
+            if (connectionInfo.direction === 'N') {
+                transformedX += offsetX;
+                transformedY += 1 + offsetY; // Continue north from current position
+            } else if (connectionInfo.direction === 'S') {
+                transformedX += offsetX;
+                transformedY -= 1 + Math.abs(offsetY); // Continue south
+            } else if (connectionInfo.direction === 'E') {
+                transformedX += 1 + offsetX;
+                transformedY += offsetY; // Continue east
+            } else if (connectionInfo.direction === 'W') {
+                transformedX -= 1 + Math.abs(offsetX);
+                transformedY += offsetY; // Continue west
+            }
+            
+            return {
+                ...room,
+                x: transformedX,
+                y: transformedY,
+                mapId: room.mapId // Preserve original mapId for preview rooms
+            };
+        }
+        return room;
+    });
+    
     currentRoomPos = { x: currentRoom.x, y: currentRoom.y };
+    currentMapId = mapId;
+    
+    console.log(`Map initialized: ${rooms.length} rooms, current position: (${currentRoom.x}, ${currentRoom.y}), mapId: ${mapId}`, connectionInfo);
+    console.log(`Current room position: x=${currentRoomPos.x}, y=${currentRoomPos.y}, mapId=${currentMapId}`);
+    console.log(`Map rooms sample:`, mapRooms.slice(0, 5).map(r => ({ x: r.x, y: r.y, mapId: r.mapId, isPreview: r.isPreview })));
+    
+    // Update coordinates display
+    updateCompassCoordinates(currentRoom.x, currentRoom.y);
     
     mapCanvas = document.getElementById('mapCanvas');
     if (!mapCanvas) return;
@@ -476,10 +541,19 @@ function initializeMap(rooms, currentRoom) {
 }
 
 // Update map position when player moves
-function updateMapPosition(newRoom) {
-    currentRoomPos = { x: newRoom.x, y: newRoom.y };
-    if (mapCanvas && mapCtx) {
-        renderMap();
+function updateMapPosition(newRoom, mapId) {
+    // Check if we're switching maps
+    if (mapId && mapId !== currentMapId) {
+        // Map switch - we'll get new mapData message, so just update position for now
+        currentRoomPos = { x: newRoom.x, y: newRoom.y };
+        currentMapId = mapId;
+        // Don't render yet - wait for mapData message
+    } else {
+        // Same map, just update position
+        currentRoomPos = { x: newRoom.x, y: newRoom.y };
+        if (mapCanvas && mapCtx) {
+            renderMap();
+        }
     }
 }
 
@@ -557,26 +631,74 @@ function renderMap() {
         }
     });
     
-    // Draw rooms
+    // Draw rooms (current map first, then preview rooms)
     mapRooms.forEach(room => {
+        const isPreview = room.isPreview || false;
+        const isCurrentMap = !isPreview && room.mapId === currentMapId;
+        
         if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
             // Flip Y coordinate (screen Y increases downward, game Y increases upward)
+            // Use (maxY - room.y) to correctly invert Y-axis
             const screenX = offsetX + (room.x - minX) * CELL_SIZE;
             const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
             
             // Check if this is the current room
-            const isCurrentRoom = room.x === currentRoomPos.x && room.y === currentRoomPos.y;
+            // For current map rooms, check exact coordinates
+            // For preview rooms, we don't highlight them as current
+            const isCurrentRoom = !isPreview && 
+                                  room.mapId === currentMapId &&
+                                  room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y;
             
             // Draw room square
-            mapCtx.fillStyle = isCurrentRoom ? '#00ff00' : '#666';
+            if (isCurrentRoom) {
+                mapCtx.fillStyle = '#00ff00'; // Bright green for current room
+            } else if (isPreview) {
+                mapCtx.fillStyle = '#1a331a'; // Dimmer green for preview rooms
+            } else {
+                mapCtx.fillStyle = '#666'; // Grey for other rooms
+            }
             mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
             
             // Draw border
-            mapCtx.strokeStyle = isCurrentRoom ? '#ffff00' : '#333';
-            mapCtx.lineWidth = isCurrentRoom ? 2 : 1;
+            if (isCurrentRoom) {
+                mapCtx.strokeStyle = '#ffff00'; // Yellow border for current room
+                mapCtx.lineWidth = 2;
+            } else if (isPreview) {
+                mapCtx.strokeStyle = '#336633'; // Dimmer green border for preview
+                mapCtx.lineWidth = 1;
+            } else {
+                mapCtx.strokeStyle = '#333'; // Dark border for other rooms
+                mapCtx.lineWidth = 1;
+            }
             mapCtx.strokeRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
         }
     });
+    
+    // Always draw current room indicator, even if room not found in mapRooms
+    // This ensures the player position is always visible
+    if (currentRoomPos.x >= minX && currentRoomPos.x <= maxX && 
+        currentRoomPos.y >= minY && currentRoomPos.y <= maxY) {
+        const screenX = offsetX + (currentRoomPos.x - minX) * CELL_SIZE;
+        const screenY = offsetY + (maxY - currentRoomPos.y) * CELL_SIZE;
+        
+        // Check if we already drew this room
+        const roomExists = mapRooms.some(r => 
+            !r.isPreview && 
+            r.mapId === currentMapId && 
+            r.x === currentRoomPos.x && 
+            r.y === currentRoomPos.y
+        );
+        
+        if (!roomExists) {
+            // Draw current room indicator (bright green with yellow border)
+            mapCtx.fillStyle = '#00ff00';
+            mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+            mapCtx.strokeStyle = '#ffff00';
+            mapCtx.lineWidth = 2;
+            mapCtx.strokeRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        }
+    }
 }
 
 // Handle window resize
