@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Player Selection Screen -->
+    <div id="playerSelection" class="screen">
+        <div class="container">
+            <h1>Choose Your Player</h1>
+            <div class="player-options">
+                <button class="player-btn" data-player="Fliz">Fliz</button>
+                <button class="player-btn" data-player="Hebron">Hebron</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Room View Screen -->
+    <div id="roomView" class="screen hidden">
+        <div class="container">
+            <div class="room-header">
+                <h2 id="roomName">Town Square</h2>
+                <p id="roomDescription">a simple room</p>
+                <p class="player-name">Playing as: <strong id="currentPlayerName"></strong></p>
+            </div>
+
+            <div class="room-content">
+                <div class="players-section">
+                    <h3>Players in Room</h3>
+                    <ul id="playersList"></ul>
+                </div>
+
+                <div class="navigation-section">
+                    <h3>Navigation</h3>
+                    <div class="nav-grid">
+                        <button id="navNorth" class="nav-btn" data-direction="N">North</button>
+                        <button id="navWest" class="nav-btn" data-direction="W">West</button>
+                        <button id="navEast" class="nav-btn" data-direction="E">East</button>
+                        <button id="navSouth" class="nav-btn" data-direction="S">South</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>
+
