@@ -31,9 +31,9 @@ const insertRoom = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
-insertRoom.run('town square', 'a simple room', 0, 0);
-insertRoom.run('northern room', 'a room to the north', 0, 1);
-insertRoom.run('southern room', 'a room to the south', 0, -1);
+insertRoom.run('town square', 'You stand in the center of a bustling town square. Cobblestone paths radiate outward from a weathered stone fountain in the center. Market stalls line the edges, though they appear empty at this hour. The air carries the faint scent of fresh bread and distant woodsmoke. To the north and south, pathways lead away from the square.', 0, 0);
+insertRoom.run('northern room', 'You find yourself in a quiet northern chamber. The walls are made of smooth, dark stone that seems to absorb the light. A single torch flickers in a sconce, casting dancing shadows across the floor. The room feels ancient and peaceful, with a sense of history embedded in its very stones. A path leads back south to the town square.', 0, 1);
+insertRoom.run('southern room', 'You enter a warm southern chamber. The room is bathed in soft golden light from a large window facing south. Comfortable furnishings suggest this was once a gathering place. The air is still and calm, with dust motes drifting lazily in the light. You can see the way back north to the town square.', 0, -1);
 
 // Get town square room ID
 const getTownSquare = db.prepare('SELECT id FROM rooms WHERE name = ?');

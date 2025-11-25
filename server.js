@@ -20,7 +20,13 @@ function getExits(room) {
     north: db.getRoomByCoords(room.x, room.y + 1) !== undefined,
     south: db.getRoomByCoords(room.x, room.y - 1) !== undefined,
     east: db.getRoomByCoords(room.x + 1, room.y) !== undefined,
-    west: db.getRoomByCoords(room.x - 1, room.y) !== undefined
+    west: db.getRoomByCoords(room.x - 1, room.y) !== undefined,
+    northeast: db.getRoomByCoords(room.x + 1, room.y + 1) !== undefined,
+    northwest: db.getRoomByCoords(room.x - 1, room.y + 1) !== undefined,
+    southeast: db.getRoomByCoords(room.x + 1, room.y - 1) !== undefined,
+    southwest: db.getRoomByCoords(room.x - 1, room.y - 1) !== undefined,
+    up: false, // Will be implemented when z coordinate is added
+    down: false // Will be implemented when z coordinate is added
   };
   return exits;
 }
@@ -141,11 +147,36 @@ wss.on('connection', (ws) => {
         let targetY = currentRoom.y;
         const direction = data.direction.toUpperCase();
 
-        if (direction === 'N') targetY += 1;
-        else if (direction === 'S') targetY -= 1;
-        else if (direction === 'E') targetX += 1;
-        else if (direction === 'W') targetX -= 1;
-        else {
+        // Handle all direction variations
+        if (direction === 'N') {
+          targetY += 1;
+        } else if (direction === 'S') {
+          targetY -= 1;
+        } else if (direction === 'E') {
+          targetX += 1;
+        } else if (direction === 'W') {
+          targetX -= 1;
+        } else if (direction === 'NE') {
+          targetX += 1;
+          targetY += 1;
+        } else if (direction === 'NW') {
+          targetX -= 1;
+          targetY += 1;
+        } else if (direction === 'SE') {
+          targetX += 1;
+          targetY -= 1;
+        } else if (direction === 'SW') {
+          targetX -= 1;
+          targetY -= 1;
+        } else if (direction === 'U' || direction === 'UP') {
+          // Up/Down not yet implemented (requires z coordinate)
+          ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
+          return;
+        } else if (direction === 'D' || direction === 'DOWN') {
+          // Up/Down not yet implemented (requires z coordinate)
+          ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
+          return;
+        } else {
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction' }));
           return;
         }
@@ -153,7 +184,14 @@ wss.on('connection', (ws) => {
         // Check if target room exists
         const targetRoom = db.getRoomByCoords(targetX, targetY);
         if (!targetRoom) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Cannot move in that direction' }));
+          // Convert direction code to readable name
+          const directionNames = {
+            'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west',
+            'NE': 'northeast', 'NW': 'northwest', 'SE': 'southeast', 'SW': 'southwest',
+            'U': 'up', 'UP': 'up', 'D': 'down', 'DOWN': 'down'
+          };
+          const directionName = directionNames[direction] || direction.toLowerCase();
+          ws.send(JSON.stringify({ type: 'error', message: `Ouch! You walked into the wall to the ${directionName}.` }));
           return;
         }
 

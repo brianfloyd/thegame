@@ -18,30 +18,59 @@
         </div>
     </div>
 
-    <!-- Room View Screen -->
-    <div id="roomView" class="screen hidden">
-        <div class="container">
-            <div class="room-header">
-                <h2 id="roomName">Town Square</h2>
-                <p id="roomDescription">a simple room</p>
-                <p class="player-name">Playing as: <strong id="currentPlayerName"></strong></p>
-            </div>
-
-            <div class="room-content">
-                <div class="players-section">
-                    <h3>Players in Room</h3>
-                    <ul id="playersList"></ul>
-                </div>
-
-                <div class="navigation-section">
-                    <h3>Navigation</h3>
-                    <div class="nav-grid">
-                        <button id="navNorth" class="nav-btn" data-direction="N">North</button>
-                        <button id="navWest" class="nav-btn" data-direction="W">West</button>
-                        <button id="navEast" class="nav-btn" data-direction="E">East</button>
-                        <button id="navSouth" class="nav-btn" data-direction="S">South</button>
+    <!-- Game View Screen -->
+    <div id="gameView" class="screen hidden">
+        <div class="game-layout">
+            <!-- Left: Text Terminal (2/3 of screen) -->
+            <div class="terminal-container">
+                <div class="terminal" id="terminal">
+                    <div class="terminal-content" id="terminalContent">
+                        <!-- Room info and players will be displayed here -->
+                    </div>
+                    <div class="command-line">
+                        <span class="prompt">&gt;</span>
+                        <input type="text" id="commandInput" class="command-input" autocomplete="off" spellcheck="false" placeholder="Type a command...">
                     </div>
                 </div>
+            </div>
+
+            <!-- Right: Panel with 4 quadrants (1/3 of screen) -->
+            <div class="right-panel">
+                <!-- Top Left Quadrant (empty for now) -->
+                <div class="quadrant"></div>
+                
+                <!-- Top Right Quadrant: Compass Widget -->
+                <div class="compass-container">
+                    <div class="compass-widget">
+                        <h3>Compass</h3>
+                        <div class="compass-grid">
+                            <!-- Top row: NW, N, NE -->
+                            <button id="compass-nw" class="compass-btn" data-direction="NW" style="grid-column: 1; grid-row: 1;">NW</button>
+                            <button id="compass-n" class="compass-btn" data-direction="N" style="grid-column: 2; grid-row: 1;">N</button>
+                            <button id="compass-ne" class="compass-btn" data-direction="NE" style="grid-column: 3; grid-row: 1;">NE</button>
+                            
+                            <!-- Middle row: W, Center, E -->
+                            <button id="compass-w" class="compass-btn" data-direction="W" style="grid-column: 1; grid-row: 2;">W</button>
+                            <div class="compass-center" style="grid-column: 2; grid-row: 2;">●</div>
+                            <button id="compass-e" class="compass-btn" data-direction="E" style="grid-column: 3; grid-row: 2;">E</button>
+                            
+                            <!-- Bottom row: SW, S, SE -->
+                            <button id="compass-sw" class="compass-btn" data-direction="SW" style="grid-column: 1; grid-row: 3;">SW</button>
+                            <button id="compass-s" class="compass-btn" data-direction="S" style="grid-column: 2; grid-row: 3;">S</button>
+                            <button id="compass-se" class="compass-btn" data-direction="SE" style="grid-column: 3; grid-row: 3;">SE</button>
+                            
+                            <!-- Vertical: Up and Down -->
+                            <button id="compass-up" class="compass-btn vertical" data-direction="U" style="grid-column: 4; grid-row: 1;">UP</button>
+                            <button id="compass-down" class="compass-btn vertical" data-direction="D" style="grid-column: 4; grid-row: 3;">DOWN</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Bottom Left Quadrant (empty for now) -->
+                <div class="quadrant"></div>
+                
+                <!-- Bottom Right Quadrant (empty for now) -->
+                <div class="quadrant"></div>
             </div>
         </div>
     </div>
@@ -49,4 +78,3 @@
     <script src="client.js"></script>
 </body>
 </html>
-
