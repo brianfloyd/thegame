@@ -455,6 +455,39 @@ function renderNpcPlacements() {
 }
 
 // Command mapping for all variations
+// ============================================================
+// COMMAND REGISTRY - Central registry for all game commands
+// Add new commands here and they will automatically appear in help
+// ============================================================
+const COMMAND_REGISTRY = [
+    // Movement commands
+    { name: 'north', abbrev: 'n', description: 'Move north', category: 'Movement' },
+    { name: 'south', abbrev: 's', description: 'Move south', category: 'Movement' },
+    { name: 'east', abbrev: 'e', description: 'Move east', category: 'Movement' },
+    { name: 'west', abbrev: 'w', description: 'Move west', category: 'Movement' },
+    { name: 'northeast', abbrev: 'ne', description: 'Move northeast', category: 'Movement' },
+    { name: 'northwest', abbrev: 'nw', description: 'Move northwest', category: 'Movement' },
+    { name: 'southeast', abbrev: 'se', description: 'Move southeast', category: 'Movement' },
+    { name: 'southwest', abbrev: 'sw', description: 'Move southwest', category: 'Movement' },
+    { name: 'up', abbrev: 'u', description: 'Move up', category: 'Movement' },
+    { name: 'down', abbrev: 'd', description: 'Move down', category: 'Movement' },
+    
+    // Information commands
+    { name: 'look', abbrev: 'l', description: 'Look at room or target (l <target>)', category: 'Information' },
+    { name: 'inventory', abbrev: 'i, inv', description: 'Show your inventory', category: 'Information' },
+    { name: 'help', abbrev: '?', description: 'Show available commands', category: 'Information' },
+    
+    // Item commands
+    { name: 'take', abbrev: 't', description: 'Pick up an item (take <item>)', category: 'Items' },
+    { name: 'drop', abbrev: null, description: 'Drop an item (drop <item>)', category: 'Items' },
+    
+    // NPC interaction commands
+    { name: 'harvest', abbrev: 'h', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
+    { name: 'collect', abbrev: 'c', description: 'Alias for harvest', category: 'NPC' },
+    { name: 'gather', abbrev: 'g', description: 'Alias for harvest', category: 'NPC' },
+];
+
+// Build command map from registry for movement commands
 const commandMap = {
     'north': 'N', 'n': 'N',
     'south': 'S', 's': 'S',
@@ -468,6 +501,49 @@ const commandMap = {
     'down': 'D', 'd': 'D',
     'look': 'LOOK', 'l': 'LOOK'
 };
+
+// Display help - shows all commands from registry
+function displayHelp() {
+    const terminalContent = document.getElementById('terminalContent');
+    
+    // Create help container
+    const helpDiv = document.createElement('div');
+    helpDiv.className = 'help-section';
+    
+    // Title
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'help-title';
+    titleDiv.textContent = '=== Available Commands ===';
+    helpDiv.appendChild(titleDiv);
+    
+    // Group commands by category
+    const categories = {};
+    COMMAND_REGISTRY.forEach(cmd => {
+        if (!categories[cmd.category]) {
+            categories[cmd.category] = [];
+        }
+        categories[cmd.category].push(cmd);
+    });
+    
+    // Display each category
+    for (const [category, commands] of Object.entries(categories)) {
+        const categoryDiv = document.createElement('div');
+        categoryDiv.className = 'help-category';
+        categoryDiv.textContent = `[${category}]`;
+        helpDiv.appendChild(categoryDiv);
+        
+        commands.forEach(cmd => {
+            const cmdDiv = document.createElement('div');
+            cmdDiv.className = 'help-command';
+            const abbrevStr = cmd.abbrev ? ` (${cmd.abbrev})` : '';
+            cmdDiv.innerHTML = `  <span class="help-cmd-name">${cmd.name}${abbrevStr}</span> - ${cmd.description}`;
+            helpDiv.appendChild(cmdDiv);
+        });
+    }
+    
+    terminalContent.appendChild(helpDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
 
 // Normalize command input (uses first word only)
 function normalizeCommand(input) {
@@ -800,6 +876,12 @@ function executeCommand(command) {
 
     const parts = raw.split(/\s+/);
     const base = parts[0].toLowerCase();
+
+    // HELP / ? - display available commands
+    if (base === 'help' || base === '?') {
+        displayHelp();
+        return;
+    }
 
     // LOOK / L with optional target (NPC name or partial)
     if (base === 'look' || base === 'l') {

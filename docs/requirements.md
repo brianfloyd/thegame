@@ -444,12 +444,19 @@ The following 10 NPCs have been added to the database:
 
 | Command | Abbreviation | Description |
 |---------|-------------|-------------|
+| `help` | `?` | Display all available commands |
 | `inventory` | `inv`, `i` | Display player inventory |
 | `take <item>` | `t <item>` | Pick up item from ground (partial name matching) |
 | `drop <item>` | (none, `d` = down) | Drop item to ground (partial name matching) |
 | `harvest <npc>` | `h <npc>` | Harvest items from NPC (partial name matching) |
 | `collect <npc>` | `c <npc>` | Alias for harvest |
 | `gather <npc>` | `g <npc>` | Alias for harvest |
+
+### Dynamic Command Registry
+Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new command:
+1. Add an entry to `COMMAND_REGISTRY` with `name`, `abbrev`, `description`, and `category`
+2. The command will automatically appear in `help` output
+3. Add the command handler in `executeCommand()` function
 
 ### Partial Name Matching
 - Commands support partial item/NPC name matching (case-insensitive)

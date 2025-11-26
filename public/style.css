@@ -192,6 +192,34 @@ body {
     color: #ffcc00;
 }
 
+/* Help command styles */
+.help-section {
+    margin-top: 15px;
+    margin-bottom: 10px;
+}
+
+.help-title {
+    color: #ffff00;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.help-category {
+    color: #00ffff;
+    font-weight: bold;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+.help-command {
+    color: #00ff00;
+    margin-left: 10px;
+}
+
+.help-cmd-name {
+    color: #ffffff;
+}
+
 .npc-placement-section {
     margin-top: 12px;
     border-top: 1px solid #333;
