@@ -1381,11 +1381,13 @@ function handleMapEditorClick(e) {
         if (clickedRoom) {
             // Select existing room for editing
             selectedRoom = clickedRoom;
+            selectedRooms = [clickedRoom]; // Clear previous selection and set only this room
             updateSidePanel();
             renderMapEditor(); // Re-render to show red highlight
         } else {
             // Clicked empty space - create new room
             selectedRoom = { x: mapX, y: mapY, isNew: true };
+            selectedRooms = []; // Clear selection for new room creation
             updateSidePanel();
             renderMapEditor(); // Re-render to show red highlight
         }
