@@ -260,6 +260,12 @@ thegame/
   - Shows current map name and coordinates (x, y)
   - Displays at bottom of compass widget
   - Format: `MapName\n(x, y)`
+- **Keypad Navigation**:
+  - Third method of player movement (in addition to command line and compass buttons)
+  - Keypad number mapping: 7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE
+  - Only active when game view is visible and player is not typing in command input
+  - Consistent with map editor speed mode keypad navigation
+  - Provides quick directional movement without mouse clicks or typing
 - Player stats display:
   - Receives player stats from server on connection
   - Displays all 5 attributes (Brute Strength, Life Force, Cunning, Intelligence, Wisdom)
