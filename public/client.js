@@ -475,6 +475,27 @@ document.querySelectorAll('.compass-btn').forEach(btn => {
     });
 });
 
+// Handle keypad movement in main game
+function handleKeypadMovement(key) {
+    // Keypad to direction mapping (same as map editor)
+    // 7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE
+    const keypadDirectionMap = {
+        '7': 'NW',
+        '8': 'N',
+        '9': 'NE',
+        '4': 'W',
+        '6': 'E',
+        '1': 'SW',
+        '2': 'S',
+        '3': 'SE'
+    };
+    
+    const direction = keypadDirectionMap[key];
+    if (direction) {
+        movePlayer(direction);
+    }
+}
+
 // Move player
 function movePlayer(direction) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -1016,10 +1037,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Handle arrow keys for panning and keypad for speed mode
+    // Handle arrow keys for panning and keypad for speed mode (map editor)
+    // Handle keypad for player movement (main game)
     document.addEventListener('keydown', (e) => {
-        // Only handle keys when map editor is open
-        if (mapEditor && !mapEditor.classList.contains('hidden')) {
+        // Check if map editor is open
+        const isMapEditorOpen = mapEditor && !mapEditor.classList.contains('hidden');
+        
+        if (isMapEditorOpen) {
             // Arrow keys for panning
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || 
                 e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1030,6 +1054,19 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (e.key >= '1' && e.key <= '9' && e.location === 3) { // Keypad location
                 e.preventDefault();
                 handleSpeedModeNavigation(e.key);
+            }
+        } else {
+            // Main game keypad navigation
+            // Only work if game view is visible and not typing in command input
+            const gameView = document.getElementById('gameView');
+            const commandInput = document.getElementById('commandInput');
+            const isGameViewVisible = gameView && !gameView.classList.contains('hidden');
+            const isTypingInInput = document.activeElement === commandInput;
+            
+            if (isGameViewVisible && !isTypingInInput && e.key >= '1' && e.key <= '9' && e.location === 3) {
+                // Keypad numbers for player movement
+                e.preventDefault();
+                handleKeypadMovement(e.key);
             }
         }
     });

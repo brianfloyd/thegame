@@ -164,6 +164,10 @@ thegame/
   - Map widget in bottom-left quadrant (flexible height, min 200px)
   - Smaller widgets (max-width 100%) for compact display
   - Overflow hidden to prevent content from flowing off screen
+- **Player Movement Methods**:
+  - Command line: Type direction (n, s, e, w, ne, nw, se, sw, u, d)
+  - Compass buttons: Click direction buttons on compass widget
+  - Keypad navigation: Use keypad numbers (7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE)
 - Compass button states:
   - Available: Bright green border and text
   - Unavailable: Lowlighted (40% opacity, dark colors) but still visible
@@ -212,6 +216,11 @@ thegame/
   - Clickable direction buttons
   - Only available directions are enabled
   - All directions visible but unavailable ones are lowlighted
+- **Keypad Navigation**:
+  - Use keypad numbers for directional movement (3rd navigation method)
+  - Keypad mapping: 7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE
+  - Only works when game view is visible and not typing in command input
+  - Same keypad system as map editor speed mode for consistency
 - Real-time updates:
   - Listen for room state updates (who's in the room, room details, available exits)
   - Update UI instantly when other players join/leave the current room
