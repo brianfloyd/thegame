@@ -834,6 +834,37 @@ function updateMapSize(mapId) {
   return null;
 }
 
+// Disconnect a room from its map connection (clears connection on both ends)
+const disconnectRoomStmt = db.prepare('UPDATE rooms SET connected_map_id = NULL, connected_room_x = NULL, connected_room_y = NULL, connection_direction = NULL WHERE id = ?');
+const disconnectTargetRoomStmt = db.prepare(`
+  UPDATE rooms 
+  SET connected_map_id = NULL, connected_room_x = NULL, connected_room_y = NULL, connection_direction = NULL 
+  WHERE map_id = ? AND x = ? AND y = ?
+`);
+
+function disconnectRoom(roomId) {
+  const room = getRoomById.get(roomId);
+  if (!room) {
+    throw new Error('Room not found');
+  }
+  
+  // Clear connection on this room
+  disconnectRoomStmt.run(roomId);
+  
+  // If this room has a connection, try to clear it on the other end
+  if (room.connected_map_id && room.connected_room_x !== null && room.connected_room_y !== null) {
+    try {
+      // Try to disconnect the target room (may not exist if orphaned)
+      disconnectTargetRoomStmt.run(room.connected_map_id, room.connected_room_x, room.connected_room_y);
+    } catch (err) {
+      // Target room may not exist (orphaned connection) - that's okay
+      console.log(`Note: Could not disconnect target room (may be orphaned): ${err.message}`);
+    }
+  }
+  
+  return true;
+}
+
 module.exports = {
   db,
   getRoomById: (id) => getRoomById.get(id),
@@ -852,7 +883,8 @@ module.exports = {
   getMapBounds,
   updateMapSize,
   getPlayerStats,
-  detectPlayerAttributes
+  detectPlayerAttributes,
+  disconnectRoom
 };
 
 // Run migration after all columns are added

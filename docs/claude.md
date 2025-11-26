@@ -521,7 +521,50 @@ thegame/
 
 ## Recent Updates
 
-### God Mode and Map Editor System (Latest)
+### Latest Improvements (Map Editor Fixes)
+
+#### Dynamic Stats System with Prefix-Based Auto-Detection
+- **Prefix-Based Column Naming**: Database columns use prefixes to automatically identify stat types
+  - `stat_*` - Attributes (base stats like `stat_brute_strength`, `stat_cunning`)
+  - `ability_*` - Abilities (skills like `ability_crafting`, `ability_stealth`)
+  - `resource_*` - Resources (hit points, mana, etc. like `resource_hit_points`, `resource_mana`)
+  - `resource_max_*` - Max values for resources (like `resource_max_hit_points`)
+  - `flag_*` - Special boolean flags (like `flag_god_mode`)
+- **Auto-Detection**: System automatically queries database schema and detects all columns matching prefix patterns
+- **Display Name Generation**: Automatically converts column names to display names (e.g., `stat_brute_strength` → "Brute Strength")
+- **CamelCase Conversion**: Automatically converts to JavaScript camelCase (e.g., `stat_brute_strength` → `bruteStrength`)
+- **Adding New Stats**: Simply add a database column with the appropriate prefix - no code changes needed!
+- **Migration System**: Automatically migrates existing columns to prefixed naming convention
+- **Bidirectional Connection Deletion**: Deleting a connection on one end automatically removes it from both ends
+- **Orphaned Connection Handling**: Gracefully handles connections where target map/room no longer exists
+
+#### Player Session Management
+- **Page Title Updates**: Browser tab title updates to show active player (`"The Game - [PlayerName]"`)
+- **Auto-Reconnection**: On WebSocket disconnect/reconnect, system automatically reconnects player based on page title
+- **Pending Selection Queue**: If player selection happens before connection is ready, it's queued and executed automatically
+- **No Auto-Focus**: Command input no longer auto-focuses on game entry, allowing number pad navigation by default
+
+#### Map Editor Enhancements
+- **Auto-Zoom to Player Room**: When opening map editor, automatically zooms to show 20x20 area centered on player's current room
+- **Auto-Load Current Map**: Automatically loads and selects player's current map when editor opens
+- **Player Room Highlighting**:
+  - **Purple Outline**: Player's current room shows purple outline (`#ff00ff`) when NOT selected
+  - **Red Outline**: Player's current room shows red outline when selected (same as other selected rooms)
+  - Always visible, making it easy to locate player position
+- **Exit Room Styling**: Rooms with map connections (exit rooms) display in white (`#ffffff`) matching player map view
+  - Light grey border (`#cccccc`) for connected rooms
+  - Small yellow indicator dot for quick identification
+- **Connection Management UI**:
+  - Compact connection info display with smaller font sizes (0.75em title, 0.7em details)
+  - "Delete Connection" button to remove map connections
+  - Orphaned connections marked with "(Orphaned)" label in orange
+  - Improved layout to prevent overflow
+- **Improved Side Panel**: Reduced font sizes throughout for better fit
+  - Room name, description, and type fields use smaller fonts
+  - Better spacing and padding
+  - All content fits without scrolling
+
+### God Mode and Map Editor System (Previous)
 
 #### Recent Map Editor Improvements (Alpha Release)
 - **Map Centering & Scaling**: Map automatically centers and scales to fit canvas - no scrolling required

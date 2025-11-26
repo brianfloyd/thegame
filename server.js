@@ -719,6 +719,59 @@ wss.on('connection', (ws) => {
           }
         }));
       }
+
+      else if (data.type === 'disconnectMap') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId } = data;
+        if (!roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+          return;
+        }
+
+        try {
+          const room = db.getRoomById(roomId);
+          if (!room) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+            return;
+          }
+
+          // Disconnect the room (handles both ends and orphaned connections)
+          db.disconnectRoom(roomId);
+
+          // Get updated room
+          const updatedRoom = db.getRoomById(roomId);
+
+          ws.send(JSON.stringify({
+            type: 'mapDisconnected',
+            room: {
+              id: updatedRoom.id,
+              name: updatedRoom.name,
+              x: updatedRoom.x,
+              y: updatedRoom.y,
+              mapId: updatedRoom.map_id
+            }
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to disconnect: ' + err.message }));
+        }
+      }
     } catch (error) {
       console.error('Error handling message:', error);
       if (ws.readyState === WebSocket.OPEN) {

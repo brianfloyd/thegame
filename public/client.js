@@ -138,6 +138,78 @@ function handleMessage(data) {
             } else {
                 // Normal map editor data load
                 editorMapRooms = data.rooms;
+                
+                // If this is the current player's map, automatically select and highlight their current room
+                if (currentMapId && currentMapId === currentEditorMapId && currentRoomPos) {
+                    const currentRoom = editorMapRooms.find(r => 
+                        r.x === currentRoomPos.x && 
+                        r.y === currentRoomPos.y
+                    );
+                    if (currentRoom) {
+                        selectedRoom = currentRoom;
+                        selectedRooms = [currentRoom];
+                        
+                        // Calculate zoom to show 20x20 area centered on current room
+                        // Use requestAnimationFrame to ensure canvas is sized
+                        requestAnimationFrame(() => {
+                            if (mapEditorCanvas) {
+                                const canvasWidth = mapEditorCanvas.width;
+                                const canvasHeight = mapEditorCanvas.height;
+                                const gridWidth = EDITOR_GRID_SIZE * EDITOR_CELL_SIZE;
+                                const gridHeight = EDITOR_GRID_SIZE * EDITOR_CELL_SIZE;
+                                
+                                // Base scale to fit grid in canvas
+                                const baseScaleX = canvasWidth / gridWidth;
+                                const baseScaleY = canvasHeight / gridHeight;
+                                const baseScale = Math.min(baseScaleX, baseScaleY, 1);
+                                
+                                // Calculate zoom to show exactly 20 cells
+                                // We want: 20 cells * cellSize = canvas dimension
+                                // cellSize = EDITOR_CELL_SIZE * baseScale * editorZoom
+                                // So: 20 * EDITOR_CELL_SIZE * baseScale * editorZoom = canvas dimension
+                                const targetCells = 20;
+                                const zoomForWidth = (canvasWidth / targetCells) / (EDITOR_CELL_SIZE * baseScale);
+                                const zoomForHeight = (canvasHeight / targetCells) / (EDITOR_CELL_SIZE * baseScale);
+                                // Use the smaller zoom to ensure both dimensions fit
+                                editorZoom = Math.min(zoomForWidth, zoomForHeight);
+                                
+                                // Now calculate pan to center the current room
+                                // The grid is 100x100 centered at map coordinate (0, 0)
+                                // Grid center (50, 50) represents map coordinate (0, 0)
+                                // Room at map (x, y) is at grid position (50 + x, 50 - y)
+                                // 
+                                // To center room at (x, y) on canvas:
+                                // We want: screenX = canvasWidth/2 and screenY = canvasHeight/2
+                                // 
+                                // screenX = offsetX + (50 + x) * scaledCellSize
+                                // offsetX = centerOffsetX - (editorPanX * scaledCellSize)
+                                // centerOffsetX = (canvasWidth - scaledGridWidth) / 2
+                                //
+                                // So: (canvasWidth - scaledGridWidth)/2 - (editorPanX * scaledCellSize) + (50 + x) * scaledCellSize = canvasWidth/2
+                                // Simplifying: -editorPanX + 50 + x = scaledGridWidth/(2*scaledCellSize) = 50
+                                // Therefore: editorPanX = x
+                                //
+                                // For Y (inverted):
+                                // screenY = offsetY + (50 - y) * scaledCellSize
+                                // offsetY = centerOffsetY + (editorPanY * scaledCellSize)
+                                // centerOffsetY = (canvasHeight - scaledGridHeight) / 2
+                                //
+                                // So: (canvasHeight - scaledGridHeight)/2 + (editorPanY * scaledCellSize) + (50 - y) * scaledCellSize = canvasHeight/2
+                                // Simplifying: editorPanY + 50 - y = scaledGridHeight/(2*scaledCellSize) = 50
+                                // Therefore: editorPanY = y
+                                
+                                const centerX = currentRoom.x;
+                                const centerY = currentRoom.y;
+                                
+                                editorPanX = centerX;
+                                editorPanY = centerY; // Y is already handled by gridY = 50 - room.y
+                                
+                                renderMapEditor();
+                            }
+                        });
+                    }
+                }
+                
                 // Update side panel if a room is selected to show connection info
                 if (selectedRoom) {
                     updateSidePanel();
@@ -222,6 +294,10 @@ function handleMessage(data) {
                     option.textContent = map.name;
                     selector.appendChild(option);
                 });
+                // Set to current player's map if available
+                if (currentMapId) {
+                    selector.value = currentMapId;
+                }
             }
             if (targetMapSelect) {
                 targetMapSelect.innerHTML = '<option value="">Select target map...</option>';
@@ -232,6 +308,28 @@ function handleMessage(data) {
                     targetMapSelect.appendChild(option);
                 });
             }
+            break;
+        case 'mapDisconnected':
+            // Update room connection info after disconnection
+            if (data.room) {
+                const roomIndex = editorMapRooms.findIndex(r => r.id === data.room.id);
+                if (roomIndex !== -1) {
+                    // Update room data to remove connection
+                    editorMapRooms[roomIndex] = {
+                        ...editorMapRooms[roomIndex],
+                        connected_map_id: null,
+                        connected_room_x: null,
+                        connected_room_y: null,
+                        connection_direction: null
+                    };
+                    // Update selected room if it's the one that was disconnected
+                    if (selectedRoom && selectedRoom.id === data.room.id) {
+                        selectedRoom = editorMapRooms[roomIndex];
+                        updateSidePanel();
+                    }
+                }
+            }
+            renderMapEditor();
             break;
         case 'mapConnected':
             // Reload map data
@@ -478,8 +576,7 @@ function selectPlayer(playerName) {
     document.getElementById('playerSelection').classList.add('hidden');
     document.getElementById('gameView').classList.remove('hidden');
     
-    // Focus command input
-    document.getElementById('commandInput').focus();
+    // Don't auto-focus command input - allows number pad navigation by default
 }
 
 // Handle command input
@@ -1117,9 +1214,14 @@ function openMapEditor() {
         ws.send(JSON.stringify({ type: 'getAllMaps' }));
     }
     
-    // Load current player's map if available
+    // Load current player's map by default if available
     if (currentMapId) {
         loadMapForEditor(currentMapId);
+        // Set map selector to current map
+        const mapSelector = document.getElementById('mapSelector');
+        if (mapSelector) {
+            mapSelector.value = currentMapId;
+        }
     }
 }
 
@@ -1559,44 +1661,61 @@ function renderMapEditor() {
         }
         
         // Determine color based on room type, name, and adjacency
-        // Dark green if room has adjacent rooms, otherwise normal colors
+        // White for rooms with map connections (exit rooms), matching player map view
         let fillColor = '#00ff00'; // Normal (green)
         let borderColor = '#ffff00'; // Yellow border
         
-        // Check if room has adjacent rooms (adjoining)
-        const isAdjoining = hasAdjacentRoom(room);
+        // Check if room has a connection to another map (exit room)
+        const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
         
-        if (isAdjoining) {
-            fillColor = '#006600'; // Dark green for adjoining rooms
-            borderColor = '#004400'; // Darker green border
+        if (hasConnection) {
+            fillColor = '#ffffff'; // White for rooms with connections (exit rooms)
+            borderColor = '#cccccc'; // Light grey border for connected rooms
         } else {
-            // Check if room has generic name (starts with "Room ")
-            const isGenericName = room.name && room.name.startsWith('Room ');
+            // Check if room has adjacent rooms (adjoining)
+            const isAdjoining = hasAdjacentRoom(room);
             
-            if (isGenericName) {
-                fillColor = '#0088ff'; // Blue for generic rooms
-                borderColor = '#0066cc'; // Darker blue border
-            } else if (room.roomType === 'merchant' || room.room_type === 'merchant') {
-                fillColor = '#0088ff'; // Blue for merchant rooms
-                borderColor = '#0066cc'; // Darker blue border
+            if (isAdjoining) {
+                fillColor = '#006600'; // Dark green for adjoining rooms
+                borderColor = '#004400'; // Darker green border
+            } else {
+                // Check if room has generic name (starts with "Room ")
+                const isGenericName = room.name && room.name.startsWith('Room ');
+                
+                if (isGenericName) {
+                    fillColor = '#0088ff'; // Blue for generic rooms
+                    borderColor = '#0066cc'; // Darker blue border
+                } else if (room.roomType === 'merchant' || room.room_type === 'merchant') {
+                    fillColor = '#0088ff'; // Blue for merchant rooms
+                    borderColor = '#0066cc'; // Darker blue border
+                }
             }
         }
         
+        // Check if this is the player's current room
+        const isPlayerRoom = currentMapId && currentMapId === currentEditorMapId && 
+                            currentRoomPos && 
+                            room.x === currentRoomPos.x && 
+                            room.y === currentRoomPos.y;
+        
         // Check if room is in selected rooms array (mass selection)
         const isSelected = selectedRooms.some(r => r.id === room.id);
+        const isSelectedSingle = selectedRoom && selectedRoom.id === room.id;
+        const isAnySelected = isSelected || isSelectedSingle;
         
-        // Highlight selected room(s)
-        if (isSelected) {
+        // Highlight selected room(s) - red border (takes priority)
+        if (isAnySelected) {
             borderColor = '#ff0000'; // Red for selected
             mapEditorCtx.lineWidth = 3;
-        } else if (selectedRoom && selectedRoom.id === room.id) {
-            borderColor = '#ff0000'; // Red for selected
-            mapEditorCtx.lineWidth = 3;
+        } else if (isPlayerRoom) {
+            // Player's room but NOT selected - purple outline
+            borderColor = '#ff00ff'; // Purple for player's room (not selected)
+            mapEditorCtx.lineWidth = 2;
         } else {
             mapEditorCtx.lineWidth = 1;
         }
         
-        // Highlight connection source room
+        // Highlight connection source room (overrides other highlights)
         if (connectionSourceRoom && connectionSourceRoom.id === room.id) {
             borderColor = '#ff8800'; // Orange for connection source
             mapEditorCtx.lineWidth = 3;
@@ -1604,22 +1723,17 @@ function renderMapEditor() {
         
         const cellPadding = Math.max(1, scaledCellSize * 0.1);
         
-        // Visual indicator for rooms with map connections
-        if (room.connected_map_id !== null && room.connected_map_id !== undefined) {
-            // Draw a small indicator dot or border accent for connected rooms
+        // Visual indicator for rooms with map connections (small yellow dot)
+        // Note: Room is already white, so we just add a small indicator
+        if (hasConnection) {
             const indicatorSize = scaledCellSize * 0.15;
             const indicatorX = screenX + scaledCellSize - indicatorSize - 2;
             const indicatorY = screenY + 2;
             
-            mapEditorCtx.fillStyle = '#ffff00'; // Yellow indicator
+            mapEditorCtx.fillStyle = '#ffff00'; // Yellow indicator dot
             mapEditorCtx.beginPath();
             mapEditorCtx.arc(indicatorX + indicatorSize/2, indicatorY + indicatorSize/2, indicatorSize/2, 0, Math.PI * 2);
             mapEditorCtx.fill();
-            
-            // Also add a yellow border accent
-            mapEditorCtx.strokeStyle = '#ffff00';
-            mapEditorCtx.lineWidth = 2;
-            mapEditorCtx.strokeRect(screenX + cellPadding, screenY + cellPadding, scaledCellSize - cellPadding * 2, scaledCellSize - cellPadding * 2);
         }
         
         mapEditorCtx.fillStyle = fillColor;
@@ -1833,7 +1947,7 @@ function updateSidePanel() {
         if (hasConnection) {
             // Find connected map name
             const connectedMap = allMapsData.find(m => m.id === selectedRoom.connected_map_id);
-            const mapName = connectedMap ? connectedMap.name : `Map ID ${selectedRoom.connected_map_id}`;
+            const mapName = connectedMap ? connectedMap.name : `Map ID ${selectedRoom.connected_map_id} (Missing)`;
             const direction = selectedRoom.connection_direction || 'Unknown';
             const targetX = selectedRoom.connected_room_x !== null && selectedRoom.connected_room_x !== undefined ? selectedRoom.connected_room_x : '?';
             const targetY = selectedRoom.connected_room_y !== null && selectedRoom.connected_room_y !== undefined ? selectedRoom.connected_room_y : '?';
@@ -1841,6 +1955,7 @@ function updateSidePanel() {
             // Try to find the target room name - check if we need to load that map's rooms
             // For now, we'll show coordinates and try to find in current editorMapRooms if it's the same map
             let roomName = 'Unknown Room';
+            let isOrphaned = false;
             const targetRoom = editorMapRooms.find(r => 
                 r.mapId === selectedRoom.connected_map_id && 
                 r.x === selectedRoom.connected_room_x && 
@@ -1848,16 +1963,20 @@ function updateSidePanel() {
             );
             if (targetRoom) {
                 roomName = targetRoom.name;
+            } else {
+                // Room doesn't exist in current editor view - might be orphaned
+                isOrphaned = true;
             }
             
             connectionInfo = `
-                <div style="background: #1a3a1a; border: 2px solid #00ff00; border-radius: 4px; padding: 8px; margin-bottom: 8px;">
-                    <div style="color: #00ff00; font-weight: bold; margin-bottom: 4px;">Map Connection:</div>
-                    <div style="color: #00ff00; font-size: 0.85em;">
-                        <div><strong>Connects to:</strong> ${mapName}</div>
-                        <div><strong>Room:</strong> ${roomName}</div>
-                        <div><strong>Coordinates:</strong> (${targetX}, ${targetY})</div>
-                        <div><strong>Direction:</strong> ${direction}</div>
+                <div style="background: #1a3a1a; border: 2px solid #00ff00; border-radius: 4px; padding: 6px; margin-bottom: 8px;">
+                    <div style="color: #00ff00; font-weight: bold; margin-bottom: 3px; font-size: 0.75em;">Map Connection:</div>
+                    <div style="color: #00ff00; font-size: 0.7em; line-height: 1.3;">
+                        <div style="margin-bottom: 2px;"><strong>To:</strong> ${mapName}</div>
+                        <div style="margin-bottom: 2px;"><strong>Room:</strong> ${roomName}${isOrphaned ? ' <span style="color: #ffaa00;">(Orphaned)</span>' : ''}</div>
+                        <div style="margin-bottom: 2px;"><strong>Coords:</strong> (${targetX}, ${targetY})</div>
+                        <div style="margin-bottom: 4px;"><strong>Dir:</strong> ${direction}</div>
+                        <button id="disconnectMapBtn" style="width: 100%; padding: 4px; background: #cc0000; color: #fff; border: 1px solid #ff0000; border-radius: 2px; font-size: 0.7em; cursor: pointer;">Delete Connection</button>
                     </div>
                 </div>
             `;
@@ -1901,6 +2020,21 @@ function updateSidePanel() {
             updateSidePanel();
             renderMapEditor();
         });
+        
+        // Add disconnect button handler if connection exists
+        if (hasConnection) {
+            const disconnectBtn = document.getElementById('disconnectMapBtn');
+            if (disconnectBtn) {
+                disconnectBtn.addEventListener('click', () => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'disconnectMap',
+                            roomId: selectedRoom.id
+                        }));
+                    }
+                });
+            }
+        }
     } else {
         // Default message
         sidePanel.innerHTML = `
