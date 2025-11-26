@@ -1051,7 +1051,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleMapEditorPan(e.key);
             }
             // Keypad numbers for speed mode navigation
-            else if (e.key >= '1' && e.key <= '9' && e.location === 3) { // Keypad location
+            // Check for keypad: e.location === 3 (keypad) OR e.code starts with 'Numpad'
+            else if (e.key >= '1' && e.key <= '9' && (e.location === 3 || e.code.startsWith('Numpad'))) {
                 e.preventDefault();
                 handleSpeedModeNavigation(e.key);
             }
@@ -1063,10 +1064,24 @@ document.addEventListener('DOMContentLoaded', () => {
             const isGameViewVisible = gameView && !gameView.classList.contains('hidden');
             const isTypingInInput = document.activeElement === commandInput;
             
-            if (isGameViewVisible && !isTypingInInput && e.key >= '1' && e.key <= '9' && e.location === 3) {
-                // Keypad numbers for player movement
-                e.preventDefault();
-                handleKeypadMovement(e.key);
+            // More permissive keypad detection: if not typing and it's a number 1-9, treat as keypad
+            // This allows keypad to work even if detection isn't perfect
+            if (isGameViewVisible && !isTypingInInput && e.key >= '1' && e.key <= '9') {
+                // Double-check: make sure we're not in any input field
+                const activeTag = document.activeElement.tagName.toLowerCase();
+                const isInInput = activeTag === 'input' || activeTag === 'textarea';
+                
+                // Check for keypad: e.location === 3 (keypad) OR e.code starts with 'Numpad'
+                // But also allow if we're not in an input field (more permissive)
+                const isKeypad = (e.location === 3) || 
+                                (e.code && e.code.startsWith('Numpad')) ||
+                                !isInInput; // If not in input, allow number keys as keypad
+                
+                if (isKeypad && !isInInput) {
+                    // Keypad numbers for player movement
+                    e.preventDefault();
+                    handleKeypadMovement(e.key);
+                }
             }
         }
     });
