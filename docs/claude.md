@@ -282,7 +282,9 @@ thegame/
     - Activated when clicking an existing room
     - Keypad navigation (7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE)
     - Automatically creates rooms with generic name "Room X,Y" when navigating to empty spaces
-    - Newly created rooms automatically selected for continued navigation
+    - Newly created rooms automatically selected and remain selected (red outline) for continued navigation
+    - Speed mode state persists after room creation, allowing rapid continuous room placement
+    - Navigating to existing rooms selects them and continues speed mode from that room
   - **Room Color System**:
     - Dark green (#006600) for rooms with adjacent rooms (adjoining)
     - Blue (#0088ff) for generic rooms (name starts with "Room ") or merchant rooms
@@ -313,6 +315,12 @@ thegame/
   - **New Map Creation**: Dialog form to create new map, opens blank 100x100 grid editor
   - **Map Size Calculation**: Auto-calculates map dimensions from room coordinate bounds
   - **Map Connection**: Select source room, choose direction and target map/coordinates
+    - Connect mode can be entered with a room already selected (uses that room as source)
+    - Or enter connect mode first, then click a room to select as source
+    - Target room dropdown organized by street name using optgroups
+    - Rooms within each street sorted by coordinates
+    - Selecting target room from dropdown auto-fills X and Y coordinates
+    - X and Y coordinates editable and displayed on same line
   - **Connection Validation**: Client-side and server-side validation of connections
   - **Click Coordinate Conversion**: Always uses fixed 100x100 grid centered at 0,0, accounts for zoom and pan
   - **Performance Optimization**: Only draws visible grid lines and rooms based on current viewport (zoom/pan)
@@ -643,7 +651,11 @@ God mode is a special privilege system that grants players administrative capabi
     - 4 = W, 6 = E
     - 1 = SW, 2 = S, 3 = SE
   - Automatically creates rooms with generic name "Room X,Y" when navigating to empty spaces
-  - Newly created rooms are automatically selected
+  - Newly created rooms are automatically selected and remain selected (red outline) for continued navigation
+  - Speed mode stays active after room creation, allowing rapid continuous room placement
+  - Navigate to existing rooms to select them and continue from there and remain selected (red outline)
+  - Speed mode stays active after room creation for rapid continuous navigation
+  - Navigate to existing rooms to select them and continue from there
 - **Room Color System**:
   - **Dark Green (#006600)**: Rooms with adjacent/adjoining rooms (connected)
   - **Blue (#0088ff)**: Generic rooms (name starts with "Room ") or merchant rooms
@@ -674,6 +686,15 @@ God mode is a special privilege system that grants players administrative capabi
   - Source room must have available exit in requested direction
   - Target room must exist and have available exit in opposite direction
   - Bidirectional connection automatically established
+  - **Connect Maps Workflow**:
+    - Select a room, then click "Connect Maps" button (or click "Connect Maps" then select a room)
+    - Source room is automatically set when entering connect mode with a selected room
+    - Target map dropdown loads all available maps
+    - Target room dropdown groups rooms by street name (using optgroups)
+    - Rooms within each street are sorted by coordinates (X, then Y)
+    - Selecting a room from dropdown automatically fills X and Y coordinates
+    - X and Y coordinates are editable and displayed on same line
+    - Cancel button visible and accessible at bottom of form
 
 ### Map Editor UI
 - Full-screen overlay with 100x100 grid canvas

@@ -60,8 +60,60 @@ function handleMessage(data) {
             addToTerminal(data.message, 'error');
             break;
         case 'mapEditorData':
-            editorMapRooms = data.rooms;
-            renderMapEditor();
+            // Check if this is for target map selection in connect mode
+            const targetRoomSelect = document.getElementById('targetRoomSelect');
+            if (targetRoomSelect && editorMode === 'connect') {
+                // This is for populating target room selector
+                targetRoomSelect.innerHTML = '<option value="">Select a room...</option>';
+                
+                // Group rooms by street name (extract street name from room name)
+                const roomsByStreet = {};
+                data.rooms.forEach(room => {
+                    // Extract street name (everything before the number or last word)
+                    let streetName = room.name;
+                    // Try to extract street name by removing trailing numbers
+                    const match = room.name.match(/^(.+?)\s*\d+$/);
+                    if (match) {
+                        streetName = match[1].trim();
+                    } else {
+                        // If no number, use the full name
+                        streetName = room.name;
+                    }
+                    
+                    if (!roomsByStreet[streetName]) {
+                        roomsByStreet[streetName] = [];
+                    }
+                    roomsByStreet[streetName].push(room);
+                });
+                
+                // Sort street names alphabetically
+                const sortedStreets = Object.keys(roomsByStreet).sort();
+                
+                // Create optgroups for each street
+                sortedStreets.forEach(streetName => {
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = streetName;
+                    
+                    // Sort rooms within street by coordinates (x, then y)
+                    roomsByStreet[streetName].sort((a, b) => {
+                        if (a.x !== b.x) return a.x - b.x;
+                        return a.y - b.y;
+                    });
+                    
+                    roomsByStreet[streetName].forEach(room => {
+                        const option = document.createElement('option');
+                        option.value = `${room.x},${room.y}`;
+                        option.textContent = `${room.name} (${room.x}, ${room.y})`;
+                        optgroup.appendChild(option);
+                    });
+                    
+                    targetRoomSelect.appendChild(optgroup);
+                });
+            } else {
+                // Normal map editor data load
+                editorMapRooms = data.rooms;
+                renderMapEditor();
+            }
             break;
         case 'mapCreated':
             // Add to map selector and load it
@@ -78,10 +130,12 @@ function handleMessage(data) {
         case 'roomCreated':
             // Add room to editor and re-render
             editorMapRooms.push(data.room);
-            // If speed mode is active, select the newly created room
+            // If speed mode is active, select the newly created room and keep speed mode active
             if (speedModeActive) {
                 selectedRoom = data.room;
                 selectedRooms = [data.room];
+                // Keep speed mode active so user can continue navigating
+                speedModeActive = true;
             } else {
                 selectedRoom = null;
                 selectedRooms = [];
@@ -1124,7 +1178,12 @@ function toggleConnectMode() {
         updateSidePanel();
     } else {
         editorMode = 'connect';
-        connectionSourceRoom = null;
+        // If a room is already selected, use it as source room
+        if (selectedRoom && selectedRoom.id) {
+            connectionSourceRoom = selectedRoom;
+        } else {
+            connectionSourceRoom = null;
+        }
         updateSidePanel();
     }
 }
@@ -1150,6 +1209,8 @@ function handleMapEditorClick(e) {
         const clickedRoom = editorMapRooms.find(r => r.x === mapX && r.y === mapY);
         if (clickedRoom) {
             connectionSourceRoom = clickedRoom;
+            selectedRoom = clickedRoom; // Also set as selected for visual feedback
+            selectedRooms = [clickedRoom];
             updateSidePanel();
             renderMapEditor(); // Re-render to show highlight
         }
@@ -1203,9 +1264,10 @@ function handleSpeedModeNavigation(key) {
     const existingRoom = editorMapRooms.find(r => r.x === newX && r.y === newY);
     
     if (existingRoom) {
-        // Room exists, just select it
+        // Room exists, just select it and keep speed mode active
         selectedRoom = existingRoom;
         selectedRooms = [existingRoom];
+        speedModeActive = true; // Ensure speed mode stays active
         updateSidePanel();
         renderMapEditor();
     } else {
@@ -1213,10 +1275,12 @@ function handleSpeedModeNavigation(key) {
         const genericName = `Room ${newX},${newY}`;
         const genericDescription = 'A generic room';
         
+        // Ensure speed mode is active before creating
+        speedModeActive = true;
         createRoom(currentEditorMapId, genericName, genericDescription, newX, newY, 'normal');
         
         // After creation, the room will be added to editorMapRooms via WebSocket message
-        // Speed mode will automatically select it
+        // Speed mode will automatically select it and keep it selected
     }
 }
 
@@ -1523,45 +1587,98 @@ function updateSidePanel() {
     const sidePanel = document.getElementById('sidePanelContent');
     if (!sidePanel) return;
     
-    if (editorMode === 'connect' && connectionSourceRoom) {
-        // Show connection form
-        sidePanel.innerHTML = `
-            <h3>Connect Maps</h3>
-            <p><strong>Source Room:</strong> ${connectionSourceRoom.name} (${connectionSourceRoom.x}, ${connectionSourceRoom.y})</p>
-            <label>Direction:</label>
-            <select id="connectionDirection">
-                <option value="N">North</option>
-                <option value="S">South</option>
-                <option value="E">East</option>
-                <option value="W">West</option>
-                <option value="NE">Northeast</option>
-                <option value="NW">Northwest</option>
-                <option value="SE">Southeast</option>
-                <option value="SW">Southwest</option>
-            </select>
-            <label>Target Map:</label>
-            <select id="targetMapSelect"></select>
-            <label>Target Room X:</label>
-            <input type="number" id="targetRoomX" value="0">
-            <label>Target Room Y:</label>
-            <input type="number" id="targetRoomY" value="0">
-            <button id="connectMapsConfirm">Connect</button>
-            <button id="connectMapsCancel">Cancel</button>
-        `;
-        
-        // Load maps for target map selector
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllMaps' }));
+    if (editorMode === 'connect') {
+        if (connectionSourceRoom) {
+            // Show connection form
+            sidePanel.innerHTML = `
+                <h3 style="font-size: 0.9em; margin-bottom: 8px;">Connect Maps</h3>
+                <p style="font-size: 0.85em; margin-bottom: 8px;"><strong>Source Room:</strong> ${connectionSourceRoom.name} (${connectionSourceRoom.x}, ${connectionSourceRoom.y})</p>
+                <label style="margin-top: 8px;">Direction:</label>
+                <select id="connectionDirection" style="margin-bottom: 8px;">
+                    <option value="N">North</option>
+                    <option value="S">South</option>
+                    <option value="E">East</option>
+                    <option value="W">West</option>
+                    <option value="NE">Northeast</option>
+                    <option value="NW">Northwest</option>
+                    <option value="SE">Southeast</option>
+                    <option value="SW">Southwest</option>
+                </select>
+                <label style="margin-top: 8px;">Target Map:</label>
+                <select id="targetMapSelect" style="margin-bottom: 8px;"></select>
+                <label style="margin-top: 8px;">Target Room:</label>
+                <select id="targetRoomSelect" style="margin-bottom: 8px;">
+                    <option value="">Select a room...</option>
+                </select>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <label style="margin: 0; min-width: 20px;">X:</label>
+                    <input type="number" id="targetRoomX" value="0" style="flex: 1;">
+                    <label style="margin: 0; min-width: 20px; margin-left: 8px;">Y:</label>
+                    <input type="number" id="targetRoomY" value="0" style="flex: 1;">
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                    <button id="connectMapsConfirm" style="flex: 1;">Connect</button>
+                    <button id="connectMapsCancel" style="flex: 1;">Cancel</button>
+                </div>
+            `;
+            
+            // Load maps for target map selector
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'getAllMaps' }));
+            }
+            
+            // Set up target map change handler to load rooms
+            const targetMapSelect = document.getElementById('targetMapSelect');
+            if (targetMapSelect) {
+                targetMapSelect.addEventListener('change', () => {
+                    const targetMapId = parseInt(targetMapSelect.value);
+                    if (targetMapId) {
+                        loadTargetMapRooms(targetMapId);
+                    } else {
+                        const targetRoomSelect = document.getElementById('targetRoomSelect');
+                        if (targetRoomSelect) {
+                            targetRoomSelect.innerHTML = '<option value="">Select a room...</option>';
+                        }
+                    }
+                });
+            }
+            
+            // Set up target room select handler to update coordinates
+            const targetRoomSelect = document.getElementById('targetRoomSelect');
+            if (targetRoomSelect) {
+                targetRoomSelect.addEventListener('change', () => {
+                    const selectedOption = targetRoomSelect.options[targetRoomSelect.selectedIndex];
+                    if (selectedOption.value) {
+                        const coords = selectedOption.value.split(',');
+                        document.getElementById('targetRoomX').value = coords[0];
+                        document.getElementById('targetRoomY').value = coords[1];
+                    }
+                });
+            }
+            
+            // Set up button handlers
+            document.getElementById('connectMapsConfirm').addEventListener('click', () => {
+                connectMaps();
+            });
+            document.getElementById('connectMapsCancel').addEventListener('click', () => {
+                connectionSourceRoom = null;
+                editorMode = 'edit';
+                updateSidePanel();
+            });
+        } else {
+            // Show prompt to select source room
+            sidePanel.innerHTML = `
+                <h3 style="font-size: 0.9em; margin-bottom: 8px;">Connect Maps</h3>
+                <p style="font-size: 0.85em; margin-bottom: 8px;">Click a room on the map to select it as the source room for connection.</p>
+                <button id="connectMapsCancel" style="width: 100%; margin-top: 8px;">Cancel</button>
+            `;
+            
+            document.getElementById('connectMapsCancel').addEventListener('click', () => {
+                editorMode = 'edit';
+                connectionSourceRoom = null;
+                updateSidePanel();
+            });
         }
-        
-        // Set up button handlers
-        document.getElementById('connectMapsConfirm').addEventListener('click', () => {
-            connectMaps();
-        });
-        document.getElementById('connectMapsCancel').addEventListener('click', () => {
-            connectionSourceRoom = null;
-            updateSidePanel();
-        });
     } else if (selectedRoom && selectedRoom.isNew) {
         // Show create room form
         sidePanel.innerHTML = `
@@ -1837,6 +1954,16 @@ function deleteRooms(roomsToDelete) {
     // Don't clear immediately in case server rejects
 }
 
+// Load rooms for target map
+function loadTargetMapRooms(mapId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'getMapEditorData',
+        mapId: mapId
+    }));
+}
+
 // Connect maps
 function connectMaps() {
     const direction = document.getElementById('connectionDirection').value;
@@ -1867,6 +1994,8 @@ function connectMaps() {
     
     connectionSourceRoom = null;
     editorMode = 'edit';
+    selectedRoom = null;
+    selectedRooms = [];
     updateSidePanel();
 }
 
