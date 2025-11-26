@@ -133,8 +133,9 @@ thegame/
   - "Also here:" section with player names (cyan, inline)
   - **God Mode Button Bar** (visible only to god mode players, fixed above command input):
     - Buttons: "Map", "Items", "Spells", "Craft", "NPC"
-    - Only "Map" button is functional (opens map editor)
-    - Other buttons reserved for future features
+    - "Map" button opens map editor (functional)
+    - "NPC" button opens NPC editor (functional)
+    - Other buttons (Items, Spells, Craft) reserved for future features
   - Command prompt at bottom with `>` symbol
 - Compass widget with all 8 cardinal/intercardinal directions plus Up/Down buttons
 - **Coordinates Display**: Shows current map name and coordinates (x, y) at bottom of compass widget
@@ -521,6 +522,52 @@ thegame/
 
 ## Recent Updates
 
+### NPC Editor UI Refactoring (Latest)
+
+#### NPC Editor Layout Structure
+- **Fixed Header**: NPC Editor header and toolbar remain fixed at top (never scrolls)
+- **Scrollable Form**: Only the NPC edit form panel scrolls with `max-height: calc(100vh - 140px)`
+- **Consistent Spacing**: 12px gap between form rows, 10-15px vertical spacing between sections
+
+#### Form Grouping (Horizontal Flex Rows)
+- **Row 1**: Name (70% width) + Color (30% width)
+- **Row 2**: Type (25%) + Base ms (25%) + Diff (25%) + Active (25%)
+- **Row 3**: Required Stats JSON (50%) + Required Buffs JSON (50%) - side-by-side textareas
+- **Row 4**: Input Items JSON (50%) + Output Items JSON (50%) - side-by-side textareas
+- **Row 5**: Failure States JSON (full width)
+- **Textarea Standardization**: All JSON textareas in rows 3 & 4 use `flex: 1; min-height: 80px;` for identical sizing and perfect alignment
+
+#### Label Cleanup
+- **Clean Labels**: "Required Stats", "Required Buffs", "Input Items", "Output Items", "Failure States"
+- **JSON Sublabels**: Small dimmed "(JSON)" sublabel (8px font, color: #888) under each JSON field label
+
+#### Room Placements UI
+- **Horizontal Controls**: Map selector + Room selector + "Add to Room" button in one horizontal row
+- **Clean List Format**: `[MapName – RoomName (x,y)] [REMOVE]` with consistent spacing (12px gap between items)
+- **Remove Buttons**: Standardized size (160px width, 30px height) matching Save/Add buttons, aligned on right side
+
+#### Save Button
+- **Centered**: Save NPC button centered with `margin-top: 20px`
+- **Proper Alignment**: Button does not float or misalign
+
+#### CSS Structure
+- **Row Containers**: Each logical row wrapped in `.npc-row` flex container with `display: flex; gap: 12px;`
+- **Field Groups**: Proper flex sizing for 70/30, 25/25/25/25, 50/50, and full-width layouts
+- **Theme Preservation**: Retro green terminal theme maintained (neon green borders, black background, green text)
+
+#### NPC System Features (Previous Implementation)
+- **Scriptable NPCs**: Non-combat, deterministic resource-producing NPCs with cycle timers
+- **NPC Placement**: NPCs can only be placed in rooms belonging to "Moonless Meadow" map (enforced validation)
+- **NPC Cycle Engine**: Background tick loop processes NPC cycles independently of player actions
+- **Type-Driven Logic**: NPC behavior routed by type (rhythm, stability, worker, tending, rotation, economic, farm, patrol, threshold)
+- **NPC Display**: NPCs appear in room text terminal with color-coded names
+- **LOOK Command**: Players can inspect NPCs by typing `look [npc name]` or `l [npc name]` (partial matching supported)
+- **NPC Editor**: Full-featured editor for creating and editing NPC definitions
+  - All NPC characteristics editable (name, description, type, cycle time, difficulty, stats, buffs, items, failure states)
+  - Color picker for NPC display color (10 predefined colors)
+  - Room placement management (add/remove NPCs from Moonless Meadow rooms)
+  - Compact, organized layout with proper scrolling
+
 ### Latest Improvements (Map Editor Fixes)
 
 #### Dynamic Stats System with Prefix-Based Auto-Detection
@@ -681,10 +728,10 @@ God mode is a special privilege system that grants players administrative capabi
 - **God Mode Flag**: Stored in `players.god_mode` column (INTEGER, 0 or 1)
 - **God Mode Buttons**: Visible only to players with god mode enabled
   - Map: Opens map editor (functional)
+  - NPC: Opens NPC editor (functional)
   - Items: Reserved for future (disabled)
   - Spells: Reserved for future (disabled)
   - Craft: Reserved for future (disabled)
-  - NPC: Reserved for future (disabled)
 
 ### Map Editor
 - **Fixed 100x100 Grid**: All maps display on a fixed 100x100 grid centered at 0,0

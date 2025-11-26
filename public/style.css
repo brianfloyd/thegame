@@ -154,6 +154,122 @@ body {
     color: #00ffff;
 }
 
+/* NPC Section Styling */
+.npcs-section {
+    margin-top: 15px;
+    color: #00ffff;
+}
+
+.npcs-line {
+    display: inline;
+}
+
+.npcs-section-title {
+    color: #ffff00;
+    font-weight: bold;
+}
+
+.npc-item {
+    color: #00ffff;
+}
+
+.npc-placement-section {
+    margin-top: 12px;
+    border-top: 1px solid #333;
+    padding-top: 8px;
+    font-size: 11px;
+}
+
+.npc-placement-section h4 {
+    color: #ffff00;
+    font-size: 0.8em;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+
+.npc-placement-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.npc-placement-controls select,
+.npc-placement-controls input,
+.npc-placement-controls button {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+}
+
+.npc-placement-controls select,
+.npc-placement-controls input {
+    flex: 1;
+    padding: 4px;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+}
+
+.npc-placement-controls button {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 4px 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+
+.npc-placement-controls button:hover {
+    background: #1a3a1a;
+}
+
+.npc-placement-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid #00ff00;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.npc-placement-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid #333;
+    background: #0a0a0a;
+    gap: 12px;
+}
+
+.npc-placement-item span {
+    flex: 1;
+    font-size: 11px;
+    color: #00ff00;
+}
+
+.npc-placement-remove {
+    width: 160px;
+    height: 30px;
+    background: #0a0a0a;
+    border: 2px solid #ff0000;
+    color: #ff0000;
+    font-size: 11px;
+    padding: 4px 16px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    font-family: 'Courier New', monospace;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.npc-placement-remove:hover {
+    background: #3a0a0a;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+}
+
 .error-message {
     color: #ff0000;
     margin-top: 10px;
@@ -603,6 +719,251 @@ body {
     justify-content: center;
 }
 
+#npcListContainer {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 10px;
+}
+
+.npc-list {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    font-size: 11px;
+    color: #00ff00;
+}
+
+.npc-list-item {
+    padding: 4px 6px;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+}
+
+.npc-list-item:hover {
+    background: #1a3a1a;
+}
+
+.npc-list-item.selected {
+    background: #004400;
+}
+
+/* NPC Editor detail mode: hide list, expand form */
+#npcEditor.npc-detail-mode #npcEditorSidePanel {
+    width: 100%;
+    max-width: 100%;
+}
+
+/* NPC Editor: Fixed header, scrollable form */
+#npcEditor .map-editor-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #1a1a1a;
+    border-bottom: 2px solid #00ff00;
+}
+
+#npcEditor .map-editor-toolbar {
+    position: sticky;
+    top: 60px; /* Adjust based on header height */
+    z-index: 9;
+    background: #1a1a1a;
+    border-bottom: 1px solid #00ff00;
+    padding: 8px;
+}
+
+#npcEditor #npcSidePanelContent {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.npc-editor-scrollable {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px;
+    max-height: calc(100vh - 140px);
+}
+
+.npc-editor-title {
+    font-size: 0.9em;
+    margin-bottom: 12px;
+    color: #ffff00;
+}
+
+.npc-editor-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 11px;
+}
+
+.npc-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.npc-field-group {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.npc-field-name {
+    flex: 0 0 70%;
+}
+
+.npc-field-color {
+    flex: 0 0 30%;
+}
+
+.npc-field-quarter {
+    flex: 0 0 calc(25% - 6px);
+}
+
+.npc-field-half {
+    flex: 0 0 calc(50% - 6px);
+}
+
+.npc-field-full {
+    flex: 1 1 100%;
+}
+
+.npc-editor-form label {
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: #00ffff;
+    font-weight: normal;
+}
+
+.npc-json-label {
+    font-size: 8px;
+    color: #888;
+    font-weight: normal;
+}
+
+.npc-editor-form input,
+.npc-editor-form select {
+    height: 30px;
+    font-size: 11px;
+    padding: 4px 6px;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+}
+
+.npc-editor-form textarea {
+    min-height: 80px;
+    font-size: 10px;
+    padding: 4px 6px;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    resize: vertical;
+}
+
+.npc-json-textarea {
+    flex: 1;
+    min-height: 80px;
+    height: 80px;
+}
+
+.npc-save-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.npc-save-row button#saveNpcBtn {
+    width: 160px;
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.npc-editor-form button#saveNpcBtn:hover {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.npc-placement-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #00ff00;
+}
+
+.npc-placement-section h4 {
+    font-size: 0.9em;
+    color: #ffff00;
+    margin-bottom: 12px;
+}
+
+.npc-placement-controls-horizontal {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.npc-placement-controls-horizontal #npcPlacementMapSelect,
+.npc-placement-controls-horizontal #npcPlacementRoomSelect {
+    flex: 1;
+    height: 30px;
+    font-size: 11px;
+    padding: 4px 6px;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+}
+
+.npc-placement-controls-horizontal #npcPlacementMapSelect:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.npc-placement-controls-horizontal .npc-small-btn {
+    width: 160px;
+    height: 30px;
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 4px 16px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.npc-placement-controls-horizontal .npc-small-btn:hover {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+/* Color preview square next to color dropdown */
+.npc-color-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.npc-color-preview {
+    width: 10px;
+    height: 10px;
+    border: 1px solid #00ff00;
+    background: #00ff00;
+}
+
 .map-editor-canvas {
     display: block;
     cursor: crosshair;
@@ -635,6 +996,20 @@ body {
     display: flex;
     flex-direction: column;
     flex: 1;
+    overflow: hidden;
+}
+
+/* NPC Editor: allow scrolling so full NPC sheet (including Save button) is visible */
+#npcEditor .map-editor-side-panel {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#npcEditor #npcSidePanelContent {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
 }
 
@@ -673,8 +1048,9 @@ body {
     margin-top: 10px;
     cursor: pointer;
     font-weight: bold;
+    font-size:11px;
     text-transform: uppercase;
-    width: 100%;
+    width: 10%;
 }
 
 .map-editor-side-panel button:hover {

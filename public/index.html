@@ -30,10 +30,10 @@
                     <!-- God Mode Button Bar -->
                     <div id="godModeBar" class="god-mode-bar hidden">
                         <button class="god-mode-btn" data-action="map">Map</button>
+                        <button class="god-mode-btn" data-action="npc" disabled>NPC</button>
                         <button class="god-mode-btn" data-action="items" disabled>Items</button>
                         <button class="god-mode-btn" data-action="spells" disabled>Spells</button>
                         <button class="god-mode-btn" data-action="craft" disabled>Craft</button>
-                        <button class="god-mode-btn" data-action="npc" disabled>NPC</button>
                     </div>
                     <div class="command-line">
                         <span class="prompt">&gt;</span>
@@ -119,6 +119,34 @@
                 <div id="mapEditorSidePanel" class="map-editor-side-panel">
                     <div id="sidePanelContent">
                         <p>Select a room to edit or click empty space to create a new room.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NPC Editor Overlay -->
+    <div id="npcEditor" class="map-editor-overlay hidden">
+        <div class="map-editor-container">
+            <div class="map-editor-header">
+                <h2>NPC Editor</h2>
+                <button id="closeNpcEditor" class="close-editor-btn">Close</button>
+            </div>
+            <div class="map-editor-toolbar">
+                <select id="npcSelector" class="map-selector">
+                    <option value="">Select an NPC...</option>
+                </select>
+                <button id="createNewNpcBtn" class="editor-btn">Create New NPC</button>
+            </div>
+            <div class="map-editor-content">
+                <div class="map-editor-grid-container" id="npcListContainer">
+                    <div id="npcList" class="npc-list">
+                        <!-- NPC list will be rendered here -->
+                    </div>
+                </div>
+                <div id="npcEditorSidePanel" class="map-editor-side-panel">
+                    <div id="npcSidePanelContent">
+                        <p>Select an NPC from the list or create a new NPC.</p>
                     </div>
                 </div>
             </div>

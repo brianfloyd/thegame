@@ -71,9 +71,61 @@ db.exec(`
     input_items TEXT,
     output_items TEXT,
     failure_states TEXT,
+    display_color TEXT,
     scriptable BOOLEAN NOT NULL DEFAULT 1,
     active BOOLEAN NOT NULL DEFAULT 1
   )
+`);
+
+// Ensure NPC names are unique to prevent duplicate seed inserts
+// Run a cleanup pass first to merge duplicates, then create the unique index.
+try {
+  // Function is declared later in this file; function declarations are hoisted.
+  if (typeof cleanupDuplicateScriptableNPCs === 'function') {
+    cleanupDuplicateScriptableNPCs();
+  }
+} catch (err) {
+  console.error('Error during pre-index NPC cleanup:', err.message);
+}
+
+try {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scriptable_npcs_name ON scriptable_npcs(name)
+  `);
+} catch (err) {
+  // If duplicates somehow still exist, don't crash the server;
+  // the cleanup function (and UNIQUE index) will be relied on in subsequent runs.
+  if (!err.message.includes('UNIQUE') || !err.message.includes('scriptable_npcs.name')) {
+    throw err;
+  }
+  console.error('Could not create unique index on scriptable_npcs.name due to existing duplicates:', err.message);
+}
+
+// Create room_npcs table (NPCs placed in rooms)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS room_npcs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    npc_id INTEGER NOT NULL,
+    room_id INTEGER NOT NULL,
+    state TEXT DEFAULT '{}',
+    last_cycle_run INTEGER DEFAULT 0,
+    active BOOLEAN NOT NULL DEFAULT 1,
+    slot INTEGER NOT NULL DEFAULT 0,
+    spawn_rules TEXT,
+    FOREIGN KEY (npc_id) REFERENCES scriptable_npcs(id),
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+  )
+`);
+
+// Create indexes for room_npcs
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_room_npcs_room_id ON room_npcs(room_id)
+`);
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_room_npcs_npc_id ON room_npcs(npc_id)
+`);
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_room_npcs_active ON room_npcs(active)
 `);
 
 // Add new columns to existing table if they don't exist (for migration)
@@ -109,6 +161,9 @@ addColumnIfNotExists('players', 'resource_max_hit_points', 50);
 addColumnIfNotExists('players', 'resource_mana', 0);
 addColumnIfNotExists('players', 'resource_max_mana', 0);
 addColumnIfNotExists('players', 'flag_god_mode', 0);
+
+// Migration: add display_color to scriptable_npcs if missing
+addColumnIfNotExists('scriptable_npcs', 'display_color', "'#00ff00'", 'TEXT');
 
 // Migrate existing rooms table to include map_id and connection fields
 addColumnIfNotExists('rooms', 'map_id', 1);
@@ -482,11 +537,11 @@ setGodMode.run(1, 'Fliz');
 insertPlayer.run('Hebron', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 'Hebron');
 
-// Insert scriptable NPCs for Glowroot Region
+// Insert scriptable NPCs for Glowroot Region (seed data)
 const insertScriptableNPC = db.prepare(`
   INSERT OR IGNORE INTO scriptable_npcs 
-  (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 insertScriptableNPC.run(
@@ -499,7 +554,8 @@ insertScriptableNPC.run(
   '["spore_resist"]',
   '{}',
   '{"lumin_spore":1}',
-  '["pulse_missed"]'
+  '["pulse_missed"]',
+  '#00ff99'
 );
 
 insertScriptableNPC.run(
@@ -512,7 +568,8 @@ insertScriptableNPC.run(
   '["heat_resist"]',
   '{}',
   '{"ember_gel":1}',
-  '["overheat","rupture"]'
+  '["overheat","rupture"]',
+  '#ff9933'
 );
 
 insertScriptableNPC.run(
@@ -525,7 +582,8 @@ insertScriptableNPC.run(
   '["steady_hands"]',
   '{"root_nutrient":2}',
   '{"glowroot_dust":1}',
-  '["tangle","starve"]'
+  '["tangle","starve"]',
+  '#66ff66'
 );
 
 insertScriptableNPC.run(
@@ -538,7 +596,8 @@ insertScriptableNPC.run(
   '["calm"]',
   '{"nectar_drop":1}',
   '{"liquid_lumen":1}',
-  '["flight_disruption"]'
+  '["flight_disruption"]',
+  '#ffff66'
 );
 
 insertScriptableNPC.run(
@@ -551,7 +610,8 @@ insertScriptableNPC.run(
   '["cooling_aura"]',
   '{"humid_air":1}',
   '{"biotide":1}',
-  '["clog","overspill"]'
+  '["clog","overspill"]',
+  '#66ccff'
 );
 
 insertScriptableNPC.run(
@@ -564,7 +624,8 @@ insertScriptableNPC.run(
   '["precision"]',
   '{"raw_fiber":2}',
   '{"woven_glowfiber":1}',
-  '["bad_fold"]'
+  '["bad_fold"]',
+  '#ff66cc'
 );
 
 insertScriptableNPC.run(
@@ -577,7 +638,8 @@ insertScriptableNPC.run(
   '["clarity"]',
   '{"copper_bit":4}',
   '{"trade_spore":1}',
-  '["poor_trade"]'
+  '["poor_trade"]',
+  '#ffcc66'
 );
 
 insertScriptableNPC.run(
@@ -590,7 +652,8 @@ insertScriptableNPC.run(
   '["gentle_touch"]',
   '{"crawler_feed":1}',
   '{"glow_silk":2}',
-  '["infestation"]'
+  '["infestation"]',
+  '#66ffcc'
 );
 
 insertScriptableNPC.run(
@@ -603,7 +666,8 @@ insertScriptableNPC.run(
   '["slick_grip"]',
   '{}',
   '{"ooze_core":1}',
-  '["slip","rupture"]'
+  '["slip","rupture"]',
+  '#9999ff'
 );
 
 insertScriptableNPC.run(
@@ -616,8 +680,214 @@ insertScriptableNPC.run(
   '["aether_sense"]',
   '{}',
   '{"aether_bud":1}',
-  '["energy_backfire"]'
+  '["energy_backfire"]',
+  '#ffffff'
 );
+
+// Cleanup: merge duplicate NPC definitions by name and fix room_npcs references
+function cleanupDuplicateScriptableNPCs() {
+  try {
+    const npcs = db.prepare('SELECT id, name FROM scriptable_npcs ORDER BY id').all();
+    const nameToId = new Map();
+    const duplicateIds = [];
+
+    npcs.forEach(row => {
+      if (!nameToId.has(row.name)) {
+        nameToId.set(row.name, row.id);
+      } else {
+        duplicateIds.push({ id: row.id, canonicalId: nameToId.get(row.name) });
+      }
+    });
+
+    if (duplicateIds.length === 0) {
+      return;
+    }
+
+    const updateRoomNpcStmt = db.prepare('UPDATE room_npcs SET npc_id = ? WHERE npc_id = ?');
+    const deleteNpcStmt = db.prepare('DELETE FROM scriptable_npcs WHERE id = ?');
+
+    duplicateIds.forEach(dup => {
+      try {
+        // Repoint any room_npcs rows to the canonical NPC id
+        updateRoomNpcStmt.run(dup.canonicalId, dup.id);
+        // Delete the duplicate NPC definition
+        deleteNpcStmt.run(dup.id);
+      } catch (err) {
+        console.error('Error cleaning up duplicate NPC id', dup.id, ':', err.message);
+      }
+    });
+
+    console.log(`Cleaned up ${duplicateIds.length} duplicate NPC definition(s).`);
+  } catch (err) {
+    console.error('Error during duplicate NPC cleanup:', err.message);
+  }
+}
+
+// Run duplicate NPC cleanup once on startup
+cleanupDuplicateScriptableNPCs();
+
+// Scriptable NPC editor helpers
+const getAllScriptableNPCsStmt = db.prepare('SELECT * FROM scriptable_npcs ORDER BY id');
+const getScriptableNPCByIdStmt = db.prepare('SELECT * FROM scriptable_npcs WHERE id = ?');
+
+const createScriptableNPCStmt = db.prepare(`
+  INSERT INTO scriptable_npcs (
+    name,
+    description,
+    npc_type,
+    base_cycle_time,
+    difficulty,
+    required_stats,
+    required_buffs,
+    input_items,
+    output_items,
+    failure_states,
+    display_color,
+    scriptable,
+    active
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+`);
+
+const updateScriptableNPCStmt = db.prepare(`
+  UPDATE scriptable_npcs SET
+    name = ?,
+    description = ?,
+    npc_type = ?,
+    base_cycle_time = ?,
+    difficulty = ?,
+    required_stats = ?,
+    required_buffs = ?,
+    input_items = ?,
+    output_items = ?,
+    failure_states = ?,
+    display_color = ?,
+    active = ?
+  WHERE id = ?
+`);
+
+function getAllScriptableNPCs() {
+  return getAllScriptableNPCsStmt.all();
+}
+
+function getScriptableNPCById(id) {
+  return getScriptableNPCByIdStmt.get(id);
+}
+
+function createScriptableNPC(npc) {
+  const {
+    name,
+    description,
+    npc_type,
+    base_cycle_time,
+    difficulty = 1,
+    required_stats = null,
+    required_buffs = null,
+    input_items = null,
+    output_items = null,
+    failure_states = null,
+    display_color = '#00ff00'
+  } = npc;
+
+  const result = createScriptableNPCStmt.run(
+    name,
+    description || '',
+    npc_type,
+    base_cycle_time,
+    difficulty,
+    required_stats || null,
+    required_buffs || null,
+    input_items || null,
+    output_items || null,
+    failure_states || null,
+    display_color || '#00ff00'
+  );
+
+  return result.lastInsertRowid;
+}
+
+function updateScriptableNPC(npc) {
+  const {
+    id,
+    name,
+    description,
+    npc_type,
+    base_cycle_time,
+    difficulty = 1,
+    required_stats = null,
+    required_buffs = null,
+    input_items = null,
+    output_items = null,
+    failure_states = null,
+    display_color = '#00ff00',
+    active = 1
+  } = npc;
+
+  updateScriptableNPCStmt.run(
+    name,
+    description || '',
+    npc_type,
+    base_cycle_time,
+    difficulty,
+    required_stats || null,
+    required_buffs || null,
+    input_items || null,
+    output_items || null,
+    failure_states || null,
+    display_color || '#00ff00',
+    active ? 1 : 0,
+    id
+  );
+}
+
+// Spawn initial NPCs in Moonless Meadow rooms
+try {
+  const moonlessMeadowMap = getMapByNameStmt.get('Moonless Meadow');
+  if (moonlessMeadowMap) {
+    // Get all rooms from Moonless Meadow
+    const moonlessRooms = getRoomsByMap.all(moonlessMeadowMap.id);
+    
+    // Get all NPCs from scriptable_npcs
+    const getAllNPCsStmt = db.prepare('SELECT * FROM scriptable_npcs WHERE active = 1');
+    const allNPCs = getAllNPCsStmt.all();
+    
+    // Spawn NPCs in a handful of rooms (3-5 rooms, distributing NPCs)
+    const roomsToUse = moonlessRooms.slice(0, Math.min(5, moonlessRooms.length));
+    
+    if (roomsToUse.length > 0 && allNPCs.length > 0) {
+      let npcIndex = 0;
+      let slotCounter = 0;
+      
+      // Distribute NPCs across rooms
+      for (let roomIndex = 0; roomIndex < roomsToUse.length && npcIndex < allNPCs.length; roomIndex++) {
+        const room = roomsToUse[roomIndex];
+        slotCounter = 0;
+        
+        // Place 2-3 NPCs per room (or until we run out)
+        const npcsPerRoom = Math.min(3, Math.ceil(allNPCs.length / roomsToUse.length));
+        for (let i = 0; i < npcsPerRoom && npcIndex < allNPCs.length; i++) {
+          const npc = allNPCs[npcIndex];
+          try {
+            placeNPCInRoom(npc.id, room.id, slotCounter, { cycles: 0 });
+            console.log(`Spawned ${npc.name} in room ${room.name} (${room.x}, ${room.y})`);
+            slotCounter++;
+            npcIndex++;
+          } catch (err) {
+            console.error(`Failed to spawn ${npc.name} in room ${room.id}:`, err.message);
+            npcIndex++; // Skip this NPC and continue
+          }
+        }
+      }
+      
+      console.log(`Spawned ${npcIndex} NPCs in Moonless Meadow`);
+    } else {
+      console.log('Moonless Meadow has no rooms or no NPCs available for spawning');
+    }
+  } else {
+    console.log('Moonless Meadow map not found - skipping NPC spawning');
+  }
+} catch (err) {
+  console.error('Error spawning initial NPCs:', err);
+}
 
 // Ensure the connection room exists in Northern Territory (south street 6 at x=0, y=-5)
 const newhaven = getMapByNameStmt.get('Newhaven');
@@ -1021,6 +1291,146 @@ function disconnectRoom(roomId) {
   return true;
 }
 
+// NPC helper functions
+const validateMoonlessMeadowRoomStmt = db.prepare(`
+  SELECT r.id, r.map_id, m.name as map_name
+  FROM rooms r
+  JOIN maps m ON r.map_id = m.id
+  WHERE r.id = ?
+`);
+
+function validateMoonlessMeadowRoom(roomId) {
+  const result = validateMoonlessMeadowRoomStmt.get(roomId);
+  if (!result) {
+    throw new Error(`Room ${roomId} not found`);
+  }
+  if (result.map_name !== 'Moonless Meadow') {
+    throw new Error(`Room ${roomId} is not in Moonless Meadow map. NPCs can only be placed in Moonless Meadow.`);
+  }
+  return true;
+}
+
+const getNPCsInRoomStmt = db.prepare(`
+  SELECT rn.id, rn.npc_id, rn.state, rn.slot,
+         sn.name, sn.description, sn.display_color
+  FROM room_npcs rn
+  JOIN scriptable_npcs sn ON rn.npc_id = sn.id
+  WHERE rn.room_id = ? AND rn.active = 1
+  ORDER BY rn.slot
+`);
+
+function getNPCsInRoom(roomId) {
+  return getNPCsInRoomStmt.all(roomId).map(row => ({
+    id: row.id,
+    npcId: row.npc_id,
+    name: row.name,
+    description: row.description,
+    color: row.display_color || '#00ffff',
+    state: row.state ? JSON.parse(row.state) : {},
+    slot: row.slot
+  }));
+}
+
+const getAllActiveNPCsStmt = db.prepare(`
+  SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
+         sn.npc_type, sn.base_cycle_time, sn.required_stats, 
+         sn.required_buffs, sn.input_items, sn.output_items, sn.failure_states,
+         sn.display_color
+  FROM room_npcs rn
+  JOIN scriptable_npcs sn ON rn.npc_id = sn.id
+  WHERE rn.active = 1 AND sn.active = 1
+`);
+
+function getAllActiveNPCs() {
+  return getAllActiveNPCsStmt.all().map(row => ({
+    id: row.id,
+    npcId: row.npc_id,
+    roomId: row.room_id,
+    state: row.state ? JSON.parse(row.state) : {},
+    lastCycleRun: row.last_cycle_run || 0,
+    npcType: row.npc_type,
+    baseCycleTime: row.base_cycle_time,
+    requiredStats: row.required_stats ? JSON.parse(row.required_stats) : {},
+    requiredBuffs: row.required_buffs ? JSON.parse(row.required_buffs) : [],
+    inputItems: row.input_items ? JSON.parse(row.input_items) : {},
+    outputItems: row.output_items ? JSON.parse(row.output_items) : {},
+    failureStates: row.failure_states ? JSON.parse(row.failure_states) : [],
+    color: row.display_color || '#00ffff'
+  }));
+}
+
+const placeNPCInRoomStmt = db.prepare(`
+  INSERT INTO room_npcs (npc_id, room_id, state, last_cycle_run, active, slot, spawn_rules)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+`);
+
+function placeNPCInRoom(npcId, roomId, slot = 0, initialState = {}, spawnRules = null) {
+  // Validate room belongs to Moonless Meadow
+  validateMoonlessMeadowRoom(roomId);
+  
+  const stateJson = JSON.stringify(initialState);
+  const spawnRulesJson = spawnRules ? JSON.stringify(spawnRules) : null;
+  const lastCycleRun = Date.now();
+  
+  const result = placeNPCInRoomStmt.run(
+    npcId,
+    roomId,
+    stateJson,
+    lastCycleRun,
+    1, // active
+    slot,
+    spawnRulesJson
+  );
+  
+  return result.lastInsertRowid;
+}
+
+const getNpcPlacementsStmt = db.prepare(`
+  SELECT rn.id, rn.npc_id, rn.room_id, rn.slot,
+         r.name AS room_name, r.x, r.y,
+         m.id AS map_id, m.name AS map_name
+  FROM room_npcs rn
+  JOIN rooms r ON rn.room_id = r.id
+  JOIN maps m ON r.map_id = m.id
+  WHERE rn.npc_id = ? AND rn.active = 1
+  ORDER BY m.name, r.name, rn.slot
+`);
+
+const deleteNpcPlacementStmt = db.prepare('DELETE FROM room_npcs WHERE id = ?');
+
+function getNpcPlacements(npcId) {
+  return getNpcPlacementsStmt.all(npcId);
+}
+
+function deleteNpcPlacement(placementId) {
+  // Simple delete; room-level invariants handled by application logic
+  deleteNpcPlacementStmt.run(placementId);
+}
+
+// Rooms available for NPC placement for a given map.
+// Currently just returns all rooms in the map; higher-level logic enforces
+// Moonless Meadow-only placement.
+function getRoomsForNpcPlacement(mapId) {
+  return getRoomsByMap.all(mapId).map(r => ({
+    id: r.id,
+    name: r.name,
+    x: r.x,
+    y: r.y,
+    map_id: r.map_id
+  }));
+}
+
+const updateNPCStateStmt = db.prepare(`
+  UPDATE room_npcs
+  SET state = ?, last_cycle_run = ?
+  WHERE id = ?
+`);
+
+function updateNPCState(roomNpcId, state, lastCycleRun) {
+  const stateJson = JSON.stringify(state);
+  updateNPCStateStmt.run(stateJson, lastCycleRun, roomNpcId);
+}
+
 module.exports = {
   db,
   getRoomById: (id) => getRoomById.get(id),
@@ -1040,7 +1450,22 @@ module.exports = {
   updateMapSize,
   getPlayerStats,
   detectPlayerAttributes,
-  disconnectRoom
+  disconnectRoom,
+  // NPC functions
+  getNPCsInRoom,
+  getAllActiveNPCs,
+  placeNPCInRoom,
+  updateNPCState,
+  validateMoonlessMeadowRoom,
+  // Scriptable NPC definitions
+  getAllScriptableNPCs,
+  getScriptableNPCById,
+  createScriptableNPC,
+  updateScriptableNPC,
+  // NPC placements
+  getNpcPlacements,
+  deleteNpcPlacement,
+  getRoomsForNpcPlacement
 };
 
 // Run migration after all columns are added

@@ -3,6 +3,7 @@ const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
 const db = require('./database');
+const npcLogic = require('./npcLogic');
 
 const app = express();
 const server = http.createServer(app);
@@ -88,6 +89,15 @@ function sendRoomUpdate(playerName, room) {
   const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerName);
   const exits = getExits(room);
   
+  // Get NPCs in the room
+  const npcsInRoom = db.getNPCsInRoom(room.id).map(npc => ({
+    id: npc.id,
+    name: npc.name,
+    description: npc.description,
+    state: npc.state,
+    color: npc.display_color || npc.color || '#00ffff'
+  }));
+  
   // Get map name
   const map = db.getMapById(room.map_id);
   const mapName = map ? map.name : '';
@@ -103,6 +113,7 @@ function sendRoomUpdate(playerName, room) {
       mapName: mapName
     },
     players: playersInRoom,
+    npcs: npcsInRoom,
     exits: exits
   }));
 }
@@ -300,6 +311,15 @@ wss.on('connection', (ws) => {
         const map = db.getMapById(targetRoom.map_id);
         const mapName = map ? map.name : '';
         
+        // Get NPCs in the new room
+        const npcsInNewRoom = db.getNPCsInRoom(targetRoom.id).map(npc => ({
+          id: npc.id,
+          name: npc.name,
+          description: npc.description,
+          state: npc.state,
+          color: npc.color
+        }));
+
         if (playerData.ws.readyState === WebSocket.OPEN) {
           playerData.ws.send(JSON.stringify({
             type: 'moved',
@@ -312,6 +332,7 @@ wss.on('connection', (ws) => {
               mapName: mapName
             },
             players: playersInNewRoom,
+            npcs: npcsInNewRoom,
             exits: exits
           }));
 
@@ -720,6 +741,321 @@ wss.on('connection', (ws) => {
         }));
       }
 
+      // NPC Editor Handlers (God Mode)
+      else if (data.type === 'getAllNPCs') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const npcs = db.getAllScriptableNPCs();
+        ws.send(JSON.stringify({
+          type: 'npcList',
+          npcs
+        }));
+      }
+
+      else if (data.type === 'createNPC') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { npc: rawNpc } = data;
+        const npc = rawNpc || {};
+        if (!npc || !npc.name || !npc.npc_type || !npc.base_cycle_time) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Missing required NPC fields' }));
+          return;
+        }
+
+        if (!npc.display_color) {
+          npc.display_color = '#00ff00';
+        }
+
+        try {
+          const id = db.createScriptableNPC(npc);
+          const created = db.getScriptableNPCById(id);
+          ws.send(JSON.stringify({
+            type: 'npcCreated',
+            npc: created
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to create NPC: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'updateNPC') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { npc: rawNpc } = data;
+        const npc = rawNpc || {};
+        if (!npc || !npc.id || !npc.name || !npc.npc_type || !npc.base_cycle_time) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Missing required NPC fields' }));
+          return;
+        }
+
+        if (!npc.display_color) {
+          npc.display_color = '#00ff00';
+        }
+
+        try {
+          db.updateScriptableNPC(npc);
+          const updated = db.getScriptableNPCById(npc.id);
+          ws.send(JSON.stringify({
+            type: 'npcUpdated',
+            npc: updated
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to update NPC: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'getNpcPlacements') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { npcId } = data;
+        if (!npcId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'NPC id required' }));
+          return;
+        }
+
+        const placements = db.getNpcPlacements(npcId);
+        ws.send(JSON.stringify({
+          type: 'npcPlacements',
+          npcId,
+          placements
+        }));
+      }
+
+      else if (data.type === 'getNpcPlacementRooms') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const moonless = db.getMapByName('Moonless Meadow');
+        if (!moonless) {
+          ws.send(JSON.stringify({ type: 'npcPlacementRooms', error: 'Moonless Meadow map not found' }));
+          return;
+        }
+
+        const rooms = db.getRoomsForNpcPlacement(moonless.id);
+        ws.send(JSON.stringify({
+          type: 'npcPlacementRooms',
+          map: { id: moonless.id, name: moonless.name },
+          rooms
+        }));
+      }
+
+      else if (data.type === 'addNpcToRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { npcId, roomId, slot } = data;
+        if (!npcId || !roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'NPC id and Room id are required' }));
+          return;
+        }
+
+        try {
+          // placeNPCInRoom enforces Moonless Meadow restriction
+          const placementId = db.placeNPCInRoom(npcId, roomId, slot || 0, { cycles: 0 });
+          const placements = db.getNpcPlacements(npcId);
+          const placement = placements.find(p => p.id === placementId) || null;
+          ws.send(JSON.stringify({
+            type: 'npcPlacementAdded',
+            placement
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to add NPC to room: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'removeNpcFromRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { placementId, npcId } = data;
+        if (!placementId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Placement id required' }));
+          return;
+        }
+
+        try {
+          db.deleteNpcPlacement(placementId);
+          const placements = npcId ? db.getNpcPlacements(npcId) : [];
+          ws.send(JSON.stringify({
+            type: 'npcPlacementRemoved',
+            placementId,
+            npcId,
+            placements
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to remove NPC from room: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'look') {
+        // Find player by WebSocket connection
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+          return;
+        }
+
+        const currentRoom = db.getRoomById(player.current_room_id);
+        if (!currentRoom) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+          return;
+        }
+        
+        const target = (data.target || '').trim();
+        if (!target) {
+          // No specific target: send full room update (same as entering room)
+          sendRoomUpdate(currentPlayerName, currentRoom);
+          return;
+        }
+
+        // LOOK at NPC in room by (partial) name match
+        const npcsInRoom = db.getNPCsInRoom(currentRoom.id);
+        const query = target.toLowerCase();
+        const matches = npcsInRoom.filter(npc => 
+          npc.name && npc.name.toLowerCase().includes(query)
+        );
+
+        if (matches.length === 0) {
+          ws.send(JSON.stringify({
+            type: 'message',
+            message: `You don't see "${target}" here.`
+          }));
+          return;
+        }
+
+        // Build description output for all matching NPCs
+        const lines = matches.map(npc => {
+          const desc = npc.description || 'You see nothing special.';
+          return `${npc.name}: ${desc}`;
+        });
+
+        ws.send(JSON.stringify({
+          type: 'message',
+          message: lines.join('\n')
+        }));
+      }
+
       else if (data.type === 'disconnectMap') {
         let currentPlayerName = null;
         connectedPlayers.forEach((playerData, name) => {
@@ -805,8 +1141,56 @@ wss.on('connection', (ws) => {
   });
 });
 
+// NPC Cycle Engine Configuration
+const NPC_TICK_INTERVAL = 1000; // milliseconds (configurable)
+
+// NPC Cycle Engine (Tick Loop)
+// Runs independently of player actions, processes NPC cycles on timer
+function startNPCCycleEngine() {
+  setInterval(() => {
+    try {
+      const activeNPCs = db.getAllActiveNPCs();
+      const now = Date.now();
+      
+      for (const roomNpc of activeNPCs) {
+        const timeElapsed = now - roomNpc.lastCycleRun;
+        
+        // Check if enough time has passed for this NPC's cycle
+        if (timeElapsed >= roomNpc.baseCycleTime) {
+          try {
+            // Structure data for npcLogic: npc data and roomNpc data
+            const npcData = {
+              npcType: roomNpc.npcType,
+              baseCycleTime: roomNpc.baseCycleTime,
+              requiredStats: roomNpc.requiredStats,
+              requiredBuffs: roomNpc.requiredBuffs,
+              inputItems: roomNpc.inputItems,
+              outputItems: roomNpc.outputItems,
+              failureStates: roomNpc.failureStates
+            };
+            
+            // Run NPC cycle logic
+            const newState = npcLogic.runNPCCycle(npcData, roomNpc);
+            
+            // Update NPC state in database
+            db.updateNPCState(roomNpc.id, newState, now);
+          } catch (err) {
+            console.error(`Error processing NPC cycle for room_npc ${roomNpc.id}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error in NPC cycle engine:', err);
+    }
+  }, NPC_TICK_INTERVAL);
+  
+  console.log(`NPC Cycle Engine started (interval: ${NPC_TICK_INTERVAL}ms)`);
+}
+
 const PORT = 3434;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  // Start NPC cycle engine after server starts
+  startNPCCycleEngine();
 });
 

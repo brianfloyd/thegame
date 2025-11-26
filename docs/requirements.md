@@ -378,7 +378,49 @@ The following 10 NPCs have been added to the database:
 ### Implementation Status
 - **Database Schema**: ✅ Created
 - **NPC Data**: ✅ Inserted (10 NPCs)
-- **Game Logic**: ⏳ Pending (to be implemented in future)
+- **Game Logic**: ✅ Cycle engine with type-driven scaffolding
+- **Room Placement**: ✅ `room_npcs` table with Moonless Meadow-only enforcement
+- **NPC Editing (God Mode)**: ✅ NPC editor overlay with CRUD support
+
+### NPC Editing (God Mode)
+
+- **Access**: Second God Mode button (`NPC`) in the button bar (visible only to god mode players)
+- **Overlay**: Full-screen editor overlay similar to Map Editor
+  - Left side: Scrollable NPC list (`#npcList`) and dropdown selector (`#npcSelector`)
+  - Right side: Compact side panel with NPC detail form
+- **NPC List**:
+  - Shows all `scriptable_npcs` entries (id, name, npc_type)
+  - Click to select NPC for editing (highlighted row)
+  - Dropdown selector mirrors the list and can also select NPCs
+- **NPC Detail Form**:
+  - Fields:
+    - `name`
+    - `description`
+    - `npc_type` (rhythm, stability, worker, tending, rotation, economic, farm, patrol, threshold)
+    - `base_cycle_time` (ms)
+    - `difficulty`
+    - `required_stats` (JSON)
+    - `required_buffs` (JSON array)
+    - `input_items` (JSON)
+    - `output_items` (JSON)
+    - `failure_states` (JSON array)
+    - `active` (Yes/No)
+  - Supports:
+    - Editing existing NPCs
+    - Creating new NPCs (`Create New NPC` button)
+    - Saving changes via `Save NPC` button
+- **WebSocket Messages (NPC Editor)**:
+  - Client → Server:
+    - `{ type: 'getAllNPCs' }` — load all scriptable NPCs (god mode only)
+    - `{ type: 'createNPC', npc: { ...fields } }` — create new NPC definition
+    - `{ type: 'updateNPC', npc: { id, ...fields } }` — update existing NPC
+  - Server → Client:
+    - `{ type: 'npcList', npcs: [...] }` — complete NPC list
+    - `{ type: 'npcCreated', npc: { ... } }` — newly created NPC
+    - `{ type: 'npcUpdated', npc: { ... } }` — updated NPC
+- **Placement Rule**:
+  - NPC definitions editable globally
+  - Actual room placement (`room_npcs`) remains restricted to rooms in the **Moonless Meadow** map
 
 ## Future Enhancements (Prepared)
 
