@@ -220,6 +220,125 @@ body {
     color: #ffffff;
 }
 
+/* Item Editor Styles */
+.item-editor-list-container {
+    flex: 0 0 250px;
+    background: #111;
+    border: 1px solid #00ff00;
+    padding: 10px;
+    overflow-y: auto;
+    max-height: calc(100vh - 140px);
+}
+
+.item-list-title {
+    color: #ffff00;
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 5px;
+}
+
+.item-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.item-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.item-list-item:hover {
+    background: #222;
+    border-color: #00ff00;
+}
+
+.item-list-item.selected {
+    background: #002200;
+    border-color: #00ff00;
+}
+
+.item-list-name {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.item-list-type {
+    color: #666;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.item-editor-hint {
+    color: #666;
+    font-style: italic;
+}
+
+.item-editor-form {
+    padding: 10px;
+}
+
+.item-form-title {
+    color: #ffff00;
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+}
+
+.item-form-group {
+    margin-bottom: 15px;
+}
+
+.item-form-group label {
+    display: block;
+    color: #00ffff;
+    margin-bottom: 5px;
+    font-size: 12px;
+}
+
+.item-form-input,
+.item-form-select,
+.item-form-textarea {
+    width: 100%;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #00ff00;
+    padding: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.item-form-input:focus,
+.item-form-select:focus,
+.item-form-textarea:focus {
+    border-color: #00ff00;
+    outline: none;
+}
+
+.item-form-textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.item-form-actions {
+    margin-top: 20px;
+    text-align: center;
+}
+
+.item-save-btn {
+    padding: 10px 30px;
+    font-size: 14px;
+}
+
 .npc-placement-section {
     margin-top: 12px;
     border-top: 1px solid #333;

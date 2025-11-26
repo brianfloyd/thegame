@@ -1721,6 +1721,12 @@ function updateGodModeUI(hasGodMode) {
     if (npcBtn) {
         npcBtn.disabled = !hasGodMode;
     }
+    
+    // Enable Items editor button when in god mode
+    const itemsBtn = document.querySelector('.god-mode-btn[data-action="items"]');
+    if (itemsBtn) {
+        itemsBtn.disabled = !hasGodMode;
+    }
 }
 
 // Initialize on page load
@@ -1743,8 +1749,11 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (action === 'npc') {
                 // Navigate to NPC editor route (session-based, no URL params needed)
                 window.location.href = '/npc';
+            } else if (action === 'items') {
+                // Navigate to Item editor route (session-based, no URL params needed)
+                window.location.href = '/items';
             }
-            // Other actions (items, spells, craft) will be implemented later
+            // Other actions (spells, craft) will be implemented later
         });
     });
 

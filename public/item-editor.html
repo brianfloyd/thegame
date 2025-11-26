@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Item Editor - The Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Item Editor -->
+    <div id="itemEditor" class="map-editor-overlay" style="display: block;">
+        <div class="map-editor-container">
+            <div class="map-editor-header">
+                <h2>Item Editor</h2>
+                <button id="closeItemEditor" class="close-editor-btn">Close</button>
+            </div>
+            <div class="map-editor-toolbar">
+                <select id="itemSelector" class="map-selector">
+                    <option value="">Select an item...</option>
+                </select>
+                <button id="createNewItemBtn" class="editor-btn">Create New Item</button>
+            </div>
+            <div class="map-editor-content">
+                <!-- Item List (left side) -->
+                <div class="item-editor-list-container">
+                    <h3 class="item-list-title">Items</h3>
+                    <div id="itemList" class="item-list"></div>
+                </div>
+                <!-- Item Details (right side) -->
+                <div id="itemEditorSidePanel" class="map-editor-side-panel">
+                    <div id="itemPanelContent">
+                        <p class="item-editor-hint">Select an item to edit or click "Create New Item" to add one.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="item-editor.js"></script>
+</body>
+</html>
+

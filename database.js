@@ -128,6 +128,41 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_room_npcs_active ON room_npcs(active)
 `);
 
+// Create items table (master item definitions)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    item_type TEXT NOT NULL DEFAULT 'sundries',
+    active BOOLEAN NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+  )
+`);
+
+// Seed initial items
+const seedItems = [
+  {
+    name: 'Pulse Resin',
+    description: 'A thick, amber-colored resin harvested from Pulsewood trees. It pulses faintly with bioluminescent energy and is commonly used in alchemical preparations.',
+    item_type: 'sundries'
+  },
+  {
+    name: 'Harvester Rune',
+    description: 'A small stone etched with glowing symbols. When held near harvestable creatures, it enhances the yield and quality of gathered materials.',
+    item_type: 'sundries'
+  }
+];
+
+const insertItemStmt = db.prepare(`
+  INSERT OR IGNORE INTO items (name, description, item_type, created_at)
+  VALUES (?, ?, ?, ?)
+`);
+
+seedItems.forEach(item => {
+  insertItemStmt.run(item.name, item.description, item.item_type, Date.now());
+});
+
 // Create room_items table (items on the ground in rooms, shared among players)
 db.exec(`
   CREATE TABLE IF NOT EXISTS room_items (
@@ -1274,6 +1309,66 @@ function updateNPCState(roomNpcId, state, lastCycleRun) {
 }
 
 // ============================================================
+// Items (master item definitions) functions
+// ============================================================
+
+const getAllItemsStmt = db.prepare(`
+  SELECT * FROM items ORDER BY name
+`);
+
+const getItemByIdStmt = db.prepare(`
+  SELECT * FROM items WHERE id = ?
+`);
+
+const getItemByNameStmt = db.prepare(`
+  SELECT * FROM items WHERE name = ?
+`);
+
+const createItemStmt = db.prepare(`
+  INSERT INTO items (name, description, item_type, active, created_at)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+const updateItemStmt = db.prepare(`
+  UPDATE items SET name = ?, description = ?, item_type = ?, active = ?
+  WHERE id = ?
+`);
+
+function getAllItems() {
+  return getAllItemsStmt.all();
+}
+
+function getItemById(id) {
+  return getItemByIdStmt.get(id);
+}
+
+function getItemByName(name) {
+  return getItemByNameStmt.get(name);
+}
+
+function createItem(item) {
+  const result = createItemStmt.run(
+    item.name,
+    item.description || '',
+    item.item_type || 'sundries',
+    item.active !== undefined ? item.active : 1,
+    Date.now()
+  );
+  return getItemById(result.lastInsertRowid);
+}
+
+function updateItem(item) {
+  updateItemStmt.run(
+    item.name,
+    item.description || '',
+    item.item_type || 'sundries',
+    item.active !== undefined ? item.active : 1,
+    item.id
+  );
+  return getItemById(item.id);
+}
+
+// ============================================================
 // Room Items (ground inventory) functions
 // ============================================================
 
@@ -1443,7 +1538,13 @@ module.exports = {
   // Player items (inventory)
   getPlayerItems,
   addPlayerItem,
-  removePlayerItem
+  removePlayerItem,
+  // Items (master definitions)
+  getAllItems,
+  getItemById,
+  getItemByName,
+  createItem,
+  updateItem
 };
 
 // Run migration after all columns are added

@@ -227,6 +227,10 @@ app.get('/npc', validateSession, checkGodMode, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'npc-editor.html'));
 });
 
+app.get('/items', validateSession, checkGodMode, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'item-editor.html'));
+});
+
 // Track connected players: sessionId -> { ws, roomId, playerName, playerId }
 const connectedPlayers = new Map();
 
@@ -1285,6 +1289,98 @@ wss.on('connection', (ws, req) => {
           }));
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', message: 'Failed to remove NPC from room: ' + err.message }));
+        }
+      }
+
+      // ============================================================
+      // Item Editor Handlers (God Mode)
+      // ============================================================
+      else if (data.type === 'getAllItems') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const items = db.getAllItems();
+        ws.send(JSON.stringify({ type: 'itemList', items }));
+      }
+
+      else if (data.type === 'createItem') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { item } = data;
+        if (!item || !item.name) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Item name required' }));
+          return;
+        }
+
+        try {
+          const newItem = db.createItem(item);
+          ws.send(JSON.stringify({ type: 'itemCreated', item: newItem }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to create item: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'updateItem') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { item } = data;
+        if (!item || !item.id) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Item id required' }));
+          return;
+        }
+
+        try {
+          const updatedItem = db.updateItem(item);
+          ws.send(JSON.stringify({ type: 'itemUpdated', item: updatedItem }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to update item: ' + err.message }));
         }
       }
 

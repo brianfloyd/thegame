@@ -458,6 +458,33 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 2. The command will automatically appear in `help` output
 3. Add the command handler in `executeCommand()` function
 
+## Items System
+
+### Database Schema
+
+#### `items` Table (Master Item Definitions)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| name | TEXT | Unique item name (e.g., "Pulse Resin") |
+| description | TEXT | Item description |
+| item_type | TEXT | Type category (sundries, weapon, armor, consumable, material, quest) |
+| active | BOOLEAN | Whether item is active in game |
+| created_at | INTEGER | Creation timestamp |
+
+### Seeded Items
+1. **Pulse Resin** - A thick, amber-colored resin harvested from Pulsewood trees. Commonly used in alchemical preparations.
+2. **Harvester Rune** - A small stone etched with glowing symbols that enhances yield from harvestable creatures.
+
+### Item Editor (God Mode)
+- **Route**: `/items` (protected by session and god mode)
+- **Features**:
+  - View all items in list format
+  - Select item from dropdown or click in list
+  - Edit item name, type, description, active status
+  - Create new items
+  - Same retro terminal aesthetic as other editors
+
 ### Partial Name Matching
 - Commands support partial item/NPC name matching (case-insensitive)
 - If multiple items match (e.g., "s" matches "shroud" and "sword"), prompts for clarification: "Which did you mean: shroud, sword?"
