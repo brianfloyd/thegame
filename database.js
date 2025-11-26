@@ -128,6 +128,36 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_room_npcs_active ON room_npcs(active)
 `);
 
+// Create room_items table (items on the ground in rooms, shared among players)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS room_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+  )
+`);
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_room_items_room_id ON room_items(room_id)
+`);
+
+// Create player_items table (player inventory, no weight limit for now)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS player_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    item_name TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (player_id) REFERENCES players(id)
+  )
+`);
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_player_items_player_id ON player_items(player_id)
+`);
+
 // Add new columns to existing table if they don't exist (for migration)
 const addColumnIfNotExists = (tableName, columnName, defaultValue, columnType = 'INTEGER') => {
   try {
@@ -1243,6 +1273,134 @@ function updateNPCState(roomNpcId, state, lastCycleRun) {
   updateNPCStateStmt.run(stateJson, lastCycleRun, roomNpcId);
 }
 
+// ============================================================
+// Room Items (ground inventory) functions
+// ============================================================
+
+const getRoomItemsStmt = db.prepare(`
+  SELECT item_name, SUM(quantity) as quantity
+  FROM room_items
+  WHERE room_id = ?
+  GROUP BY item_name
+  ORDER BY item_name
+`);
+
+const addRoomItemStmt = db.prepare(`
+  INSERT INTO room_items (room_id, item_name, quantity, created_at)
+  VALUES (?, ?, ?, ?)
+`);
+
+const updateRoomItemQtyStmt = db.prepare(`
+  UPDATE room_items
+  SET quantity = quantity + ?
+  WHERE room_id = ? AND item_name = ?
+`);
+
+const getRoomItemByNameStmt = db.prepare(`
+  SELECT id, quantity FROM room_items
+  WHERE room_id = ? AND item_name = ?
+  LIMIT 1
+`);
+
+const deleteRoomItemStmt = db.prepare(`
+  DELETE FROM room_items WHERE id = ?
+`);
+
+const decrementRoomItemStmt = db.prepare(`
+  UPDATE room_items SET quantity = quantity - ? WHERE id = ?
+`);
+
+function getRoomItems(roomId) {
+  return getRoomItemsStmt.all(roomId);
+}
+
+function addRoomItem(roomId, itemName, quantity = 1) {
+  const existing = getRoomItemByNameStmt.get(roomId, itemName);
+  if (existing) {
+    updateRoomItemQtyStmt.run(quantity, roomId, itemName);
+  } else {
+    addRoomItemStmt.run(roomId, itemName, quantity, Date.now());
+  }
+}
+
+function removeRoomItem(roomId, itemName, quantity = 1) {
+  const existing = getRoomItemByNameStmt.get(roomId, itemName);
+  if (!existing) return false;
+  
+  if (existing.quantity <= quantity) {
+    // Remove entire row
+    deleteRoomItemStmt.run(existing.id);
+  } else {
+    // Decrement quantity
+    decrementRoomItemStmt.run(quantity, existing.id);
+  }
+  return true;
+}
+
+// ============================================================
+// Player Items (inventory) functions
+// ============================================================
+
+const getPlayerItemsStmt = db.prepare(`
+  SELECT item_name, SUM(quantity) as quantity
+  FROM player_items
+  WHERE player_id = ?
+  GROUP BY item_name
+  ORDER BY item_name
+`);
+
+const addPlayerItemStmt = db.prepare(`
+  INSERT INTO player_items (player_id, item_name, quantity, created_at)
+  VALUES (?, ?, ?, ?)
+`);
+
+const updatePlayerItemQtyStmt = db.prepare(`
+  UPDATE player_items
+  SET quantity = quantity + ?
+  WHERE player_id = ? AND item_name = ?
+`);
+
+const getPlayerItemByNameStmt = db.prepare(`
+  SELECT id, quantity FROM player_items
+  WHERE player_id = ? AND item_name = ?
+  LIMIT 1
+`);
+
+const deletePlayerItemStmt = db.prepare(`
+  DELETE FROM player_items WHERE id = ?
+`);
+
+const decrementPlayerItemStmt = db.prepare(`
+  UPDATE player_items SET quantity = quantity - ? WHERE id = ?
+`);
+
+function getPlayerItems(playerId) {
+  return getPlayerItemsStmt.all(playerId);
+}
+
+function addPlayerItem(playerId, itemName, quantity = 1) {
+  const existing = getPlayerItemByNameStmt.get(playerId, itemName);
+  if (existing) {
+    updatePlayerItemQtyStmt.run(quantity, playerId, itemName);
+  } else {
+    addPlayerItemStmt.run(playerId, itemName, quantity, Date.now());
+  }
+}
+
+function removePlayerItem(playerId, itemName, quantity = 1) {
+  const existing = getPlayerItemByNameStmt.get(playerId, itemName);
+  if (!existing) return false;
+  
+  if (existing.quantity <= quantity) {
+    // Remove entire row
+    deletePlayerItemStmt.run(existing.id);
+  } else {
+    // Decrement quantity
+    decrementPlayerItemStmt.run(quantity, existing.id);
+  }
+  return true;
+}
+
 module.exports = {
   db,
   getRoomById: (id) => getRoomById.get(id),
@@ -1277,7 +1435,15 @@ module.exports = {
   // NPC placements
   getNpcPlacements,
   deleteNpcPlacement,
-  getRoomsForNpcPlacement
+  getRoomsForNpcPlacement,
+  // Room items (ground inventory)
+  getRoomItems,
+  addRoomItem,
+  removeRoomItem,
+  // Player items (inventory)
+  getPlayerItems,
+  addPlayerItem,
+  removePlayerItem
 };
 
 // Run migration after all columns are added

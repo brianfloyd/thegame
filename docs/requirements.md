@@ -422,6 +422,63 @@ The following 10 NPCs have been added to the database:
   - NPC definitions editable globally
   - Actual room placement (`room_npcs`) remains restricted to rooms in the **Moonless Meadow** map
 
+## Inventory System
+
+### Database Tables
+
+#### `room_items` - Items on the ground in rooms
+- `id`: Primary key
+- `room_id`: Foreign key to rooms
+- `item_name`: Text name of item
+- `quantity`: Number of items (stacks)
+- `created_at`: Timestamp when item was placed
+
+#### `player_items` - Player inventory
+- `id`: Primary key
+- `player_id`: Foreign key to players
+- `item_name`: Text name of item
+- `quantity`: Number of items (stacks)
+- `created_at`: Timestamp when item was acquired
+
+### Commands
+
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `inventory` | `inv`, `i` | Display player inventory |
+| `take <item>` | `t <item>` | Pick up item from ground (partial name matching) |
+| `drop <item>` | (none, `d` = down) | Drop item to ground (partial name matching) |
+| `harvest <npc>` | `h <npc>` | Harvest items from NPC (partial name matching) |
+| `collect <npc>` | `c <npc>` | Alias for harvest |
+| `gather <npc>` | `g <npc>` | Alias for harvest |
+
+### Partial Name Matching
+- Commands support partial item/NPC name matching (case-insensitive)
+- If multiple items match (e.g., "s" matches "shroud" and "sword"), prompts for clarification: "Which did you mean: shroud, sword?"
+- Single match proceeds automatically
+
+### NPC Item Production (Rhythm NPCs)
+- Rhythm-type NPCs produce items every cycle based on their `output_items` definition
+- Produced items are added to the room's ground inventory (`room_items`)
+- Items accumulate over time as NPC cycles continue
+
+### UI Display
+- Room view shows "On the ground: item_name (xQuantity)" section
+- Items displayed in gold/yellow color (#ffcc00)
+- Inventory command shows "You are carrying: ..." or "Your inventory is empty."
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'inventory' }` - Request inventory list
+- `{ type: 'take', itemName: 'partial_name' }` - Take item from ground
+- `{ type: 'drop', itemName: 'partial_name' }` - Drop item to ground
+- `{ type: 'harvest', target: 'partial_npc_name' }` - Harvest from NPC
+
+#### Server → Client
+- `{ type: 'inventoryList', items: [{ item_name, quantity }] }` - Player inventory
+- `{ type: 'message', message: 'You pick up item_name.' }` - Action feedback
+- Room updates (`roomUpdate`, `moved`) now include `roomItems` array
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database

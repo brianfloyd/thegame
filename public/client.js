@@ -38,7 +38,10 @@ function connectWebSocket() {
 function handleMessage(data) {
     switch (data.type) {
         case 'roomUpdate':
-            updateRoomView(data.room, data.players, data.exits, data.npcs);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems);
+            break;
+        case 'inventoryList':
+            displayInventory(data.items);
             break;
         case 'playerJoined':
             addPlayerToTerminal(data.playerName);
@@ -47,7 +50,7 @@ function handleMessage(data) {
             removePlayerFromTerminal(data.playerName);
             break;
         case 'moved':
-            updateRoomView(data.room, data.players, data.exits, data.npcs);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems);
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
@@ -476,7 +479,7 @@ function normalizeCommand(input) {
 }
 
 // Update room view in terminal
-function updateRoomView(room, players, exits, npcs) {
+function updateRoomView(room, players, exits, npcs, roomItems) {
     const terminalContent = document.getElementById('terminalContent');
     
     // Clear terminal
@@ -554,6 +557,31 @@ function updateRoomView(room, players, exits, npcs) {
         terminalContent.appendChild(npcsSection);
     }
     
+    // Display room items (items on the ground)
+    if (roomItems && roomItems.length > 0) {
+        const itemsSection = document.createElement('div');
+        itemsSection.className = 'items-section';
+        
+        const itemsLine = document.createElement('div');
+        itemsLine.className = 'items-line';
+        
+        const itemsTitle = document.createElement('span');
+        itemsTitle.className = 'items-section-title';
+        itemsTitle.textContent = 'On the ground:';
+        itemsLine.appendChild(itemsTitle);
+        
+        roomItems.forEach((item, index) => {
+            const itemSpan = document.createElement('span');
+            itemSpan.className = 'item-item';
+            const qtyText = item.quantity > 1 ? ` (x${item.quantity})` : '';
+            itemSpan.textContent = (index > 0 ? ', ' : ' ') + item.item_name + qtyText;
+            itemsLine.appendChild(itemSpan);
+        });
+        
+        itemsSection.appendChild(itemsLine);
+        terminalContent.appendChild(itemsSection);
+    }
+    
     // Scroll to bottom
     terminalContent.scrollTop = terminalContent.scrollHeight;
     
@@ -585,6 +613,22 @@ function getNPCStateDescription(npc) {
     } else {
         return 'pulsing softly';
     }
+}
+
+// Display player inventory in terminal
+function displayInventory(items) {
+    if (!items || items.length === 0) {
+        addToTerminal('Your inventory is empty.', 'info');
+        return;
+    }
+    
+    const lines = ['You are carrying:'];
+    items.forEach(item => {
+        const qtyText = item.quantity > 1 ? ` (x${item.quantity})` : '';
+        lines.push(`  ${item.item_name}${qtyText}`);
+    });
+    
+    addToTerminal(lines.join('\n'), 'info');
 }
 
 // Add player to terminal
@@ -769,6 +813,49 @@ function executeCommand(command) {
             payload.target = target;
         }
         ws.send(JSON.stringify(payload));
+        return;
+    }
+
+    // INVENTORY / INV / I
+    if (base === 'inventory' || base === 'inv' || base === 'i') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        ws.send(JSON.stringify({ type: 'inventory' }));
+        return;
+    }
+
+    // TAKE / T <item> - partial item name matching
+    if (base === 'take' || base === 't') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        const itemName = parts.slice(1).join(' ');
+        ws.send(JSON.stringify({ type: 'take', itemName }));
+        return;
+    }
+
+    // DROP <item> - no abbreviation (d = down), partial item name matching
+    if (base === 'drop') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        const itemName = parts.slice(1).join(' ');
+        ws.send(JSON.stringify({ type: 'drop', itemName }));
+        return;
+    }
+
+    // HARVEST / H / COLLECT / C / GATHER / G <npc> - partial NPC name matching
+    if (base === 'harvest' || base === 'h' || base === 'collect' || base === 'c' || base === 'gather' || base === 'g') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        const target = parts.slice(1).join(' ');
+        ws.send(JSON.stringify({ type: 'harvest', target }));
         return;
     }
 

@@ -3,9 +3,9 @@
 
 /**
  * Runs a cycle for an NPC based on its type
- * @param {Object} npc - NPC data from scriptable_npcs table
+ * @param {Object} npc - NPC data from scriptable_npcs table (includes outputItems)
  * @param {Object} roomNpc - Room NPC data from room_npcs table (includes current state)
- * @returns {Object} - New state object to save
+ * @returns {Object} - { state: {...}, producedItems: [{itemName, quantity}] }
  */
 function runNPCCycle(npc, roomNpc) {
   const currentState = roomNpc.state || {};
@@ -39,21 +39,34 @@ function runNPCCycle(npc, roomNpc) {
       return handleMachine(npc, currentState);
     default:
       console.log(`Unknown NPC type: ${npc.npcType}`);
-      // Default: just increment cycles
+      // Default: just increment cycles, produce nothing
       currentState.cycles = (currentState.cycles || 0) + 1;
-      return currentState;
+      return { state: currentState, producedItems: [] };
   }
 }
 
 /**
- * Rhythm NPC handler
+ * Rhythm NPC handler - PRODUCES ITEMS EVERY CYCLE
  * Example: Glowroot Pulsecap - releases spores in rhythmic pulses
  */
 function handleRhythm(npc, state) {
-  console.log(`Processing rhythm NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
-  // TODO: Implement rhythm logic (pulse timing, spore release)
-  return state;
+  
+  // Rhythm NPCs produce output items every cycle based on their output_items definition
+  const producedItems = [];
+  if (npc.outputItems && typeof npc.outputItems === 'object') {
+    for (const [itemName, qty] of Object.entries(npc.outputItems)) {
+      if (qty > 0) {
+        producedItems.push({ itemName, quantity: qty });
+      }
+    }
+  }
+  
+  if (producedItems.length > 0) {
+    console.log(`Rhythm NPC produced: ${producedItems.map(i => `${i.itemName} x${i.quantity}`).join(', ')}`);
+  }
+  
+  return { state, producedItems };
 }
 
 /**
@@ -61,10 +74,9 @@ function handleRhythm(npc, state) {
  * Example: Embergut Shroomling - heat-cycling fungus requiring stabilization
  */
 function handleStability(npc, state) {
-  console.log(`Processing stability NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement stability logic (heat management, stabilization checks)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -72,10 +84,9 @@ function handleStability(npc, state) {
  * Example: Mycelium Forager - gathers and refines nutrients
  */
 function handleWorker(npc, state) {
-  console.log(`Processing worker NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement worker logic (gathering, refining, output production)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -83,10 +94,9 @@ function handleWorker(npc, state) {
  * Example: Lantern Moth Swarm - requires careful tending to condense light
  */
 function handleTending(npc, state) {
-  console.log(`Processing tending NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement tending logic (tending actions, light condensation)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -94,10 +104,9 @@ function handleTending(npc, state) {
  * Example: Crystalbloom Weaver - folds fibers in predictable rotations
  */
 function handleRotation(npc, state) {
-  console.log(`Processing rotation NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement rotation logic (rotation patterns, fiber folding)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -105,10 +114,9 @@ function handleRotation(npc, state) {
  * Example: Glowroot Barter Wisp - trades based on price cycles
  */
 function handleEconomic(npc, state) {
-  console.log(`Processing economic NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement economic logic (price cycles, trading mechanics)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -116,10 +124,9 @@ function handleEconomic(npc, state) {
  * Example: Silkroot Crawler Nest - produces silk when fed
  */
 function handleFarm(npc, state) {
-  console.log(`Processing farm NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement farm logic (feeding, production, colony management)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -127,10 +134,9 @@ function handleFarm(npc, state) {
  * Example: Ooze-Walker Collector - slow-moving collector
  */
 function handlePatrol(npc, state) {
-  console.log(`Processing patrol NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement patrol logic (movement patterns, collection)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -138,10 +144,9 @@ function handlePatrol(npc, state) {
  * Example: Aetherbud Sprite - captures aether during energy surges
  */
 function handleThreshold(npc, state) {
-  console.log(`Processing threshold NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement threshold logic (energy surge detection, aether capture)
-  return state;
+  return { state, producedItems: [] };
 }
 
 /**
@@ -149,14 +154,11 @@ function handleThreshold(npc, state) {
  * Example: Biotide Condenser - filters moisture into biotide
  */
 function handleMachine(npc, state) {
-  console.log(`Processing machine NPC cycle`);
   state.cycles = (state.cycles || 0) + 1;
   // TODO: Implement machine logic (filtering, processing, output)
-  return state;
+  return { state, producedItems: [] };
 }
 
 module.exports = {
   runNPCCycle
 };
-
-

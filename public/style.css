@@ -173,6 +173,25 @@ body {
     color: #00ffff;
 }
 
+/* Room items (on the ground) styles */
+.items-section {
+    margin-top: 15px;
+    color: #ffcc00;
+}
+
+.items-line {
+    display: inline;
+}
+
+.items-section-title {
+    color: #ffff00;
+    font-weight: bold;
+}
+
+.item-item {
+    color: #ffcc00;
+}
+
 .npc-placement-section {
     margin-top: 12px;
     border-top: 1px solid #333;
