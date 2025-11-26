@@ -155,12 +155,14 @@ const seedItems = [
 ];
 
 const insertItemStmt = db.prepare(`
-  INSERT OR IGNORE INTO items (name, description, item_type, created_at)
-  VALUES (?, ?, ?, ?)
+  INSERT OR IGNORE INTO items (name, description, item_type, poofable, created_at)
+  VALUES (?, ?, ?, ?, ?)
 `);
 
 seedItems.forEach(item => {
-  insertItemStmt.run(item.name, item.description, item.item_type, Date.now());
+  // Set Pulse Resin as poofable (1), Harvester Rune as permanent (0)
+  const poofable = item.name === 'Pulse Resin' ? 1 : 0;
+  insertItemStmt.run(item.name, item.description, item.item_type, poofable, Date.now());
 });
 
 // Create room_items table (items on the ground in rooms, shared among players)
@@ -177,6 +179,17 @@ db.exec(`
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_room_items_room_id ON room_items(room_id)
 `);
+
+// Seed Harvester Rune in Town Square (room_id=1) - one-time placement
+// Uses INSERT OR IGNORE with a unique check to prevent duplicates
+const seedHarvesterRune = db.prepare(`
+  INSERT OR IGNORE INTO room_items (room_id, item_name, quantity, created_at)
+  SELECT 1, 'Harvester Rune', 1, ?
+  WHERE NOT EXISTS (
+    SELECT 1 FROM room_items WHERE room_id = 1 AND item_name = 'Harvester Rune'
+  )
+`);
+seedHarvesterRune.run(Date.now());
 
 // Create player_items table (player inventory, no weight limit for now)
 db.exec(`
@@ -229,6 +242,16 @@ addColumnIfNotExists('players', 'flag_god_mode', 0);
 
 // Migration: add display_color to scriptable_npcs if missing
 addColumnIfNotExists('scriptable_npcs', 'display_color', "'#00ff00'", 'TEXT');
+
+// Migration: add harvestable_time and cooldown_time to scriptable_npcs
+// harvestable_time: how long harvest session lasts (in milliseconds)
+// cooldown_time: how long before NPC can be harvested again (in milliseconds)
+addColumnIfNotExists('scriptable_npcs', 'harvestable_time', 60000, 'INTEGER'); // Default 60 seconds
+addColumnIfNotExists('scriptable_npcs', 'cooldown_time', 120000, 'INTEGER'); // Default 120 seconds (2 minutes)
+
+// Migration: add poofable column to items table
+// poofable: if true, item disappears when player leaves room or disconnects (if not in inventory)
+addColumnIfNotExists('items', 'poofable', 0, 'INTEGER'); // Default 0 (false) - permanent items
 
 // Migrate existing rooms table to include map_id and connection fields
 addColumnIfNotExists('rooms', 'map_id', 1);
@@ -890,6 +913,7 @@ if (newhaven && northernTerritory) {
 const getRoomById = db.prepare('SELECT * FROM rooms WHERE id = ?');
 const getRoomByCoords = db.prepare('SELECT * FROM rooms WHERE map_id = ? AND x = ? AND y = ?');
 const getRoomsByMap = db.prepare('SELECT * FROM rooms WHERE map_id = ?');
+const getRoomByName = db.prepare('SELECT * FROM rooms WHERE LOWER(name) = LOWER(?)');
 // Migration: Copy data from old columns to new prefixed columns
 // This handles the transition from old column names to prefix-based naming
 function migrateColumnsToPrefixes() {
@@ -1189,7 +1213,7 @@ function validateMoonlessMeadowRoom(roomId) {
 
 const getNPCsInRoomStmt = db.prepare(`
   SELECT rn.id, rn.npc_id, rn.state, rn.slot,
-         sn.name, sn.description, sn.display_color
+         sn.name, sn.description, sn.display_color, sn.harvestable_time, sn.cooldown_time
   FROM room_npcs rn
   JOIN scriptable_npcs sn ON rn.npc_id = sn.id
   WHERE rn.room_id = ? AND rn.active = 1
@@ -1204,7 +1228,9 @@ function getNPCsInRoom(roomId) {
     description: row.description,
     color: row.display_color || '#00ffff',
     state: row.state ? JSON.parse(row.state) : {},
-    slot: row.slot
+    slot: row.slot,
+    harvestableTime: row.harvestable_time || 60000,
+    cooldownTime: row.cooldown_time || 120000
   }));
 }
 
@@ -1212,7 +1238,7 @@ const getAllActiveNPCsStmt = db.prepare(`
   SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
          sn.npc_type, sn.base_cycle_time, sn.required_stats, 
          sn.required_buffs, sn.input_items, sn.output_items, sn.failure_states,
-         sn.display_color
+         sn.display_color, sn.harvestable_time, sn.cooldown_time
   FROM room_npcs rn
   JOIN scriptable_npcs sn ON rn.npc_id = sn.id
   WHERE rn.active = 1 AND sn.active = 1
@@ -1232,7 +1258,9 @@ function getAllActiveNPCs() {
     inputItems: row.input_items ? JSON.parse(row.input_items) : {},
     outputItems: row.output_items ? JSON.parse(row.output_items) : {},
     failureStates: row.failure_states ? JSON.parse(row.failure_states) : [],
-    color: row.display_color || '#00ffff'
+    color: row.display_color || '#00ffff',
+    harvestableTime: row.harvestable_time || 60000,
+    cooldownTime: row.cooldown_time || 120000
   }));
 }
 
@@ -1321,16 +1349,16 @@ const getItemByIdStmt = db.prepare(`
 `);
 
 const getItemByNameStmt = db.prepare(`
-  SELECT * FROM items WHERE name = ?
+  SELECT * FROM items WHERE LOWER(REPLACE(name, ' ', '_')) = LOWER(REPLACE(?, ' ', '_'))
 `);
 
 const createItemStmt = db.prepare(`
-  INSERT INTO items (name, description, item_type, active, created_at)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO items (name, description, item_type, active, poofable, created_at)
+  VALUES (?, ?, ?, ?, ?, ?)
 `);
 
 const updateItemStmt = db.prepare(`
-  UPDATE items SET name = ?, description = ?, item_type = ?, active = ?
+  UPDATE items SET name = ?, description = ?, item_type = ?, active = ?, poofable = ?
   WHERE id = ?
 `);
 
@@ -1352,6 +1380,7 @@ function createItem(item) {
     item.description || '',
     item.item_type || 'sundries',
     item.active !== undefined ? item.active : 1,
+    item.poofable !== undefined ? (item.poofable ? 1 : 0) : 0,
     Date.now()
   );
   return getItemById(result.lastInsertRowid);
@@ -1363,6 +1392,7 @@ function updateItem(item) {
     item.description || '',
     item.item_type || 'sundries',
     item.active !== undefined ? item.active : 1,
+    item.poofable !== undefined ? (item.poofable ? 1 : 0) : 0,
     item.id
   );
   return getItemById(item.id);
@@ -1393,7 +1423,7 @@ const updateRoomItemQtyStmt = db.prepare(`
 
 const getRoomItemByNameStmt = db.prepare(`
   SELECT id, quantity FROM room_items
-  WHERE room_id = ? AND item_name = ?
+  WHERE room_id = ? AND LOWER(REPLACE(item_name, '_', ' ')) = LOWER(REPLACE(?, '_', ' '))
   LIMIT 1
 `);
 
@@ -1406,15 +1436,30 @@ const decrementRoomItemStmt = db.prepare(`
 `);
 
 function getRoomItems(roomId) {
-  return getRoomItemsStmt.all(roomId);
+  const items = getRoomItemsStmt.all(roomId);
+  // Normalize item names to canonical names from items table
+  return items.map(item => {
+    // Look up canonical name (case-insensitive)
+    const itemDef = getItemByNameStmt.get(item.item_name);
+    const canonicalName = itemDef ? itemDef.name : item.item_name;
+    return {
+      item_name: canonicalName,
+      quantity: item.quantity
+    };
+  });
 }
 
 function addRoomItem(roomId, itemName, quantity = 1) {
-  const existing = getRoomItemByNameStmt.get(roomId, itemName);
+  // Normalize item name - look up canonical name from items table (case-insensitive)
+  // This ensures "pulse_resin" becomes "Pulse Resin" etc.
+  const itemDef = getItemByNameStmt.get(itemName);
+  const canonicalName = itemDef ? itemDef.name : itemName;
+  
+  const existing = getRoomItemByNameStmt.get(roomId, canonicalName);
   if (existing) {
-    updateRoomItemQtyStmt.run(quantity, roomId, itemName);
+    updateRoomItemQtyStmt.run(quantity, roomId, canonicalName);
   } else {
-    addRoomItemStmt.run(roomId, itemName, quantity, Date.now());
+    addRoomItemStmt.run(roomId, canonicalName, quantity, Date.now());
   }
 }
 
@@ -1430,6 +1475,24 @@ function removeRoomItem(roomId, itemName, quantity = 1) {
     decrementRoomItemStmt.run(quantity, existing.id);
   }
   return true;
+}
+
+// Remove all poofable items from a room
+// Poofable items disappear when player leaves room or disconnects
+// Handle name variations: pulse_resin matches "Pulse Resin" (underscore vs space)
+const removePoofableItemsFromRoomStmt = db.prepare(`
+  DELETE FROM room_items 
+  WHERE room_id = ? AND LOWER(REPLACE(item_name, '_', ' ')) IN (
+    SELECT LOWER(REPLACE(name, '_', ' ')) FROM items WHERE poofable = 1
+  )
+`);
+
+function removePoofableItemsFromRoom(roomId) {
+  const result = removePoofableItemsFromRoomStmt.run(roomId);
+  if (result.changes > 0) {
+    console.log(`Removed ${result.changes} poofable item(s) from room ${roomId}`);
+  }
+  return result.changes;
 }
 
 // ============================================================
@@ -1501,6 +1564,7 @@ module.exports = {
   getRoomById: (id) => getRoomById.get(id),
   getRoomByCoords: (mapId, x, y) => getRoomByCoords.get(mapId, x, y),
   getRoomsByMap: (mapId) => getRoomsByMap.all(mapId),
+  getRoomByName: (name) => getRoomByName.get(name),
   getPlayersInRoom: (roomId) => getPlayersInRoom.all(roomId).map(row => row.name),
   updatePlayerRoom: (roomId, playerName) => updatePlayerRoom.run(roomId, playerName),
   getPlayerByName: (name) => getPlayerByName.get(name),
@@ -1535,6 +1599,7 @@ module.exports = {
   getRoomItems,
   addRoomItem,
   removeRoomItem,
+  removePoofableItemsFromRoom,
   // Player items (inventory)
   getPlayerItems,
   addPlayerItem,
@@ -1550,4 +1615,96 @@ module.exports = {
 // Run migration after all columns are added
 // This copies data from old column names to new prefixed column names
 migrateColumnsToPrefixes();
+
+// Normalize existing room_items to use canonical item names
+// This fixes items like "pulse_resin" to become "Pulse Resin"
+function normalizeRoomItemNames() {
+  try {
+    const allRoomItems = db.prepare('SELECT DISTINCT item_name FROM room_items').all();
+    let updated = 0;
+    
+    for (const row of allRoomItems) {
+      const itemName = row.item_name;
+      // Look up canonical name (case-insensitive)
+      const itemDef = getItemByNameStmt.get(itemName);
+      if (itemDef && itemDef.name !== itemName) {
+        // Update all instances of this item name to use canonical name
+        const updateStmt = db.prepare(`
+          UPDATE room_items 
+          SET item_name = ? 
+          WHERE item_name = ?
+        `);
+        const result = updateStmt.run(itemDef.name, itemName);
+        updated += result.changes;
+        console.log(`Normalized ${result.changes} room_items from "${itemName}" to "${itemDef.name}"`);
+      }
+    }
+    
+    if (updated > 0) {
+      console.log(`Normalized ${updated} room_items to use canonical item names`);
+    }
+  } catch (err) {
+    console.error('Error normalizing room item names:', err);
+  }
+}
+
+// Run normalization on startup
+normalizeRoomItemNames();
+
+// Ensure Pulse Resin is marked as poofable (in case it wasn't set correctly)
+function ensurePulseResinIsPoofable() {
+  try {
+    const pulseResin = db.prepare('SELECT * FROM items WHERE LOWER(name) = LOWER(?)').get('Pulse Resin');
+    if (pulseResin && pulseResin.poofable !== 1) {
+      db.prepare('UPDATE items SET poofable = 1 WHERE LOWER(name) = LOWER(?)').run('Pulse Resin');
+      console.log('Updated Pulse Resin to be poofable');
+    }
+  } catch (err) {
+    console.error('Error ensuring Pulse Resin is poofable:', err);
+  }
+}
+
+ensurePulseResinIsPoofable();
+
+// Fix NPC output_items to use canonical item names (e.g., "Pulse Resin" instead of "pulse_resin")
+function normalizeNpcOutputItems() {
+  try {
+    const npcs = db.prepare('SELECT id, name, output_items FROM scriptable_npcs WHERE output_items IS NOT NULL').all();
+    
+    for (const npc of npcs) {
+      if (!npc.output_items) continue;
+      
+      try {
+        const outputItems = JSON.parse(npc.output_items);
+        const newOutputItems = {};
+        let changed = false;
+        
+        for (const [itemName, qty] of Object.entries(outputItems)) {
+          // Look up canonical name
+          const itemDef = getItemByNameStmt.get(itemName);
+          const canonicalName = itemDef ? itemDef.name : itemName;
+          
+          if (canonicalName !== itemName) {
+            changed = true;
+            console.log(`Normalizing NPC "${npc.name}" output_items: "${itemName}" -> "${canonicalName}"`);
+          }
+          newOutputItems[canonicalName] = qty;
+        }
+        
+        if (changed) {
+          db.prepare('UPDATE scriptable_npcs SET output_items = ? WHERE id = ?').run(
+            JSON.stringify(newOutputItems),
+            npc.id
+          );
+        }
+      } catch (e) {
+        console.error(`Error parsing output_items for NPC ${npc.id}:`, e);
+      }
+    }
+  } catch (err) {
+    console.error('Error normalizing NPC output_items:', err);
+  }
+}
+
+normalizeNpcOutputItems();
 

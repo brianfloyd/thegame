@@ -10,6 +10,35 @@ const wsUrl = `${protocol}//${window.location.hostname}:3434`;
 let allItems = [];
 let selectedItemId = null;
 
+// Non-blocking notification for editor errors
+function showEditorNotification(message, type = 'info') {
+    const existing = document.getElementById('editorNotification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.id = 'editorNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${type === 'error' ? '#660000' : '#003300'};
+        border: 2px solid ${type === 'error' ? '#ff0000' : '#00ff00'};
+        color: ${type === 'error' ? '#ff6666' : '#00ff00'};
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        z-index: 10000;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        if (notification.parentNode) notification.remove();
+    }, 5000);
+}
+
 // Connect to WebSocket server
 function connectWebSocket() {
     ws = new WebSocket(wsUrl);
@@ -61,7 +90,7 @@ function handleMessage(data) {
             showItemForm(data.item);
             break;
         case 'error':
-            alert(data.message);
+            showEditorNotification(data.message, 'error');
             break;
     }
 }
@@ -162,6 +191,14 @@ function showItemForm(item = null) {
                 </select>
             </div>
             
+            <div class="item-form-group">
+                <label>
+                    <input type="checkbox" id="itemPoofable" 
+                           ${item && item.poofable ? 'checked' : ''}>
+                    Poofable (disappears when player leaves room or disconnects)
+                </label>
+            </div>
+            
             <div class="item-form-actions">
                 <button id="saveItemBtn" class="editor-btn item-save-btn">${isNew ? 'Create Item' : 'Save Item'}</button>
             </div>
@@ -180,6 +217,7 @@ function saveItem(itemId) {
     const itemType = document.getElementById('itemType').value;
     const description = document.getElementById('itemDescription').value.trim();
     const active = parseInt(document.getElementById('itemActive').value);
+    const poofable = document.getElementById('itemPoofable').checked;
     
     if (!name) {
         alert('Item name is required');
@@ -190,7 +228,8 @@ function saveItem(itemId) {
         name,
         item_type: itemType,
         description,
-        active
+        active,
+        poofable
     };
     
     if (itemId) {

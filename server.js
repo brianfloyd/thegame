@@ -308,14 +308,40 @@ function sendRoomUpdate(sessionId, room) {
   const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerData.playerName);
   const exits = getExits(room);
   
-  // Get NPCs in the room
-  const npcsInRoom = db.getNPCsInRoom(room.id).map(npc => ({
-    id: npc.id,
-    name: npc.name,
-    description: npc.description,
-    state: npc.state,
-    color: npc.display_color || npc.color || '#00ffff'
-  }));
+  // Get NPCs in the room with harvest progress info
+  const now = Date.now();
+  const npcsInRoom = db.getNPCsInRoom(room.id).map(npc => {
+    const npcData = {
+      id: npc.id,
+      name: npc.name,
+      description: npc.description,
+      state: npc.state,
+      color: npc.display_color || npc.color || '#00ffff',
+      harvestableTime: npc.harvestableTime || 60000,
+      cooldownTime: npc.cooldownTime || 120000
+    };
+    
+    // Calculate harvest/cooldown progress
+    if (npc.state.harvest_active && npc.state.harvest_start_time) {
+      // Harvest is active - calculate remaining time
+      const harvestElapsed = now - npc.state.harvest_start_time;
+      const harvestRemaining = Math.max(0, npcData.harvestableTime - harvestElapsed);
+      npcData.harvestProgress = harvestRemaining / npcData.harvestableTime; // 1.0 = full, 0.0 = empty
+      npcData.harvestStatus = 'active';
+    } else if (npc.state.cooldown_until && now < npc.state.cooldown_until) {
+      // On cooldown - calculate progress
+      const cooldownRemaining = npc.state.cooldown_until - now;
+      const cooldownElapsed = npcData.cooldownTime - cooldownRemaining;
+      npcData.harvestProgress = cooldownElapsed / npcData.cooldownTime; // 0.0 = start, 1.0 = done
+      npcData.harvestStatus = 'cooldown';
+    } else {
+      // Ready to harvest
+      npcData.harvestProgress = 1.0;
+      npcData.harvestStatus = 'ready';
+    }
+    
+    return npcData;
+  });
   
   // Get items on the ground in the room
   const roomItems = db.getRoomItems(room.id);
@@ -494,6 +520,29 @@ wss.on('connection', (ws, req) => {
       
       playerName = playerData.playerName;
 
+      // ============================================================
+      // Harvest Interruption Check
+      // If player has active harvest and command is unsafe, end session
+      // ============================================================
+      if (playerData.playerId && data.type) {
+        const cmdType = data.type.toLowerCase();
+        const isSafeCommand = HARVEST_SAFE_COMMANDS.includes(cmdType);
+        
+        // Also check for harvest command itself - that's safe (to start new session)
+        const isHarvestCmd = cmdType === 'harvest';
+        
+        if (!isSafeCommand && !isHarvestCmd) {
+          const activeSession = findPlayerHarvestSession(playerData.playerId);
+          if (activeSession) {
+            endHarvestSession(activeSession.roomNpcId, true);
+            ws.send(JSON.stringify({ 
+              type: 'message', 
+              message: 'Your harvesting has been interrupted.' 
+            }));
+          }
+        }
+      }
+
       if (data.type === 'move') {
         // Player is already authenticated, use sessionId
         if (!sessionId || !playerName) {
@@ -587,6 +636,33 @@ wss.on('connection', (ws, req) => {
         const playerData = connectedPlayers.get(sessionId);
         const oldRoomId = playerData.roomId;
         playerData.roomId = targetRoom.id;
+
+        // End any active harvest session when moving rooms
+        if (playerData.playerId) {
+          const activeSession = findPlayerHarvestSession(playerData.playerId);
+          if (activeSession) {
+            endHarvestSession(activeSession.roomNpcId, true);
+            ws.send(JSON.stringify({ 
+              type: 'message', 
+              message: 'Your harvesting has been interrupted.' 
+            }));
+          }
+        }
+
+        // Remove poofable items from old room when player leaves
+        db.removePoofableItemsFromRoom(oldRoomId);
+        
+        // Send room update to players still in old room to refresh items
+        const oldRoom = db.getRoomById(oldRoomId);
+        if (oldRoom) {
+          connectedPlayers.forEach((otherPlayerData, otherSessionId) => {
+            if (otherPlayerData.roomId === oldRoomId && 
+                otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                otherSessionId !== sessionId) {
+              sendRoomUpdate(otherSessionId, oldRoom);
+            }
+          });
+        }
 
         // Notify players in old room
         broadcastToRoom(oldRoomId, {
@@ -1384,6 +1460,163 @@ wss.on('connection', (ws, req) => {
         }
       }
 
+      // ============================================================
+      // Room Item Placement Handlers (God Mode - for Map Editor)
+      // ============================================================
+      else if (data.type === 'getRoomItemsForEditor') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId } = data;
+        if (!roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+          return;
+        }
+
+        const roomItems = db.getRoomItems(roomId);
+        const allItems = db.getAllItems();
+        ws.send(JSON.stringify({
+          type: 'roomItemsForEditor',
+          roomId,
+          roomItems,
+          allItems
+        }));
+      }
+
+      else if (data.type === 'addItemToRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId, itemName, quantity } = data;
+        if (!roomId || !itemName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID and item name required' }));
+          return;
+        }
+
+        try {
+          db.addRoomItem(roomId, itemName, quantity || 1);
+          const roomItems = db.getRoomItems(roomId);
+          ws.send(JSON.stringify({
+            type: 'roomItemAdded',
+            roomId,
+            itemName,
+            roomItems
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to add item: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'removeItemFromRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId, itemName, quantity } = data;
+        if (!roomId || !itemName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID and item name required' }));
+          return;
+        }
+
+        try {
+          db.removeRoomItem(roomId, itemName, quantity || 1);
+          const roomItems = db.getRoomItems(roomId);
+          ws.send(JSON.stringify({
+            type: 'roomItemRemoved',
+            roomId,
+            itemName,
+            roomItems
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to remove item: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'clearAllItemsFromRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId } = data;
+        if (!roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+          return;
+        }
+
+        try {
+          // Get all items in room and remove them all
+          const currentItems = db.getRoomItems(roomId);
+          for (const item of currentItems) {
+            db.removeRoomItem(roomId, item.item_name, item.quantity);
+          }
+          ws.send(JSON.stringify({
+            type: 'roomItemsCleared',
+            roomId,
+            roomItems: []
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to clear items: ' + err.message }));
+        }
+      }
+
       else if (data.type === 'look') {
         // Find player by WebSocket connection - need both sessionId and playerName
         let currentSessionId = null;
@@ -1461,7 +1694,8 @@ wss.on('connection', (ws, req) => {
       }
 
       // ============================================================
-      // Take Command (take, t) - partial item name matching
+      // Take Command (take, t, get, pickup) - partial item name matching
+      // Supports: "take <item>", "take all <item>", "take <quantity> <item>"
       // ============================================================
       else if (data.type === 'take') {
         const player = db.getPlayerByName(playerName);
@@ -1482,6 +1716,10 @@ wss.on('connection', (ws, req) => {
           return;
         }
         
+        // Parse quantity (default to 1, or "all", or a number)
+        let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
+        const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
+        
         const roomItems = db.getRoomItems(currentRoom.id);
         const matches = roomItems.filter(i => i.item_name.toLowerCase().includes(query));
         
@@ -1492,9 +1730,40 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
         } else {
           const item = matches[0];
-          db.removeRoomItem(currentRoom.id, item.item_name, 1);
-          db.addPlayerItem(player.id, item.item_name, 1);
-          ws.send(JSON.stringify({ type: 'message', message: `You pick up ${item.item_name}.` }));
+          const availableQuantity = item.quantity;
+          
+          // Determine how many to take
+          let quantityToTake;
+          if (isAll) {
+            quantityToTake = availableQuantity;
+          } else {
+            quantityToTake = parseInt(requestedQuantity, 10);
+            if (isNaN(quantityToTake) || quantityToTake < 1) {
+              ws.send(JSON.stringify({ type: 'message', message: 'Invalid quantity.' }));
+              return;
+            }
+            
+            if (quantityToTake > availableQuantity) {
+              ws.send(JSON.stringify({ 
+                type: 'message', 
+                message: `There are only ${availableQuantity} ${item.item_name} here.` 
+              }));
+              return;
+            }
+          }
+          
+          // Remove from room and add to player inventory
+          db.removeRoomItem(currentRoom.id, item.item_name, quantityToTake);
+          db.addPlayerItem(player.id, item.item_name, quantityToTake);
+          
+          // Send feedback message
+          let message;
+          if (quantityToTake === 1) {
+            message = `You pick up ${item.item_name}.`;
+          } else {
+            message = `You pick up ${quantityToTake} ${item.item_name}.`;
+          }
+          ws.send(JSON.stringify({ type: 'message', message }));
           
           // Send updated room to player to refresh items on ground
           sendRoomUpdate(sessionId, currentRoom);
@@ -1503,6 +1772,7 @@ wss.on('connection', (ws, req) => {
 
       // ============================================================
       // Drop Command (drop) - no abbreviation (d = down), partial item name matching
+      // Supports: "drop <item>", "drop all <item>", "drop <quantity> <item>"
       // ============================================================
       else if (data.type === 'drop') {
         const player = db.getPlayerByName(playerName);
@@ -1523,6 +1793,10 @@ wss.on('connection', (ws, req) => {
           return;
         }
         
+        // Parse quantity (default to 1, or "all", or a number)
+        let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
+        const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
+        
         const playerItems = db.getPlayerItems(player.id);
         const matches = playerItems.filter(i => i.item_name.toLowerCase().includes(query));
         
@@ -1533,9 +1807,40 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
         } else {
           const item = matches[0];
-          db.removePlayerItem(player.id, item.item_name, 1);
-          db.addRoomItem(currentRoom.id, item.item_name, 1);
-          ws.send(JSON.stringify({ type: 'message', message: `You drop ${item.item_name}.` }));
+          const availableQuantity = item.quantity;
+          
+          // Determine how many to drop
+          let quantityToDrop;
+          if (isAll) {
+            quantityToDrop = availableQuantity;
+          } else {
+            quantityToDrop = parseInt(requestedQuantity, 10);
+            if (isNaN(quantityToDrop) || quantityToDrop < 1) {
+              ws.send(JSON.stringify({ type: 'message', message: 'Invalid quantity.' }));
+              return;
+            }
+            
+            if (quantityToDrop > availableQuantity) {
+              ws.send(JSON.stringify({ 
+                type: 'message', 
+                message: `You only have ${availableQuantity} ${item.item_name}.` 
+              }));
+              return;
+            }
+          }
+          
+          // Remove from player inventory and add to room
+          db.removePlayerItem(player.id, item.item_name, quantityToDrop);
+          db.addRoomItem(currentRoom.id, item.item_name, quantityToDrop);
+          
+          // Send feedback message
+          let message;
+          if (quantityToDrop === 1) {
+            message = `You drop ${item.item_name}.`;
+          } else {
+            message = `You drop ${quantityToDrop} ${item.item_name}.`;
+          }
+          ws.send(JSON.stringify({ type: 'message', message }));
           
           // Send updated room to player to refresh items on ground
           sendRoomUpdate(sessionId, currentRoom);
@@ -1543,7 +1848,8 @@ wss.on('connection', (ws, req) => {
       }
 
       // ============================================================
-      // Harvest Command (harvest, h, collect, c, gather, g) - Rhythm NPCs only
+      // Harvest Command (harvest, h, p) - Rhythm NPCs only
+      // Starts a harvest SESSION, NPC produces while session is active
       // ============================================================
       else if (data.type === 'harvest') {
         const player = db.getPlayerByName(playerName);
@@ -1579,51 +1885,84 @@ wss.on('connection', (ws, req) => {
           return;
         }
         
-        const npc = npcMatches[0];
+        const roomNpc = npcMatches[0];
         
-        // Get NPC's output_items definition to know what items to harvest
-        const npcDef = db.getScriptableNPCById(npc.npc_id);
+        // Get NPC definition to check type and required items
+        const npcDef = db.getScriptableNPCById(roomNpc.npcId);
         if (!npcDef) {
-          ws.send(JSON.stringify({ type: 'message', message: `${npc.name} has nothing to harvest.` }));
+          ws.send(JSON.stringify({ type: 'message', message: `${roomNpc.name} cannot be harvested.` }));
           return;
         }
         
-        let outputItems = {};
+        // Only rhythm NPCs can be harvested
+        if (npcDef.npc_type !== 'rhythm') {
+          ws.send(JSON.stringify({ type: 'message', message: `${roomNpc.name} cannot be harvested.` }));
+          return;
+        }
+        
+        // Check required items from NPC's input_items definition (data relationship)
+        let requiredItems = {};
         try {
-          outputItems = npcDef.output_items ? JSON.parse(npcDef.output_items) : {};
+          requiredItems = npcDef.input_items ? JSON.parse(npcDef.input_items) : {};
         } catch (e) {
-          outputItems = {};
+          requiredItems = {};
         }
         
-        if (Object.keys(outputItems).length === 0) {
-          ws.send(JSON.stringify({ type: 'message', message: `${npc.name} has nothing to harvest.` }));
-          return;
-        }
-        
-        // Check room for items matching NPC's output
-        const roomItems = db.getRoomItems(currentRoom.id);
-        const harvestedItems = [];
-        
-        for (const itemName of Object.keys(outputItems)) {
-          const roomItem = roomItems.find(ri => ri.item_name === itemName);
-          if (roomItem && roomItem.quantity > 0) {
-            // Harvest all available of this item type
-            const qty = roomItem.quantity;
-            db.removeRoomItem(currentRoom.id, itemName, qty);
-            db.addPlayerItem(player.id, itemName, qty);
-            harvestedItems.push({ name: itemName, qty });
+        // Verify player has all required items
+        if (Object.keys(requiredItems).length > 0) {
+          const playerItems = db.getPlayerItems(player.id);
+          for (const [itemName, requiredQty] of Object.entries(requiredItems)) {
+            const playerItem = playerItems.find(i => 
+              i.item_name.toLowerCase() === itemName.toLowerCase()
+            );
+            if (!playerItem || playerItem.quantity < requiredQty) {
+              ws.send(JSON.stringify({ type: 'message', message: `You lack the ${itemName}.` }));
+              return;
+            }
           }
         }
         
-        if (harvestedItems.length === 0) {
-          ws.send(JSON.stringify({ type: 'message', message: `${npc.name} has nothing ready to harvest.` }));
-        } else {
-          const harvestList = harvestedItems.map(i => `${i.name} (x${i.qty})`).join(', ');
-          ws.send(JSON.stringify({ type: 'message', message: `You harvest ${harvestList} from ${npc.name}.` }));
-          
-          // Send updated room to player
-          sendRoomUpdate(sessionId, currentRoom);
+        // Get fresh NPC state from database (roomNpc.state is already parsed, but we need to check fresh)
+        // Re-fetch the room NPC to ensure we have the latest state
+        const freshRoomNpc = db.db.prepare('SELECT * FROM room_npcs WHERE id = ?').get(roomNpc.id);
+        let npcState = {};
+        try {
+          npcState = freshRoomNpc && freshRoomNpc.state ? JSON.parse(freshRoomNpc.state) : {};
+        } catch (e) {
+          npcState = {};
         }
+        
+        // Check if NPC is on cooldown - no harvesting allowed during cooldown
+        const now = Date.now();
+        if (npcState.cooldown_until && now < npcState.cooldown_until) {
+          ws.send(JSON.stringify({ 
+            type: 'message', 
+            message: `This creature is not currently capable of harvest`,
+            duration: 10 // Display for 10 seconds
+          }));
+          return;
+        }
+        
+        // Check if already being harvested by someone
+        if (npcState.harvest_active) {
+          if (npcState.harvesting_player_id === player.id) {
+            ws.send(JSON.stringify({ type: 'message', message: `You are already harvesting the ${roomNpc.name}.` }));
+          } else {
+            ws.send(JSON.stringify({ type: 'message', message: `Someone is already harvesting the ${roomNpc.name}.` }));
+          }
+          return;
+        }
+        
+        // Start harvest session - track start time
+        npcState.harvest_active = true;
+        npcState.harvesting_player_id = player.id;
+        npcState.harvest_start_time = now;
+        npcState.cooldown_until = null;
+        
+        // Update NPC state in database
+        db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);
+        
+        ws.send(JSON.stringify({ type: 'message', message: `You begin harvesting the ${roomNpc.name}.` }));
       }
 
       else if (data.type === 'disconnectMap') {
@@ -1692,6 +2031,33 @@ wss.on('connection', (ws, req) => {
       const playerData = connectedPlayers.get(sessionId);
       const roomId = playerData.roomId;
       const disconnectedPlayerName = playerData.playerName;
+      const disconnectedPlayerId = playerData.playerId;
+      
+      // End any active harvest sessions for this player
+      if (disconnectedPlayerId) {
+        const activeSession = findPlayerHarvestSession(disconnectedPlayerId);
+        if (activeSession) {
+          endHarvestSession(activeSession.roomNpcId, true);
+        }
+      }
+      
+      // Remove poofable items from room when player disconnects
+      if (roomId) {
+        db.removePoofableItemsFromRoom(roomId);
+        
+        // Send room update to players still in room to refresh items
+        const room = db.getRoomById(roomId);
+        if (room) {
+          connectedPlayers.forEach((otherPlayerData, otherSessionId) => {
+            if (otherPlayerData.roomId === roomId && 
+                otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                otherSessionId !== sessionId) {
+              sendRoomUpdate(otherSessionId, room);
+            }
+          });
+        }
+      }
+      
       connectedPlayers.delete(sessionId);
 
       // Notify others in the room
@@ -1708,6 +2074,67 @@ wss.on('connection', (ws, req) => {
 // NPC Cycle Engine Configuration
 const NPC_TICK_INTERVAL = 1000; // milliseconds (configurable)
 
+// Commands that do NOT interrupt an active harvest session
+const HARVEST_SAFE_COMMANDS = [
+  'inventory', 'inv', 'i',
+  'look', 'l',
+  'n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'u', 'd', 'up', 'down',
+  'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest',
+  'move' // movement command type
+];
+
+// Helper to end a harvest session on an NPC
+function endHarvestSession(roomNpcId, startCooldown = true) {
+  const roomNpc = db.db.prepare('SELECT * FROM room_npcs WHERE id = ?').get(roomNpcId);
+  if (!roomNpc) return;
+  
+  // Get NPC definition for cooldown time
+  const npcDef = db.getScriptableNPCById(roomNpc.npc_id);
+  const cooldownTime = npcDef ? (npcDef.cooldown_time || 120000) : 120000;
+  
+  let state = {};
+  try {
+    state = roomNpc.state ? JSON.parse(roomNpc.state) : {};
+  } catch (e) {
+    state = {};
+  }
+  
+  state.harvest_active = false;
+  state.harvesting_player_id = null;
+  state.harvest_start_time = null;
+  if (startCooldown) {
+    state.cooldown_until = Date.now() + cooldownTime;
+  }
+  
+  db.updateNPCState(roomNpcId, state, roomNpc.last_cycle_run);
+  return state;
+}
+
+// Helper to find active harvest session for a player
+function findPlayerHarvestSession(playerId) {
+  // Find any room_npc where this player has an active harvest
+  const stmt = db.db.prepare(`
+    SELECT rn.*, sn.name as npc_name, sn.npc_type 
+    FROM room_npcs rn 
+    JOIN scriptable_npcs sn ON rn.npc_id = sn.id 
+    WHERE rn.active = 1 AND sn.npc_type = 'rhythm'
+  `);
+  const rhythmNpcs = stmt.all();
+  
+  for (const npc of rhythmNpcs) {
+    let state = {};
+    try {
+      state = npc.state ? JSON.parse(npc.state) : {};
+    } catch (e) {
+      state = {};
+    }
+    if (state.harvest_active && state.harvesting_player_id === playerId) {
+      return { roomNpcId: npc.id, npcName: npc.npc_name, state };
+    }
+  }
+  return null;
+}
+
 // NPC Cycle Engine (Tick Loop)
 // Runs independently of player actions, processes NPC cycles on timer
 function startNPCCycleEngine() {
@@ -1718,6 +2145,38 @@ function startNPCCycleEngine() {
       
       for (const roomNpc of activeNPCs) {
         const timeElapsed = now - roomNpc.lastCycleRun;
+        
+        // Check if harvest session has expired (for rhythm NPCs)
+        if (roomNpc.npcType === 'rhythm' && roomNpc.state && roomNpc.state.harvest_active && roomNpc.state.harvest_start_time) {
+          const harvestElapsed = now - roomNpc.state.harvest_start_time;
+          if (harvestElapsed >= roomNpc.harvestableTime) {
+            // Harvest time expired - end the session
+            const harvestingPlayerId = roomNpc.state.harvesting_player_id;
+            // Get NPC name from definition
+            const npcDef = db.getScriptableNPCById(roomNpc.npcId);
+            const npcName = npcDef ? npcDef.name : 'creature';
+            
+            endHarvestSession(roomNpc.id, true);
+            // Notify the harvesting player if they're still connected
+            if (harvestingPlayerId) {
+              connectedPlayers.forEach((playerData, sessionId) => {
+                if (playerData.playerId === harvestingPlayerId && 
+                    playerData.ws.readyState === WebSocket.OPEN) {
+                  playerData.ws.send(JSON.stringify({ 
+                    type: 'message', 
+                    message: `The harvest has ended and this ${npcName} must recharge before it can be harvested again.` 
+                  }));
+                }
+              });
+            }
+            // Reload NPC state after ending session
+            const updatedNPCs = db.getAllActiveNPCs();
+            const updatedNPC = updatedNPCs.find(n => n.id === roomNpc.id);
+            if (updatedNPC) {
+              Object.assign(roomNpc, updatedNPC);
+            }
+          }
+        }
         
         // Check if enough time has passed for this NPC's cycle
         if (timeElapsed >= roomNpc.baseCycleTime) {
@@ -1741,6 +2200,16 @@ function startNPCCycleEngine() {
               for (const item of result.producedItems) {
                 db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
               }
+              
+              // Send room update to all players in the room so they see the new items
+              const room = db.getRoomById(roomNpc.roomId);
+              if (room) {
+                connectedPlayers.forEach((playerData, sessionId) => {
+                  if (playerData.roomId === roomNpc.roomId && playerData.ws.readyState === WebSocket.OPEN) {
+                    sendRoomUpdate(sessionId, room);
+                  }
+                });
+              }
             }
             
             // Update NPC state in database (just the state part)
@@ -1758,10 +2227,34 @@ function startNPCCycleEngine() {
   console.log(`NPC Cycle Engine started (interval: ${NPC_TICK_INTERVAL}ms)`);
 }
 
+// Periodic room update for harvest/cooldown progress bars
+// Updates every second to keep progress bars smooth
+function startRoomUpdateTimer() {
+  setInterval(() => {
+    try {
+      // Send room updates to all connected players to refresh progress bars
+      connectedPlayers.forEach((playerData, sessionId) => {
+        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN && playerData.roomId) {
+          const room = db.getRoomById(playerData.roomId);
+          if (room) {
+            sendRoomUpdate(sessionId, room);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Error in room update timer:', err);
+    }
+  }, 1000); // Update every second
+  
+  console.log('Room update timer started (interval: 1000ms)');
+}
+
 const PORT = 3434;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   // Start NPC cycle engine after server starts
   startNPCCycleEngine();
+  // Start room update timer for progress bars
+  startRoomUpdateTimer();
 });
 

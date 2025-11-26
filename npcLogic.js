@@ -46,13 +46,18 @@ function runNPCCycle(npc, roomNpc) {
 }
 
 /**
- * Rhythm NPC handler - PRODUCES ITEMS EVERY CYCLE
- * Example: Glowroot Pulsecap - releases spores in rhythmic pulses
+ * Rhythm NPC handler - PRODUCES ITEMS ONLY DURING ACTIVE HARVEST SESSION
+ * Example: Pulsewood Harvester - releases resin when player harvests
  */
 function handleRhythm(npc, state) {
   state.cycles = (state.cycles || 0) + 1;
   
-  // Rhythm NPCs produce output items every cycle based on their output_items definition
+  // Only produce items if a harvest session is active
+  if (!state.harvest_active) {
+    return { state, producedItems: [] };
+  }
+  
+  // Rhythm NPCs produce output items each cycle during active harvest
   const producedItems = [];
   if (npc.outputItems && typeof npc.outputItems === 'object') {
     for (const [itemName, qty] of Object.entries(npc.outputItems)) {

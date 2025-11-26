@@ -70,7 +70,8 @@ function handleMessage(data) {
             break;
         case 'message':
             if (data.message) {
-                addToTerminal(data.message, 'info');
+                const duration = data.duration || 1; // Default 1x, can be 3x for cooldown messages
+                addToTerminal(data.message, 'info', duration);
             }
             break;
         case 'mapEditorData':
@@ -478,11 +479,11 @@ const COMMAND_REGISTRY = [
     { name: 'help', abbrev: '?', description: 'Show available commands', category: 'Information' },
     
     // Item commands
-    { name: 'take', abbrev: 't', description: 'Pick up an item (take <item>)', category: 'Items' },
+    { name: 'take', abbrev: 't, get, pickup', description: 'Pick up an item (take <item>)', category: 'Items' },
     { name: 'drop', abbrev: null, description: 'Drop an item (drop <item>)', category: 'Items' },
     
     // NPC interaction commands
-    { name: 'harvest', abbrev: 'h', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
+    { name: 'harvest', abbrev: 'h/p', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
     { name: 'collect', abbrev: 'c', description: 'Alias for harvest', category: 'NPC' },
     { name: 'gather', abbrev: 'g', description: 'Alias for harvest', category: 'NPC' },
 ];
@@ -558,7 +559,7 @@ function normalizeCommand(input) {
 function updateRoomView(room, players, exits, npcs, roomItems) {
     const terminalContent = document.getElementById('terminalContent');
     
-    // Clear terminal
+    // Clear terminal (persistent messages are in a separate container)
     terminalContent.innerHTML = '';
     
     // Display room name with map name prefix
@@ -612,24 +613,45 @@ function updateRoomView(room, players, exits, npcs, roomItems) {
         const npcsSection = document.createElement('div');
         npcsSection.className = 'npcs-section';
         
-        const npcsLine = document.createElement('div');
-        npcsLine.className = 'npcs-line';
-        
-        const npcsTitle = document.createElement('span');
+        const npcsTitle = document.createElement('div');
         npcsTitle.className = 'npcs-section-title';
         npcsTitle.textContent = 'You see here:';
-        npcsLine.appendChild(npcsTitle);
+        npcsSection.appendChild(npcsTitle);
         
         npcs.forEach((npc, index) => {
-            const npcSpan = document.createElement('span');
-            npcSpan.className = 'npc-item';
+            const npcContainer = document.createElement('div');
+            npcContainer.className = 'npc-container';
+            
+            const npcNameSpan = document.createElement('span');
+            npcNameSpan.className = 'npc-item';
             // Generate state description from NPC state
             const stateDesc = getNPCStateDescription(npc);
-            npcSpan.textContent = (index > 0 ? ', ' : ' ') + npc.name + (stateDesc ? ` (${stateDesc})` : '');
-            npcsLine.appendChild(npcSpan);
+            npcNameSpan.textContent = npc.name + (stateDesc ? ` (${stateDesc})` : '');
+            npcNameSpan.style.color = npc.color || '#00ffff';
+            npcContainer.appendChild(npcNameSpan);
+            
+            // Add progress bar for rhythm NPCs with harvest/cooldown info
+            if (npc.harvestStatus && (npc.harvestStatus === 'active' || npc.harvestStatus === 'cooldown')) {
+                const progressBarContainer = document.createElement('div');
+                progressBarContainer.className = 'npc-progress-container';
+                
+                const progressBar = document.createElement('div');
+                progressBar.className = 'npc-progress-bar';
+                progressBar.className += ` npc-progress-${npc.harvestStatus}`;
+                
+                // Progress: 0.0 to 1.0
+                // For active harvest: 1.0 = full bar (time remaining), 0.0 = empty (time expired)
+                // For cooldown: 0.0 = start (just started), 1.0 = done (ready)
+                const progressPercent = Math.max(0, Math.min(100, (npc.harvestProgress || 0) * 100));
+                progressBar.style.width = `${progressPercent}%`;
+                
+                progressBarContainer.appendChild(progressBar);
+                npcContainer.appendChild(progressBarContainer);
+            }
+            
+            npcsSection.appendChild(npcContainer);
         });
         
-        npcsSection.appendChild(npcsLine);
         terminalContent.appendChild(npcsSection);
     }
     
@@ -691,20 +713,58 @@ function getNPCStateDescription(npc) {
     }
 }
 
-// Display player inventory in terminal
+// Display player inventory in terminal as a styled table
 function displayInventory(items) {
+    const terminalContent = document.getElementById('terminalContent');
+    
     if (!items || items.length === 0) {
         addToTerminal('Your inventory is empty.', 'info');
         return;
     }
     
-    const lines = ['You are carrying:'];
-    items.forEach(item => {
-        const qtyText = item.quantity > 1 ? ` (x${item.quantity})` : '';
-        lines.push(`  ${item.item_name}${qtyText}`);
-    });
+    // Create container
+    const container = document.createElement('div');
+    container.className = 'inventory-display';
     
-    addToTerminal(lines.join('\n'), 'info');
+    // Add title
+    const title = document.createElement('div');
+    title.className = 'inventory-title';
+    title.textContent = 'Inventory';
+    container.appendChild(title);
+    
+    // Build HTML table
+    const table = document.createElement('table');
+    table.className = 'inventory-table';
+    
+    // Header row
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const thItem = document.createElement('th');
+    thItem.textContent = 'Item';
+    const thQty = document.createElement('th');
+    thQty.textContent = 'Qty';
+    headerRow.appendChild(thItem);
+    headerRow.appendChild(thQty);
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Body rows
+    const tbody = document.createElement('tbody');
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        const tdItem = document.createElement('td');
+        tdItem.textContent = item.item_name;
+        const tdQty = document.createElement('td');
+        tdQty.textContent = item.quantity;
+        row.appendChild(tdItem);
+        row.appendChild(tdQty);
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    
+    container.appendChild(table);
+    terminalContent.appendChild(container);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
 // Add player to terminal
@@ -770,13 +830,57 @@ function removePlayerFromTerminal(playerName) {
 }
 
 // Add message to terminal
-function addToTerminal(message, type = 'info') {
+function addToTerminal(message, type = 'info', duration = 1) {
+    // For long-duration messages, use the persistent message container
+    if (duration > 1) {
+        showPersistentMessage(message, duration);
+        return;
+    }
+    
     const terminalContent = document.getElementById('terminalContent');
     const msgDiv = document.createElement('div');
     msgDiv.className = type === 'error' ? 'error-message' : 'info-message';
     msgDiv.textContent = message;
     terminalContent.appendChild(msgDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Show a persistent message that won't be cleared by room updates
+function showPersistentMessage(message, durationSeconds) {
+    // Get or create the persistent message container
+    let container = document.getElementById('persistentMessages');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'persistentMessages';
+        const terminal = document.querySelector('.terminal');
+        if (terminal) {
+            terminal.appendChild(container);
+        }
+    }
+    
+    // Check if this exact message is already showing
+    const existing = Array.from(container.children).find(el => el.textContent === message);
+    if (existing) {
+        return; // Don't show duplicate messages
+    }
+    
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'persistent-message';
+    msgDiv.textContent = message;
+    container.appendChild(msgDiv);
+    
+    // Remove after duration
+    const durationMs = durationSeconds * 1000;
+    setTimeout(() => {
+        if (msgDiv.parentNode) {
+            msgDiv.classList.add('fade-out');
+            setTimeout(() => {
+                if (msgDiv.parentNode) {
+                    msgDiv.remove();
+                }
+            }, 1000);
+        }
+    }, durationMs);
 }
 
 // Update compass coordinates display
@@ -908,30 +1012,90 @@ function executeCommand(command) {
         return;
     }
 
-    // TAKE / T <item> - partial item name matching
-    if (base === 'take' || base === 't') {
+    // TAKE / T / GET / PICKUP [quantity|all] <item> - partial item name matching
+    if (base === 'take' || base === 't' || base === 'get' || base === 'pickup') {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             addToTerminal('Not connected to server. Please wait...', 'error');
             return;
         }
-        const itemName = parts.slice(1).join(' ');
-        ws.send(JSON.stringify({ type: 'take', itemName }));
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Take what?', 'error');
+            return;
+        }
+        
+        // Check if first word is a quantity (number or "all")
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        if (rest.length > 1) {
+            const firstWord = rest[0].toLowerCase();
+            if (firstWord === 'all') {
+                quantity = 'all';
+                itemNameParts = rest.slice(1);
+            } else {
+                const parsedQty = parseInt(firstWord, 10);
+                if (!isNaN(parsedQty) && parsedQty > 0) {
+                    quantity = parsedQty;
+                    itemNameParts = rest.slice(1);
+                }
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Take what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'take', itemName, quantity }));
         return;
     }
 
-    // DROP <item> - no abbreviation (d = down), partial item name matching
+    // DROP [quantity|all] <item> - no abbreviation (d = down), partial item name matching
     if (base === 'drop') {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             addToTerminal('Not connected to server. Please wait...', 'error');
             return;
         }
-        const itemName = parts.slice(1).join(' ');
-        ws.send(JSON.stringify({ type: 'drop', itemName }));
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Drop what?', 'error');
+            return;
+        }
+        
+        // Check if first word is a quantity (number or "all")
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        if (rest.length > 1) {
+            const firstWord = rest[0].toLowerCase();
+            if (firstWord === 'all') {
+                quantity = 'all';
+                itemNameParts = rest.slice(1);
+            } else {
+                const parsedQty = parseInt(firstWord, 10);
+                if (!isNaN(parsedQty) && parsedQty > 0) {
+                    quantity = parsedQty;
+                    itemNameParts = rest.slice(1);
+                }
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Drop what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'drop', itemName, quantity }));
         return;
     }
 
-    // HARVEST / H / COLLECT / C / GATHER / G <npc> - partial NPC name matching
-    if (base === 'harvest' || base === 'h' || base === 'collect' || base === 'c' || base === 'gather' || base === 'g') {
+    // HARVEST / H / P / COLLECT / C / GATHER / G <npc> - partial NPC name matching
+    if (base === 'harvest' || base === 'h' || base === 'p' || base === 'collect' || base === 'c' || base === 'gather' || base === 'g') {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             addToTerminal('Not connected to server. Please wait...', 'error');
             return;

@@ -29,6 +29,41 @@ let dragEndX = 0;
 let dragEndY = 0;
 let allMapsData = [];
 let currentMapId = null; // For player's current map
+let allItemsData = []; // For item placement in rooms
+let playerCurrentRoom = null; // Player's current room coordinates for centering
+
+// Non-blocking notification for editor errors
+function showEditorNotification(message, type = 'info') {
+    // Remove existing notification
+    const existing = document.getElementById('editorNotification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.id = 'editorNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${type === 'error' ? '#660000' : '#003300'};
+        border: 2px solid ${type === 'error' ? '#ff0000' : '#00ff00'};
+        color: ${type === 'error' ? '#ff6666' : '#00ff00'};
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        z-index: 10000;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.remove();
+        }
+    }, 5000);
+}
 
 // Connect to WebSocket server
 function connectWebSocket() {
@@ -89,6 +124,12 @@ function handleMessage(data) {
                     option.textContent = map.name;
                     mapSelector.appendChild(option);
                 });
+                
+                // Auto-select player's current map if we have it and haven't loaded a map yet
+                if (currentMapId && !currentEditorMapId) {
+                    mapSelector.value = currentMapId;
+                    loadMapForEditor(currentMapId);
+                }
             }
             break;
         case 'mapCreated':
@@ -174,12 +215,26 @@ function handleMessage(data) {
             }
             renderMapEditor();
             break;
+        case 'roomItemsForEditor':
+            // Update the room items section in the side panel
+            updateRoomItemsSection(data.roomId, data.roomItems, data.allItems);
+            break;
+        case 'roomItemAdded':
+        case 'roomItemRemoved':
+        case 'roomItemsCleared':
+            // Refresh item section
+            if (selectedRoom && selectedRoom.id === data.roomId) {
+                updateRoomItemsSection(data.roomId, data.roomItems, null);
+            }
+            break;
         case 'mapData':
-            // Store current map info for player room highlighting
+            // Store current map info for player room highlighting and auto-centering
             currentMapId = data.mapId;
+            playerCurrentRoom = data.currentRoom; // { x, y }
+            // The actual map loading will happen in 'allMaps' handler after maps are populated
             break;
         case 'error':
-            alert(data.message);
+            showEditorNotification(data.message, 'error');
             break;
     }
 }
@@ -195,9 +250,22 @@ function loadMapForEditor(mapId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     
     currentEditorMapId = mapId;
-    editorZoom = 1.0;
-    editorPanX = 0;
-    editorPanY = 0;
+    
+    // If this is the player's current map and we know their room, zoom and center on it
+    if (mapId === currentMapId && playerCurrentRoom) {
+        // Set zoom to show roughly 20x20 area
+        editorZoom = 2.5;
+        // Pan to center on player's room
+        // editorPanX positive = view moves right (shows higher X)
+        // editorPanY positive = view moves up (shows higher Y)
+        editorPanX = playerCurrentRoom.x;
+        editorPanY = playerCurrentRoom.y;
+    } else {
+        editorZoom = 1.0;
+        editorPanX = 0;
+        editorPanY = 0;
+    }
+    
     ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
 }
 
@@ -523,9 +591,17 @@ function renderMapEditor() {
         }
         
         const isSelected = selectedRooms.some(r => r.id === room.id) || (selectedRoom && selectedRoom.id === room.id);
+        const isPlayerRoom = currentMapId === currentEditorMapId && 
+                             playerCurrentRoom && 
+                             room.x === playerCurrentRoom.x && 
+                             room.y === playerCurrentRoom.y;
         
         if (isSelected) {
             borderColor = '#ff0000';
+            mapEditorCtx.lineWidth = 3;
+        } else if (isPlayerRoom) {
+            // Highlight player's current room with purple
+            borderColor = '#ff00ff';
             mapEditorCtx.lineWidth = 3;
         } else if (connectionSourceRoom && connectionSourceRoom.id === room.id) {
             borderColor = '#ff8800';
@@ -578,6 +654,75 @@ function renderMapEditor() {
 }
 
 // Update side panel (simplified - includes essential forms)
+// Update the room items section in the side panel
+function updateRoomItemsSection(roomId, roomItems, allItems) {
+    // Store allItems if provided
+    if (allItems) {
+        allItemsData = allItems;
+    }
+    
+    const section = document.getElementById('roomItemsSection');
+    const itemSelect = document.getElementById('itemToAdd');
+    
+    if (!section) return;
+    
+    // Update items list
+    if (roomItems && roomItems.length > 0) {
+        let html = roomItems.map(item => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px; background: #1a1a1a; margin-bottom: 2px; font-size: 0.8em;">
+                <span style="color: #00ff00;">${item.item_name} (x${item.quantity})</span>
+                <button class="remove-item-btn" data-item="${item.item_name}" style="padding: 2px 6px; font-size: 0.75em; background: #660000; border: 1px solid #ff0000; color: #ff6666; cursor: pointer;">-1</button>
+            </div>
+        `).join('');
+        
+        // Add Clear All button
+        html += `<button id="clearAllItemsBtn" style="width: 100%; margin-top: 6px; padding: 4px 8px; font-size: 0.75em; background: #440000; border: 1px solid #ff0000; color: #ff6666; cursor: pointer;">Clear All Items</button>`;
+        
+        section.innerHTML = html;
+        
+        // Add click handlers for remove buttons
+        section.querySelectorAll('.remove-item-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const itemName = btn.dataset.item;
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'removeItemFromRoom',
+                        roomId: roomId,
+                        itemName: itemName,
+                        quantity: 1
+                    }));
+                }
+            });
+        });
+        
+        // Add click handler for Clear All button
+        const clearAllBtn = document.getElementById('clearAllItemsBtn');
+        if (clearAllBtn) {
+            clearAllBtn.addEventListener('click', () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'clearAllItemsFromRoom',
+                        roomId: roomId
+                    }));
+                }
+            });
+        }
+    } else {
+        section.innerHTML = '<p style="font-size: 0.8em; color: #888;">No items in room</p>';
+    }
+    
+    // Populate item dropdown
+    if (itemSelect && allItemsData.length > 0) {
+        itemSelect.innerHTML = '<option value="">Select item...</option>';
+        allItemsData.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            itemSelect.appendChild(option);
+        });
+    }
+}
+
 function updateSidePanel() {
     const sidePanel = document.getElementById('sidePanelContent');
     if (!sidePanel) return;
@@ -790,6 +935,21 @@ function updateSidePanel() {
                 <option value="normal" ${selectedRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
                 <option value="merchant" ${selectedRoom.roomType === 'merchant' ? 'selected' : ''}>Merchant</option>
             </select>
+            
+            <!-- Room Items Section -->
+            <div style="border-top: 1px solid #333; margin-top: 12px; padding-top: 8px;">
+                <h4 style="font-size: 0.85em; margin-bottom: 8px; color: #ffff00;">Room Items</h4>
+                <div id="roomItemsSection" style="margin-bottom: 8px;">
+                    <p style="font-size: 0.8em; color: #888;">Loading items...</p>
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: stretch;">
+                    <select id="itemToAdd" style="flex: 1; font-size: 0.8em; min-width: 0;">
+                        <option value="">Select item...</option>
+                    </select>
+                    <button id="addItemBtn" style="padding: 4px 12px; font-size: 0.8em; white-space: nowrap; flex-shrink: 0;">Add</button>
+                </div>
+            </div>
+            
             <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button id="updateRoomConfirm" style="flex: 1;">Update Room</button>
                 <button id="deleteRoomConfirm" style="flex: 1; background: #cc0000;">Delete Room</button>
@@ -809,6 +969,30 @@ function updateSidePanel() {
             updateSidePanel();
             renderMapEditor();
         });
+        
+        // Add item button handler
+        document.getElementById('addItemBtn').addEventListener('click', () => {
+            const itemSelect = document.getElementById('itemToAdd');
+            const itemName = itemSelect.value;
+            if (itemName && selectedRoom.id) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'addItemToRoom',
+                        roomId: selectedRoom.id,
+                        itemName: itemName,
+                        quantity: 1
+                    }));
+                }
+            }
+        });
+        
+        // Request room items for this room
+        if (selectedRoom.id && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'getRoomItemsForEditor',
+                roomId: selectedRoom.id
+            }));
+        }
         
         if (hasConnection) {
             const disconnectBtn = document.getElementById('disconnectMapBtn');

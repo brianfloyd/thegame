@@ -15,6 +15,35 @@ let npcPlacements = [];
 let npcPlacementRooms = [];
 let npcPlacementMap = null;
 
+// Non-blocking notification for editor errors
+function showEditorNotification(message, type = 'info') {
+    const existing = document.getElementById('editorNotification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.id = 'editorNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${type === 'error' ? '#660000' : '#003300'};
+        border: 2px solid ${type === 'error' ? '#ff0000' : '#00ff00'};
+        color: ${type === 'error' ? '#ff6666' : '#00ff00'};
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        z-index: 10000;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        if (notification.parentNode) notification.remove();
+    }, 5000);
+}
+
 // Connect to WebSocket server
 function connectWebSocket() {
     ws = new WebSocket(wsUrl);
@@ -103,7 +132,7 @@ function handleMessage(data) {
             populateNpcPlacementRooms();
             break;
         case 'error':
-            alert(data.message);
+            showEditorNotification(data.message, 'error');
             break;
     }
 }

@@ -93,6 +93,7 @@ body {
     flex-direction: column;
     padding: 20px;
     overflow: hidden;
+    position: relative;
 }
 
 .terminal-content {
@@ -167,10 +168,43 @@ body {
 .npcs-section-title {
     color: #ffff00;
     font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.npc-container {
+    margin-bottom: 10px;
 }
 
 .npc-item {
     color: #00ffff;
+    display: block;
+    margin-bottom: 4px;
+}
+
+/* NPC Harvest/Cooldown Progress Bar */
+.npc-progress-container {
+    width: 25%;
+    height: 8px;
+    background: #001100;
+    border: 1px solid #003300;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+.npc-progress-bar {
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.npc-progress-active {
+    background: linear-gradient(90deg, #00ff00, #00cc00);
+    box-shadow: 0 0 4px #00ff00;
+}
+
+.npc-progress-cooldown {
+    background: linear-gradient(90deg, #ff6600, #ff9900);
+    box-shadow: 0 0 4px #ff6600;
 }
 
 /* Room items (on the ground) styles */
@@ -190,6 +224,62 @@ body {
 
 .item-item {
     color: #ffcc00;
+}
+
+/* Inventory table styles */
+.inventory-display {
+    margin: 15px 0;
+}
+
+.inventory-title {
+    color: #00ffff;
+    font-weight: bold;
+    font-size: 14px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.inventory-table {
+    border-collapse: collapse;
+    width: auto;
+    min-width: 200px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+}
+
+.inventory-table th,
+.inventory-table td {
+    padding: 6px 16px;
+    text-align: left;
+    border: 1px solid #006600;
+}
+
+.inventory-table th {
+    background: #003300;
+    color: #00ff00;
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 1px;
+}
+
+.inventory-table td {
+    background: #001a00;
+    color: #00ff00;
+}
+
+.inventory-table td:last-child {
+    text-align: center;
+    color: #ffff00;
+}
+
+.inventory-table tbody tr:hover {
+    background: #002200;
+}
+
+.inventory-table tbody tr:hover td {
+    background: #002200;
 }
 
 /* Help command styles */
@@ -446,6 +536,43 @@ body {
 .info-message {
     color: #ffff00;
     margin-top: 10px;
+}
+
+/* Persistent message container - not cleared by room updates */
+#persistentMessages {
+    position: absolute;
+    bottom: 60px;
+    left: 20px;
+    right: 20px;
+    z-index: 100;
+    pointer-events: none;
+}
+
+.persistent-message {
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #ffff00;
+    color: #ffff00;
+    font-weight: bold;
+    padding: 12px 20px;
+    margin-bottom: 10px;
+    text-shadow: 0 0 10px #ffff00, 0 0 20px #ffff00;
+    font-size: 16px;
+    text-align: center;
+}
+
+.persistent-message.fade-out {
+    animation: messageFadeOut 1s ease-out forwards;
+}
+
+@keyframes messageFadeOut {
+    from {
+        opacity: 1;
+        text-shadow: 0 0 10px #ffff00, 0 0 20px #ffff00;
+    }
+    to {
+        opacity: 0;
+        text-shadow: none;
+    }
 }
 
 .command-line {

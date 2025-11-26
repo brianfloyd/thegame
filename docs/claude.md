@@ -906,6 +906,74 @@ God mode is a special privilege system that grants players administrative capabi
   - `allMaps` - List of all maps
   - `mapConnected` - Maps connected successfully
 
+## Game Database (game.db)
+
+All game data is stored in `game.db`, a SQLite database. This includes:
+
+### Core Tables
+| Table | Purpose |
+|-------|---------|
+| `maps` | Map definitions (name, size, description) |
+| `rooms` | Room definitions with coordinates, connections, and types |
+| `players` | Player data, stats, abilities, resources, and flags |
+| `items` | Master item definitions (name, description, type) |
+| `room_items` | Items placed on the ground in rooms |
+| `player_items` | Player inventories |
+| `scriptable_npcs` | NPC definitions (type, cycle time, input/output items, etc.) |
+| `room_npcs` | NPC placements in rooms with state tracking |
+
+### Key Relationships
+- `room_items.item_name` references items by name (not foreign key for flexibility)
+- `room_npcs.npc_id` references `scriptable_npcs.id`
+- `room_npcs.state` is JSON storing NPC runtime state (harvest_active, cooldown, etc.)
+- `scriptable_npcs.input_items` defines required items for NPC interactions (JSON)
+- `scriptable_npcs.output_items` defines items produced by NPC (JSON)
+
+### NPC input_items Format
+Required items for harvesting are stored in `scriptable_npcs.input_items` as JSON:
+```json
+{"Harvester Rune": 1}
+```
+This means the player must have 1 "Harvester Rune" in inventory to harvest this NPC.
+
+## Rhythm NPC Harvest Session System
+
+### Overview
+Rhythm NPCs (like Pulsewood Harvester) only produce items during active harvest sessions.
+
+### State Machine
+```
+IDLE → (harvest command + has required items + no cooldown) → HARVESTING
+HARVESTING → (unsafe command or room change) → COOLDOWN (2 min)
+COOLDOWN → (time expires) → IDLE
+```
+
+### State Storage (room_npcs.state JSON)
+```json
+{
+  "harvest_active": true,
+  "harvesting_player_id": 123,
+  "cooldown_until": 1700000000000,
+  "cycles": 15
+}
+```
+
+### Commands
+- `harvest <npc>` / `h <npc>` / `p <npc>` - Start harvest session
+- `collect <npc>` / `c <npc>` / `gather <npc>` / `g <npc>` - Aliases
+
+### Safe Commands (don't interrupt harvest)
+- Movement: n, s, e, w, ne, nw, se, sw, u, d
+- Inventory: inventory, inv, i
+- Look: look, l
+
+### Interruption
+Any other command or room movement ends the harvest session and starts cooldown.
+
+### Required Items
+Required items come from the NPC's `input_items` field in `scriptable_npcs` table.
+This is a data relationship, not hardcoded - items can be changed in NPC Editor.
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database
