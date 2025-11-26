@@ -658,10 +658,10 @@ wss.on('connection', (ws, req) => {
         // Notify players in new room
         broadcastToRoom(targetRoom.id, {
           type: 'playerJoined',
-          playerName: currentPlayerName
-        }, currentPlayerName);
+          playerName: playerName
+        }, sessionId);
 
-        console.log(`Player ${currentPlayerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
+        console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
       }
 
       // Map Editor Handlers
@@ -1281,15 +1281,17 @@ wss.on('connection', (ws, req) => {
       }
 
       else if (data.type === 'look') {
-        // Find player by WebSocket connection
+        // Find player by WebSocket connection - need both sessionId and playerName
+        let currentSessionId = null;
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData) => {
+        connectedPlayers.forEach((playerData, sId) => {
           if (playerData.ws === ws) {
+            currentSessionId = sId;
             currentPlayerName = playerData.playerName;
           }
         });
 
-        if (!currentPlayerName) {
+        if (!currentPlayerName || !currentSessionId) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
           return;
         }
@@ -1309,7 +1311,7 @@ wss.on('connection', (ws, req) => {
         const target = (data.target || '').trim();
         if (!target) {
           // No specific target: send full room update (same as entering room)
-          sendRoomUpdate(currentPlayerName, currentRoom);
+          sendRoomUpdate(currentSessionId, currentRoom);
           return;
         }
 
