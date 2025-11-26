@@ -785,6 +785,9 @@ let editorMode = 'edit'; // 'edit' | 'create' | 'connect'
 let connectionSourceRoom = null;
 const EDITOR_GRID_SIZE = 100;
 const EDITOR_CELL_SIZE = 8;
+let editorZoom = 1.0; // Zoom level (1.0 = normal, >1.0 = zoomed in, <1.0 = zoomed out)
+let editorPanX = 0; // Pan offset in X direction (in map coordinates)
+let editorPanY = 0; // Pan offset in Y direction (in map coordinates)
 
 // Update god mode UI
 function updateGodModeUI(hasGodMode) {
@@ -880,7 +883,25 @@ document.addEventListener('DOMContentLoaded', () => {
         mapEditorCanvas.addEventListener('click', (e) => {
             handleMapEditorClick(e);
         });
+        
+        // Handle mouse wheel for zooming
+        mapEditorCanvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            handleMapEditorZoom(e);
+        });
     }
+    
+    // Handle arrow keys for panning
+    document.addEventListener('keydown', (e) => {
+        // Only handle arrow keys when map editor is open and focused
+        if (mapEditor && !mapEditor.classList.contains('hidden')) {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || 
+                e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                handleMapEditorPan(e.key);
+            }
+        }
+    });
 });
 
 // Open map editor
@@ -920,6 +941,49 @@ function closeMapEditor() {
     selectedRoom = null;
     editorMode = 'edit';
     connectionSourceRoom = null;
+    // Reset zoom and pan when closing
+    editorZoom = 1.0;
+    editorPanX = 0;
+    editorPanY = 0;
+}
+
+// Handle map editor zoom
+function handleMapEditorZoom(e) {
+    const zoomSpeed = 0.1;
+    const minZoom = 0.5;
+    const maxZoom = 5.0;
+    
+    if (e.deltaY < 0) {
+        // Zoom in
+        editorZoom = Math.min(editorZoom + zoomSpeed, maxZoom);
+    } else {
+        // Zoom out
+        editorZoom = Math.max(editorZoom - zoomSpeed, minZoom);
+    }
+    
+    renderMapEditor();
+}
+
+// Handle map editor panning
+function handleMapEditorPan(direction) {
+    const panAmount = 5; // Pan by 5 squares
+    
+    switch (direction) {
+        case 'ArrowUp':
+            editorPanY += panAmount;
+            break;
+        case 'ArrowDown':
+            editorPanY -= panAmount;
+            break;
+        case 'ArrowLeft':
+            editorPanX -= panAmount;
+            break;
+        case 'ArrowRight':
+            editorPanX += panAmount;
+            break;
+    }
+    
+    renderMapEditor();
 }
 
 // Load map for editor
@@ -927,6 +991,10 @@ function loadMapForEditor(mapId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     
     currentEditorMapId = mapId;
+    // Reset zoom and pan when loading a new map
+    editorZoom = 1.0;
+    editorPanX = 0;
+    editorPanY = 0;
     ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
 }
 
@@ -986,50 +1054,84 @@ function toggleConnectMode() {
 
 // Handle map editor click
 function handleMapEditorClick(e) {
-    if (!mapEditorCanvas || !mapEditorCtx || editorMapRooms.length === 0) return;
+    if (!mapEditorCanvas || !mapEditorCtx) return;
     
     const rect = mapEditorCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Calculate bounds (same as in renderMapEditor)
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    
-    editorMapRooms.forEach(room => {
-        minX = Math.min(minX, room.x);
-        maxX = Math.max(maxX, room.x);
-        minY = Math.min(minY, room.y);
-        maxY = Math.max(maxY, room.y);
-    });
-    
-    const padding = 5;
-    minX -= padding;
-    maxX += padding;
-    minY -= padding;
-    maxY += padding;
-    
-    const mapWidth = maxX - minX + 1;
-    const mapHeight = maxY - minY + 1;
-    
-    // Calculate scale (same as renderMapEditor)
     const canvasWidth = mapEditorCanvas.width;
     const canvasHeight = mapEditorCanvas.height;
-    const scaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
-    const scaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
-    const scale = Math.min(scaleX, scaleY, 1);
-    
-    const scaledCellSize = EDITOR_CELL_SIZE * scale;
-    
-    // Calculate offset (same as renderMapEditor)
-    const scaledMapWidth = mapWidth * scaledCellSize;
-    const scaledMapHeight = mapHeight * scaledCellSize;
-    const offsetX = (canvasWidth - scaledMapWidth) / 2;
-    const offsetY = (canvasHeight - scaledMapHeight) / 2;
     
     // Convert click coordinates to map coordinates
-    const mapX = Math.floor((x - offsetX) / scaledCellSize) + minX;
-    const mapY = maxY - Math.floor((y - offsetY) / scaledCellSize); // Invert Y axis
+    let mapX, mapY;
+    
+    if (editorMapRooms.length === 0) {
+        // Empty map - use 100x100 grid centered at 0,0
+        const gridSize = EDITOR_GRID_SIZE;
+        const gridWidth = gridSize * EDITOR_CELL_SIZE;
+        const gridHeight = gridSize * EDITOR_CELL_SIZE;
+        
+        const baseScaleX = canvasWidth / gridWidth;
+        const baseScaleY = canvasHeight / gridHeight;
+        const baseScale = Math.min(baseScaleX, baseScaleY, 1);
+        
+        const scaledCellSize = EDITOR_CELL_SIZE * baseScale * editorZoom;
+        const scaledGridWidth = gridSize * scaledCellSize;
+        const scaledGridHeight = gridSize * scaledCellSize;
+        
+        const centerOffsetX = (canvasWidth - scaledGridWidth) / 2;
+        const centerOffsetY = (canvasHeight - scaledGridHeight) / 2;
+        const offsetX = centerOffsetX - (editorPanX * scaledCellSize);
+        const offsetY = centerOffsetY + (editorPanY * scaledCellSize);
+        
+        const gridCenter = Math.floor(gridSize / 2);
+        const gridX = Math.floor((x - offsetX) / scaledCellSize);
+        const gridY = Math.floor((y - offsetY) / scaledCellSize);
+        
+        // Convert grid coordinates to map coordinates (centered at 0,0)
+        mapX = gridX - gridCenter;
+        mapY = gridCenter - gridY; // Invert Y axis
+    } else {
+        // Map with rooms - calculate bounds
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        
+        editorMapRooms.forEach(room => {
+            minX = Math.min(minX, room.x);
+            maxX = Math.max(maxX, room.x);
+            minY = Math.min(minY, room.y);
+            maxY = Math.max(maxY, room.y);
+        });
+        
+        const padding = 5;
+        minX -= padding;
+        maxX += padding;
+        minY -= padding;
+        maxY += padding;
+        
+        const mapWidth = maxX - minX + 1;
+        const mapHeight = maxY - minY + 1;
+        
+        // Calculate scale with zoom
+        const baseScaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
+        const baseScaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
+        const baseScale = Math.min(baseScaleX, baseScaleY, 1);
+        
+        const scaledCellSize = EDITOR_CELL_SIZE * baseScale * editorZoom;
+        
+        // Calculate offset with pan
+        const scaledMapWidth = mapWidth * scaledCellSize;
+        const scaledMapHeight = mapHeight * scaledCellSize;
+        const centerOffsetX = (canvasWidth - scaledMapWidth) / 2;
+        const centerOffsetY = (canvasHeight - scaledMapHeight) / 2;
+        const offsetX = centerOffsetX - (editorPanX * scaledCellSize);
+        const offsetY = centerOffsetY + (editorPanY * scaledCellSize);
+        
+        // Convert click to map coordinates
+        mapX = Math.floor((x - offsetX) / scaledCellSize) + minX;
+        mapY = maxY - Math.floor((y - offsetY) / scaledCellSize); // Invert Y axis
+    }
     
     if (editorMode === 'connect') {
         // In connect mode, select source room first
@@ -1058,12 +1160,98 @@ function handleMapEditorClick(e) {
 
 // Render map editor
 function renderMapEditor() {
-    if (!mapEditorCanvas || !mapEditorCtx || editorMapRooms.length === 0) {
-        // Clear canvas if no rooms
-        if (mapEditorCanvas && mapEditorCtx) {
-            mapEditorCtx.fillStyle = '#000';
-            mapEditorCtx.fillRect(0, 0, mapEditorCanvas.width, mapEditorCanvas.height);
+    if (!mapEditorCanvas || !mapEditorCtx) {
+        return;
+    }
+    
+    const canvasWidth = mapEditorCanvas.width;
+    const canvasHeight = mapEditorCanvas.height;
+    
+    // Clear canvas
+    mapEditorCtx.fillStyle = '#000';
+    mapEditorCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Calculate base cell size with zoom
+    const zoomedCellSize = EDITOR_CELL_SIZE * editorZoom;
+    
+    // If no rooms, show 100x100 grid centered
+    if (editorMapRooms.length === 0) {
+        const gridSize = EDITOR_GRID_SIZE;
+        const gridWidth = gridSize * zoomedCellSize;
+        const gridHeight = gridSize * zoomedCellSize;
+        
+        // Calculate scale to fit in canvas (base scale, then apply zoom)
+        const baseScaleX = canvasWidth / (gridSize * EDITOR_CELL_SIZE);
+        const baseScaleY = canvasHeight / (gridSize * EDITOR_CELL_SIZE);
+        const baseScale = Math.min(baseScaleX, baseScaleY, 1); // Don't scale up, only down
+        
+        const scaledCellSize = EDITOR_CELL_SIZE * baseScale * editorZoom;
+        const scaledGridWidth = gridSize * scaledCellSize;
+        const scaledGridHeight = gridSize * scaledCellSize;
+        
+        // Center the grid, then apply pan offset
+        const centerOffsetX = (canvasWidth - scaledGridWidth) / 2;
+        const centerOffsetY = (canvasHeight - scaledGridHeight) / 2;
+        const offsetX = centerOffsetX - (editorPanX * scaledCellSize);
+        const offsetY = centerOffsetY + (editorPanY * scaledCellSize); // Invert Y for pan
+        
+        // Draw grid lines (only draw visible lines)
+        mapEditorCtx.strokeStyle = '#333';
+        mapEditorCtx.lineWidth = 1;
+        
+        // Calculate visible range
+        const startX = Math.max(0, Math.floor(-offsetX / scaledCellSize) - 1);
+        const endX = Math.min(gridSize, Math.ceil((canvasWidth - offsetX) / scaledCellSize) + 1);
+        const startY = Math.max(0, Math.floor(-offsetY / scaledCellSize) - 1);
+        const endY = Math.min(gridSize, Math.ceil((canvasHeight - offsetY) / scaledCellSize) + 1);
+        
+        // Draw vertical lines
+        for (let x = startX; x <= endX; x++) {
+            const screenX = offsetX + x * scaledCellSize;
+            if (screenX >= -scaledCellSize && screenX <= canvasWidth + scaledCellSize) {
+                mapEditorCtx.beginPath();
+                mapEditorCtx.moveTo(screenX, Math.max(0, offsetY));
+                mapEditorCtx.lineTo(screenX, Math.min(canvasHeight, offsetY + scaledGridHeight));
+                mapEditorCtx.stroke();
+            }
         }
+        
+        // Draw horizontal lines
+        for (let y = startY; y <= endY; y++) {
+            const screenY = offsetY + y * scaledCellSize;
+            if (screenY >= -scaledCellSize && screenY <= canvasHeight + scaledCellSize) {
+                mapEditorCtx.beginPath();
+                mapEditorCtx.moveTo(Math.max(0, offsetX), screenY);
+                mapEditorCtx.lineTo(Math.min(canvasWidth, offsetX + scaledGridWidth), screenY);
+                mapEditorCtx.stroke();
+            }
+        }
+        
+        // Draw selected empty space if any
+        if (selectedRoom && selectedRoom.isNew) {
+            const gridCenter = Math.floor(gridSize / 2);
+            const mapX = selectedRoom.x;
+            const mapY = selectedRoom.y;
+            
+            // Convert map coordinates to grid coordinates (centered at 0,0)
+            const gridX = mapX + gridCenter;
+            const gridY = gridCenter - mapY; // Invert Y
+            
+            if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
+                const screenX = offsetX + gridX * scaledCellSize;
+                const screenY = offsetY + gridY * scaledCellSize;
+                
+                // Draw red outline for selected empty space
+                mapEditorCtx.strokeStyle = '#ff0000'; // Red
+                mapEditorCtx.lineWidth = 3;
+                mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+                
+                // Also draw a light red fill to make it more visible
+                mapEditorCtx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                mapEditorCtx.fillRect(screenX, screenY, scaledCellSize, scaledCellSize);
+            }
+        }
+        
         return;
     }
     
@@ -1089,32 +1277,28 @@ function renderMapEditor() {
     const mapWidth = maxX - minX + 1;
     const mapHeight = maxY - minY + 1;
     
-    // Calculate scale to fit in canvas
-    const canvasWidth = mapEditorCanvas.width;
-    const canvasHeight = mapEditorCanvas.height;
-    const scaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
-    const scaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
-    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+    // Calculate base scale to fit in canvas, then apply zoom
+    const baseScaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
+    const baseScaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
+    const baseScale = Math.min(baseScaleX, baseScaleY, 1); // Don't scale up, only down
     
-    const scaledCellSize = EDITOR_CELL_SIZE * scale;
+    const scaledCellSize = EDITOR_CELL_SIZE * baseScale * editorZoom;
     
-    // Calculate offset to center the map
+    // Calculate offset to center the map, then apply pan
     const scaledMapWidth = mapWidth * scaledCellSize;
     const scaledMapHeight = mapHeight * scaledCellSize;
-    const offsetX = (canvasWidth - scaledMapWidth) / 2;
-    const offsetY = (canvasHeight - scaledMapHeight) / 2;
+    const centerOffsetX = (canvasWidth - scaledMapWidth) / 2;
+    const centerOffsetY = (canvasHeight - scaledMapHeight) / 2;
+    const offsetX = centerOffsetX - (editorPanX * scaledCellSize);
+    const offsetY = centerOffsetY + (editorPanY * scaledCellSize); // Invert Y for pan
     
-    // Clear canvas
-    mapEditorCtx.fillStyle = '#000';
-    mapEditorCtx.fillRect(0, 0, canvasWidth, canvasHeight);
-    
-    // Draw grid (only show cells near existing rooms)
+    // Draw grid (only show cells near existing rooms) - only draw visible ones
     const roomCoords = new Set();
     editorMapRooms.forEach(room => {
         roomCoords.add(`${room.x},${room.y}`);
     });
     
-    // Draw empty cells near rooms (within 2 squares)
+    // Draw empty cells near rooms (within 2 squares) - only draw visible ones
     editorMapRooms.forEach(room => {
         for (let dx = -2; dx <= 2; dx++) {
             for (let dy = -2; dy <= 2; dy++) {
@@ -1124,18 +1308,29 @@ function renderMapEditor() {
                 if (!roomCoords.has(key) && checkX >= minX && checkX <= maxX && checkY >= minY && checkY <= maxY) {
                     const screenX = offsetX + (checkX - minX) * scaledCellSize;
                     const screenY = offsetY + (maxY - checkY) * scaledCellSize; // Invert Y
-                    mapEditorCtx.strokeStyle = '#333';
-                    mapEditorCtx.lineWidth = 1;
-                    mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+                    
+                    // Only draw if visible on screen
+                    if (screenX + scaledCellSize >= 0 && screenX <= canvasWidth &&
+                        screenY + scaledCellSize >= 0 && screenY <= canvasHeight) {
+                        mapEditorCtx.strokeStyle = '#333';
+                        mapEditorCtx.lineWidth = 1;
+                        mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+                    }
                 }
             }
         }
     });
     
-    // Draw rooms
+    // Draw rooms (only draw visible ones)
     editorMapRooms.forEach(room => {
         const screenX = offsetX + (room.x - minX) * scaledCellSize;
         const screenY = offsetY + (maxY - room.y) * scaledCellSize; // Invert Y
+        
+        // Skip if not visible on screen
+        if (screenX + scaledCellSize < 0 || screenX > canvasWidth ||
+            screenY + scaledCellSize < 0 || screenY > canvasHeight) {
+            return;
+        }
         
         // Determine color based on room type
         let fillColor = '#00ff00'; // Normal (green)
@@ -1174,16 +1369,18 @@ function renderMapEditor() {
         const screenX = offsetX + (selectedRoom.x - minX) * scaledCellSize;
         const screenY = offsetY + (maxY - selectedRoom.y) * scaledCellSize; // Invert Y
         
-        const cellPadding = Math.max(1, scaledCellSize * 0.1);
-        
-        // Draw red outline for selected empty space
-        mapEditorCtx.strokeStyle = '#ff0000'; // Red
-        mapEditorCtx.lineWidth = 3;
-        mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
-        
-        // Also draw a light red fill to make it more visible
-        mapEditorCtx.fillStyle = 'rgba(255, 0, 0, 0.2)';
-        mapEditorCtx.fillRect(screenX, screenY, scaledCellSize, scaledCellSize);
+        // Only draw if visible on screen
+        if (screenX + scaledCellSize >= 0 && screenX <= canvasWidth &&
+            screenY + scaledCellSize >= 0 && screenY <= canvasHeight) {
+            // Draw red outline for selected empty space
+            mapEditorCtx.strokeStyle = '#ff0000'; // Red
+            mapEditorCtx.lineWidth = 3;
+            mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+            
+            // Also draw a light red fill to make it more visible
+            mapEditorCtx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+            mapEditorCtx.fillRect(screenX, screenY, scaledCellSize, scaledCellSize);
+        }
     }
 }
 

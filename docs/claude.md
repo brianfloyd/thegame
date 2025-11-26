@@ -263,14 +263,22 @@ thegame/
   - Handle button clicks (Map button opens map editor)
 - **Map Editor Implementation**:
   - **State Management**: Tracks current editor map, selected room, editor mode (edit/create/connect)
-  - **100x100 Grid Rendering**: Canvas-based rendering centered on map rooms
-  - **Room Selection**: Click room to select for editing
-  - **Room Creation**: Click empty space to create new room
-  - **Room Editing**: Side panel form to edit name, description, and type
-  - **New Map Creation**: Dialog form to create new map, opens blank editor
-  - **Map Size Calculation**: Auto-calculates map dimensions from room bounds
+  - **100x100 Grid Rendering**: Canvas-based rendering with automatic centering and scaling
+    - For maps with rooms: Calculates bounds, centers map, scales to fit canvas
+    - For empty maps: Displays full 100x100 grid with all grid lines, centered and scaled
+    - No scrolling required - everything fits on screen
+  - **Visual Selection System**:
+    - Red highlight (#ff0000) for selected existing rooms
+    - Red outline and fill for selected empty spaces (new room creation)
+    - Map re-renders on selection change to show/hide highlights
+  - **Room Selection**: Click room to select for editing (shows red border)
+  - **Room Creation**: Click empty space to create new room (shows red highlight, turns green after creation)
+  - **Room Editing**: Compact side panel form to edit name, description, and type
+  - **New Map Creation**: Dialog form to create new map, opens blank 100x100 grid editor
+  - **Map Size Calculation**: Auto-calculates map dimensions from room coordinate bounds
   - **Map Connection**: Select source room, choose direction and target map/coordinates
   - **Connection Validation**: Client-side and server-side validation of connections
+  - **Click Coordinate Conversion**: Handles both empty maps (100x100 grid) and maps with rooms (dynamic bounds)
 
 ### 7. WebSocket Message Protocol
 - Client → Server:
@@ -455,6 +463,19 @@ thegame/
 
 ### God Mode and Map Editor System (Latest)
 
+#### Recent Map Editor Improvements (Alpha Release)
+- **Map Centering & Scaling**: Map automatically centers and scales to fit canvas - no scrolling required
+- **Empty Map Grid Display**: Full 100x100 grid with all grid lines visible when map has no rooms
+- **Visual Selection Feedback**: Red highlight system for selected rooms and empty spaces
+  - Selected existing rooms show red border
+  - Selected empty spaces show red outline with semi-transparent fill
+- **Compact Side Panel**: Optimized layout with no scrolling
+  - X and Y coordinates on same line
+  - Room name label and input on same line
+  - Smaller fonts and reduced spacing
+  - All content fits without scrolling
+- **Room Creation Feedback**: Newly created rooms automatically appear green after creation
+
 #### God Mode Implementation
 - Added `god_mode` column to players table (INTEGER, default 0)
 - Fliz has god mode enabled (value 1), Hebron does not (value 0)
@@ -463,12 +484,20 @@ thegame/
 
 #### Map Editor Features
 - Full-screen map editor overlay with 100x100 grid canvas
-- Room type system: Normal (green) and Merchant (blue) with visual distinction
+- **Auto-centering and scaling**: Map automatically centers and scales to fit canvas (no scrolling required)
+- **Empty map support**: Displays full 100x100 grid when map has no rooms for easy room placement
+- **Visual selection feedback**: Selected rooms highlighted with red border (#ff0000)
+- **Empty space selection**: Clicking empty space shows red outline with semi-transparent fill for new room creation
+- Room type system: Normal (green #00ff00) and Merchant (blue #0088ff) with visual distinction
 - Click-to-edit existing rooms (name, description, type)
 - Click-to-create new rooms in empty spaces
 - Create new maps with auto-calculated dimensions
 - Map connection system with bidirectional validation
-- Side panel for room editing forms
+- **Compact side panel**: No scrolling, optimized layout
+  - X and Y coordinates on same line (no "Coordinates:" label)
+  - Room name label and input on same line
+  - Smaller font sizes for better fit
+  - All form elements visible without scrolling
 - Map selector dropdown for switching between maps
 
 #### Database Enhancements
@@ -486,6 +515,10 @@ thegame/
 - Map editor overlay and dialog styling
 - Room type color coding in map editor
 - Empty space visualization (outlined squares near existing rooms)
+- **Map centering**: Automatic centering and scaling of map content to fit canvas
+- **Selection highlighting**: Red visual feedback for selected rooms and empty spaces
+- **Compact form layout**: Side panel optimized to fit all content without scrolling
+- **Empty map grid**: Full 100x100 grid displayed for maps with no rooms
 
 ### Map with Connecting Areas Patch
 
@@ -537,11 +570,17 @@ God mode is a special privilege system that grants players administrative capabi
 
 ### Map Editor
 - **100x100 Grid**: Maximum map size representation
+- **Auto-Centering**: Map automatically centers and scales to fit canvas - no scrolling required
+- **Empty Map Support**: When map has no rooms, displays full 100x100 grid with all grid lines visible
+- **Visual Selection Feedback**:
+  - Selected existing rooms: Red border (#ff0000) with 3px line width
+  - Selected empty spaces: Red outline with semi-transparent red fill (rgba(255, 0, 0, 0.2))
+  - Connection source rooms: Orange border (#ff8800)
 - **Room Types**: 
   - Normal (green #00ff00 fill, yellow #ffff00 border)
   - Merchant (blue #0088ff fill, darker blue #0066cc border)
 - **Room Editing**: Click existing room to edit name, description, and type
-- **Room Creation**: Click empty space to create new room
+- **Room Creation**: Click empty space to create new room (shows red highlight, turns green after creation)
 - **Map Creation**: Create new maps with auto-calculated size based on room bounds
 - **Map Connections**: Connect rooms between maps with validation
   - Source room must have available exit in requested direction
@@ -550,11 +589,17 @@ God mode is a special privilege system that grants players administrative capabi
 
 ### Map Editor UI
 - Full-screen overlay with 100x100 grid canvas
-- Side panel for room editing forms
+- **Compact Side Panel**: Optimized layout with no scrolling
+  - X and Y coordinates displayed on same line (format: "X: [value] Y: [value]")
+  - Room name label and input on same line using flexbox
+  - Smaller font sizes (0.9em for titles, 11px for labels)
+  - Reduced spacing and textarea height (60px min, 80px max)
+  - All form elements visible without scrolling
 - Map selector dropdown
 - Create New Map button
 - Connect Maps button (enters connection mode)
-- Empty spaces shown as outlined squares (only near existing rooms)
+- Empty spaces shown as outlined squares (only near existing rooms when map has rooms)
+- **Grid Display**: Full 100x100 grid with all lines visible for empty maps
 
 ### Database Schema
 - `players.god_mode` (INTEGER, default 0)
