@@ -1,5 +1,6 @@
 let ws = null;
 let currentPlayerName = null;
+let pendingPlayerSelection = null; // Store player name to auto-select on reconnect
 
 // Get protocol (ws or wss) based on current page protocol
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -11,6 +12,31 @@ function connectWebSocket() {
 
     ws.onopen = () => {
         console.log('WebSocket connected');
+        
+        // Check if we have a pending player selection or a player name in the title
+        let playerToSelect = null;
+        
+        if (pendingPlayerSelection) {
+            // Use pending selection first (from a failed selectPlayer call)
+            playerToSelect = pendingPlayerSelection;
+            pendingPlayerSelection = null;
+        } else {
+            // Check title for saved player name
+            const titleMatch = document.title.match(/The Game - (.+)$/);
+            if (titleMatch && titleMatch[1]) {
+                playerToSelect = titleMatch[1];
+            }
+        }
+        
+        if (playerToSelect) {
+            console.log(`Auto-reconnecting player: ${playerToSelect}`);
+            // Small delay to ensure connection is fully ready
+            setTimeout(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    selectPlayer(playerToSelect);
+                }
+            }, 100);
+        }
     };
 
     ws.onmessage = (event) => {
@@ -51,7 +77,7 @@ function handleMessage(data) {
             }
             break;
         case 'mapData':
-            initializeMap(data.rooms, data.currentRoom, data.mapId, data.connectionInfo);
+            initializeMap(data.rooms, data.currentRoom, data.mapId);
             break;
         case 'mapUpdate':
             updateMapPosition(data.currentRoom, data.mapId);
@@ -112,6 +138,10 @@ function handleMessage(data) {
             } else {
                 // Normal map editor data load
                 editorMapRooms = data.rooms;
+                // Update side panel if a room is selected to show connection info
+                if (selectedRoom) {
+                    updateSidePanel();
+                }
                 renderMapEditor();
             }
             break;
@@ -178,6 +208,9 @@ function handleMessage(data) {
             }
             break;
         case 'allMaps':
+            // Store maps data for lookup
+            allMapsData = data.maps;
+            
             // Populate map selector
             const selector = document.getElementById('mapSelector');
             const targetMapSelect = document.getElementById('targetMapSelect');
@@ -421,12 +454,19 @@ document.querySelectorAll('.player-btn').forEach(btn => {
 
 // Select player and send to server
 function selectPlayer(playerName) {
+    // Update page title immediately to show active player
+    document.title = `The Game - ${playerName}`;
+    
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        alert('Not connected to server. Please wait...');
+        // Store player name for auto-selection when connection is ready
+        pendingPlayerSelection = playerName;
+        console.log(`Connection not ready, queued player selection: ${playerName}`);
+        // Don't show alert - connection will auto-reconnect and select player
         return;
     }
 
     currentPlayerName = playerName;
+    pendingPlayerSelection = null; // Clear any pending selection
 
     // Send player selection to server
     ws.send(JSON.stringify({
@@ -509,130 +549,139 @@ function movePlayer(direction) {
     }));
 }
 
-// Update player stats display
+// Update player stats display (dynamically renders all stats from database)
 function updatePlayerStats(stats) {
     const statsContent = document.getElementById('playerStatsContent');
-    if (!statsContent) return;
+    if (!statsContent || !stats) return;
     
     statsContent.innerHTML = '';
     
-    // Stats Section
-    const statsSection = document.createElement('div');
-    statsSection.className = 'stats-section';
+    // Group stats by category
+    const statsByCategory = {
+        stats: [],
+        abilities: [],
+        resources: [],
+        flags: []
+    };
     
-    const statsTitle = document.createElement('div');
-    statsTitle.className = 'stats-section-title';
-    statsTitle.textContent = 'Attributes';
-    statsSection.appendChild(statsTitle);
-    
-    const statItems = [
-        { label: 'Brute Strength', value: stats.bruteStrength },
-        { label: 'Life Force', value: stats.lifeForce },
-        { label: 'Cunning', value: stats.cunning },
-        { label: 'Intelligence', value: stats.intelligence },
-        { label: 'Wisdom', value: stats.wisdom }
-    ];
-    
-    statItems.forEach(stat => {
-        const item = document.createElement('div');
-        item.className = 'stat-item';
-        const label = document.createElement('span');
-        label.className = 'stat-label';
-        label.textContent = stat.label + ':';
-        const value = document.createElement('span');
-        value.className = 'stat-value';
-        value.textContent = stat.value;
-        item.appendChild(label);
-        item.appendChild(value);
-        statsSection.appendChild(item);
+    // Organize stats by category
+    Object.keys(stats).forEach(key => {
+        const stat = stats[key];
+        if (stat && stat.category && stat.value !== undefined) {
+            // Skip max values (they're handled with their base resource)
+            if (key.startsWith('max')) return;
+            
+            statsByCategory[stat.category].push({
+                key: key,
+                displayName: stat.displayName,
+                value: stat.value
+            });
+        }
     });
     
+    // Render Attributes (stats)
+    if (statsByCategory.stats.length > 0) {
+        const statsSection = createStatSection('Attributes', statsByCategory.stats);
     statsContent.appendChild(statsSection);
+    }
     
-    // Abilities Section
-    const abilitiesSection = document.createElement('div');
-    abilitiesSection.className = 'stats-section';
+    // Render Abilities
+    if (statsByCategory.abilities.length > 0) {
+        const abilitiesSection = createStatSection('Abilities', statsByCategory.abilities);
+        statsContent.appendChild(abilitiesSection);
+    }
     
-    const abilitiesTitle = document.createElement('div');
-    abilitiesTitle.className = 'stats-section-title';
-    abilitiesTitle.textContent = 'Abilities';
-    abilitiesSection.appendChild(abilitiesTitle);
+    // Render Resources (Hit Points, Mana, etc.)
+    if (statsByCategory.resources.length > 0) {
+        const processedResources = new Set();
+        
+        statsByCategory.resources.forEach(resource => {
+            // Skip max values (they're handled with their base resource)
+            if (resource.key.startsWith('max')) return;
+            if (processedResources.has(resource.key)) return;
+            
+            // Try to find corresponding max value
+            // maxHitPoints, maxMana, etc.
+            const maxKey = `max${resource.key.charAt(0).toUpperCase() + resource.key.slice(1)}`;
+            const maxStat = stats[maxKey];
+            
+            if (maxStat && maxStat.value !== undefined && maxStat.value > 0) {
+                // Resource with max value (HP, Mana) - render with bar
+                const resourceSection = createResourceSection(resource.displayName, resource.value, maxStat.value, resource.key);
+                statsContent.appendChild(resourceSection);
+                processedResources.add(resource.key);
+                processedResources.add(maxKey);
+            } else if (resource.value !== undefined) {
+                // Simple resource without max - render as regular stat
+                const resourceSection = createStatSection(resource.displayName, [resource]);
+                statsContent.appendChild(resourceSection);
+                processedResources.add(resource.key);
+            }
+        });
+    }
     
-    const abilityItems = [
-        { label: 'Crafting', value: stats.crafting },
-        { label: 'Lockpicking', value: stats.lockpicking },
-        { label: 'Stealth', value: stats.stealth },
-        { label: 'Dodge', value: stats.dodge },
-        { label: 'Critical Hit', value: stats.criticalHit }
-    ];
+    // Flags are not displayed in UI (used internally)
     
-    abilityItems.forEach(ability => {
-        const item = document.createElement('div');
-        item.className = 'stat-item';
+    // Scroll to bottom
+    statsContent.scrollTop = statsContent.scrollHeight;
+}
+
+// Helper function to create a stat section (Attributes or Abilities)
+function createStatSection(title, items) {
+    const section = document.createElement('div');
+    section.className = 'stats-section';
+    
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'stats-section-title';
+    sectionTitle.textContent = title;
+    section.appendChild(sectionTitle);
+    
+    items.forEach(item => {
+        const statItem = document.createElement('div');
+        statItem.className = 'stat-item';
+        
         const label = document.createElement('span');
         label.className = 'stat-label';
-        label.textContent = ability.label + ':';
+        label.textContent = item.displayName + ':';
+        
         const value = document.createElement('span');
         value.className = 'stat-value';
-        value.textContent = ability.value;
-        item.appendChild(label);
-        item.appendChild(value);
-        abilitiesSection.appendChild(item);
+        value.textContent = item.value;
+        
+        statItem.appendChild(label);
+        statItem.appendChild(value);
+        section.appendChild(statItem);
     });
     
-    statsContent.appendChild(abilitiesSection);
+    return section;
+}
+
+// Helper function to create a resource section (HP, Mana with bars)
+function createResourceSection(title, current, max, resourceKey) {
+    const section = document.createElement('div');
+    section.className = 'stats-section';
     
-    // Hit Points Section
-    const hpSection = document.createElement('div');
-    hpSection.className = 'stats-section';
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'stats-section-title';
+    sectionTitle.textContent = title;
+    section.appendChild(sectionTitle);
     
-    const hpTitle = document.createElement('div');
-    hpTitle.className = 'stats-section-title';
-    hpTitle.textContent = 'Hit Points';
-    hpSection.appendChild(hpTitle);
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'stat-item';
+    valueDiv.innerHTML = `<span class="stat-value">${current}/${max}</span>`;
+    section.appendChild(valueDiv);
     
-    const hpValue = document.createElement('div');
-    hpValue.className = 'stat-item';
-    hpValue.innerHTML = `<span class="stat-value">${stats.hitPoints}/${stats.maxHitPoints}</span>`;
-    hpSection.appendChild(hpValue);
+    // Create progress bar
+    const bar = document.createElement('div');
+    bar.className = resourceKey === 'hitPoints' ? 'hp-bar' : 'mana-bar';
+    const fill = document.createElement('div');
+    fill.className = resourceKey === 'hitPoints' ? 'hp-fill' : 'mana-fill';
+    const percent = max > 0 ? (current / max) * 100 : 0;
+    fill.style.width = percent + '%';
+    bar.appendChild(fill);
+    section.appendChild(bar);
     
-    const hpBar = document.createElement('div');
-    hpBar.className = 'hp-bar';
-    const hpFill = document.createElement('div');
-    hpFill.className = 'hp-fill';
-    const hpPercent = (stats.hitPoints / stats.maxHitPoints) * 100;
-    hpFill.style.width = hpPercent + '%';
-    hpBar.appendChild(hpFill);
-    hpSection.appendChild(hpBar);
-    
-    statsContent.appendChild(hpSection);
-    
-    // Mana Section (only if player has mana)
-    if (stats.maxMana > 0) {
-        const manaSection = document.createElement('div');
-        manaSection.className = 'stats-section';
-        
-        const manaTitle = document.createElement('div');
-        manaTitle.className = 'stats-section-title';
-        manaTitle.textContent = 'Mana';
-        manaSection.appendChild(manaTitle);
-        
-        const manaValue = document.createElement('div');
-        manaValue.className = 'stat-item';
-        manaValue.innerHTML = `<span class="stat-value">${stats.mana}/${stats.maxMana}</span>`;
-        manaSection.appendChild(manaValue);
-        
-        const manaBar = document.createElement('div');
-        manaBar.className = 'mana-bar';
-        const manaFill = document.createElement('div');
-        manaFill.className = 'mana-fill';
-        const manaPercent = (stats.mana / stats.maxMana) * 100;
-        manaFill.style.width = manaPercent + '%';
-        manaBar.appendChild(manaFill);
-        manaSection.appendChild(manaBar);
-        
-        statsContent.appendChild(manaSection);
-    }
+    return section;
 }
 
 // Map rendering variables
@@ -645,54 +694,15 @@ let mapCtx = null;
 const MAP_SIZE = 25; // 25x25 grid
 const CELL_SIZE = 10; // Size of each cell in pixels
 
-// Store connection info for coordinate transformation
-let connectionInfo = null;
-
 // Initialize map
-function initializeMap(rooms, currentRoom, mapId, connInfo) {
-    connectionInfo = connInfo;
-    
-    // Transform preview room coordinates to appear in the correct position
-    mapRooms = rooms.map(room => {
-        if (room.isPreview && connectionInfo) {
-            // Transform preview room coordinates based on connection direction
-            const offsetX = room.originalX - connectionInfo.connectedMapX;
-            const offsetY = room.originalY - connectionInfo.connectedMapY;
-            
-            // Apply offset based on connection direction
-            let transformedX = connectionInfo.currentMapX;
-            let transformedY = connectionInfo.currentMapY;
-            
-            if (connectionInfo.direction === 'N') {
-                transformedX += offsetX;
-                transformedY += 1 + offsetY; // Continue north from current position
-            } else if (connectionInfo.direction === 'S') {
-                transformedX += offsetX;
-                transformedY -= 1 + Math.abs(offsetY); // Continue south
-            } else if (connectionInfo.direction === 'E') {
-                transformedX += 1 + offsetX;
-                transformedY += offsetY; // Continue east
-            } else if (connectionInfo.direction === 'W') {
-                transformedX -= 1 + Math.abs(offsetX);
-                transformedY += offsetY; // Continue west
-            }
-            
-            return {
-                ...room,
-                x: transformedX,
-                y: transformedY,
-                mapId: room.mapId // Preserve original mapId for preview rooms
-            };
-        }
-        return room;
-    });
+function initializeMap(rooms, currentRoom, mapId) {
+    // Filter to only include rooms from the current map (no preview rooms)
+    mapRooms = rooms.filter(room => room.mapId === mapId);
     
     currentRoomPos = { x: currentRoom.x, y: currentRoom.y };
     currentMapId = mapId;
     
-    console.log(`Map initialized: ${rooms.length} rooms, current position: (${currentRoom.x}, ${currentRoom.y}), mapId: ${mapId}`, connectionInfo);
-    console.log(`Current room position: x=${currentRoomPos.x}, y=${currentRoomPos.y}, mapId=${currentMapId}`);
-    console.log(`Map rooms sample:`, mapRooms.slice(0, 5).map(r => ({ x: r.x, y: r.y, mapId: r.mapId, isPreview: r.isPreview })));
+    console.log(`Map initialized: ${mapRooms.length} rooms, current position: (${currentRoom.x}, ${currentRoom.y}), mapId: ${mapId}`);
     
     // Update coordinates display
     updateCompassCoordinates(currentRoom.x, currentRoom.y);
@@ -803,11 +813,8 @@ function renderMap() {
         }
     });
     
-    // Draw rooms (current map first, then preview rooms)
+    // Draw rooms (only current map - no preview rooms)
     mapRooms.forEach(room => {
-        const isPreview = room.isPreview || false;
-        const isCurrentMap = !isPreview && room.mapId === currentMapId;
-        
         if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
             // Flip Y coordinate (screen Y increases downward, game Y increases upward)
             // Use (maxY - room.y) to correctly invert Y-axis
@@ -815,18 +822,18 @@ function renderMap() {
             const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
             
             // Check if this is the current room
-            // For current map rooms, check exact coordinates
-            // For preview rooms, we don't highlight them as current
-            const isCurrentRoom = !isPreview && 
-                                  room.mapId === currentMapId &&
+            const isCurrentRoom = room.mapId === currentMapId &&
                                   room.x === currentRoomPos.x && 
                                   room.y === currentRoomPos.y;
+            
+            // Check if this room has a connection to another map
+            const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
             
             // Draw room square
             if (isCurrentRoom) {
                 mapCtx.fillStyle = '#00ff00'; // Bright green for current room
-            } else if (isPreview) {
-                mapCtx.fillStyle = '#1a331a'; // Dimmer green for preview rooms
+            } else if (hasConnection) {
+                mapCtx.fillStyle = '#ffffff'; // White for rooms with connections
             } else {
                 mapCtx.fillStyle = '#666'; // Grey for other rooms
             }
@@ -836,8 +843,8 @@ function renderMap() {
             if (isCurrentRoom) {
                 mapCtx.strokeStyle = '#ffff00'; // Yellow border for current room
                 mapCtx.lineWidth = 2;
-            } else if (isPreview) {
-                mapCtx.strokeStyle = '#336633'; // Dimmer green border for preview
+            } else if (hasConnection) {
+                mapCtx.strokeStyle = '#cccccc'; // Light grey border for connected rooms
                 mapCtx.lineWidth = 1;
             } else {
                 mapCtx.strokeStyle = '#333'; // Dark border for other rooms
@@ -856,7 +863,6 @@ function renderMap() {
         
         // Check if we already drew this room
         const roomExists = mapRooms.some(r => 
-            !r.isPreview && 
             r.mapId === currentMapId && 
             r.x === currentRoomPos.x && 
             r.y === currentRoomPos.y
@@ -902,6 +908,7 @@ let dragStartX = 0; // Drag start X coordinate
 let dragStartY = 0; // Drag start Y coordinate
 let dragEndX = 0; // Drag end X coordinate
 let dragEndY = 0; // Drag end Y coordinate
+let allMapsData = []; // Store all maps for lookup by ID
 
 // Update god mode UI
 function updateGodModeUI(hasGodMode) {
@@ -1597,6 +1604,24 @@ function renderMapEditor() {
         
         const cellPadding = Math.max(1, scaledCellSize * 0.1);
         
+        // Visual indicator for rooms with map connections
+        if (room.connected_map_id !== null && room.connected_map_id !== undefined) {
+            // Draw a small indicator dot or border accent for connected rooms
+            const indicatorSize = scaledCellSize * 0.15;
+            const indicatorX = screenX + scaledCellSize - indicatorSize - 2;
+            const indicatorY = screenY + 2;
+            
+            mapEditorCtx.fillStyle = '#ffff00'; // Yellow indicator
+            mapEditorCtx.beginPath();
+            mapEditorCtx.arc(indicatorX + indicatorSize/2, indicatorY + indicatorSize/2, indicatorSize/2, 0, Math.PI * 2);
+            mapEditorCtx.fill();
+            
+            // Also add a yellow border accent
+            mapEditorCtx.strokeStyle = '#ffff00';
+            mapEditorCtx.lineWidth = 2;
+            mapEditorCtx.strokeRect(screenX + cellPadding, screenY + cellPadding, scaledCellSize - cellPadding * 2, scaledCellSize - cellPadding * 2);
+        }
+        
         mapEditorCtx.fillStyle = fillColor;
         mapEditorCtx.fillRect(screenX + cellPadding, screenY + cellPadding, scaledCellSize - cellPadding * 2, scaledCellSize - cellPadding * 2);
         
@@ -1801,6 +1826,43 @@ function updateSidePanel() {
             renderMapEditor();
         });
     } else if (selectedRoom) {
+        // Check if room has a connection
+        const hasConnection = selectedRoom.connected_map_id !== null && selectedRoom.connected_map_id !== undefined;
+        let connectionInfo = '';
+        
+        if (hasConnection) {
+            // Find connected map name
+            const connectedMap = allMapsData.find(m => m.id === selectedRoom.connected_map_id);
+            const mapName = connectedMap ? connectedMap.name : `Map ID ${selectedRoom.connected_map_id}`;
+            const direction = selectedRoom.connection_direction || 'Unknown';
+            const targetX = selectedRoom.connected_room_x !== null && selectedRoom.connected_room_x !== undefined ? selectedRoom.connected_room_x : '?';
+            const targetY = selectedRoom.connected_room_y !== null && selectedRoom.connected_room_y !== undefined ? selectedRoom.connected_room_y : '?';
+            
+            // Try to find the target room name - check if we need to load that map's rooms
+            // For now, we'll show coordinates and try to find in current editorMapRooms if it's the same map
+            let roomName = 'Unknown Room';
+            const targetRoom = editorMapRooms.find(r => 
+                r.mapId === selectedRoom.connected_map_id && 
+                r.x === selectedRoom.connected_room_x && 
+                r.y === selectedRoom.connected_room_y
+            );
+            if (targetRoom) {
+                roomName = targetRoom.name;
+            }
+            
+            connectionInfo = `
+                <div style="background: #1a3a1a; border: 2px solid #00ff00; border-radius: 4px; padding: 8px; margin-bottom: 8px;">
+                    <div style="color: #00ff00; font-weight: bold; margin-bottom: 4px;">Map Connection:</div>
+                    <div style="color: #00ff00; font-size: 0.85em;">
+                        <div><strong>Connects to:</strong> ${mapName}</div>
+                        <div><strong>Room:</strong> ${roomName}</div>
+                        <div><strong>Coordinates:</strong> (${targetX}, ${targetY})</div>
+                        <div><strong>Direction:</strong> ${direction}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
         // Show edit room form (single room)
         sidePanel.innerHTML = `
             <h3 style="font-size: 0.9em; margin-bottom: 8px;">Edit Room</h3>
@@ -1808,6 +1870,7 @@ function updateSidePanel() {
                 <span style="min-width: 60px;">X: ${selectedRoom.x}</span>
                 <span>Y: ${selectedRoom.y}</span>
             </div>
+            ${connectionInfo}
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <label style="margin: 0; min-width: 80px;">Room Name:</label>
                 <input type="text" id="editRoomName" value="${selectedRoom.name}" style="flex: 1;">

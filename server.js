@@ -147,77 +147,23 @@ wss.on('connection', (ws) => {
         // Send initial room update
         sendRoomUpdate(playerName, room);
 
-        // Send player stats
+        // Send player stats (dynamically extracted using configuration)
+        const playerStats = db.getPlayerStats(player);
         ws.send(JSON.stringify({
           type: 'playerStats',
-          stats: {
-            bruteStrength: player.brute_strength,
-            lifeForce: player.life_force,
-            cunning: player.cunning,
-            intelligence: player.intelligence,
-            wisdom: player.wisdom,
-            crafting: player.crafting,
-            lockpicking: player.lockpicking,
-            stealth: player.stealth,
-            dodge: player.dodge,
-            criticalHit: player.critical_hit,
-            hitPoints: player.hit_points,
-            maxHitPoints: player.max_hit_points,
-            mana: player.mana,
-            maxMana: player.max_mana,
-            godMode: player.god_mode === 1
-          }
+          stats: playerStats || {}
         }));
 
-        // Send map data (rooms from current map + preview of connected maps)
+        // Send map data (only rooms from current map - no preview of connected maps)
         const mapRooms = db.getRoomsByMap(room.map_id);
         const allRooms = mapRooms.map(r => ({
           id: r.id,
           name: r.name,
           x: r.x,
           y: r.y,
-          mapId: r.map_id
+          mapId: r.map_id,
+          connected_map_id: r.connected_map_id || null // Include connection info for white highlighting
         }));
-        
-        // Connection info for coordinate transformation
-        let connectionInfo = null;
-        
-        // If this room has a map connection, include preview rooms from connected map
-        if (room.connected_map_id) {
-          connectionInfo = {
-            direction: room.connection_direction,
-            currentMapX: room.x,
-            currentMapY: room.y,
-            connectedMapX: room.connected_room_x,
-            connectedMapY: room.connected_room_y
-          };
-          
-          const connectedMapRooms = db.getRoomsByMap(room.connected_map_id);
-          // Get rooms near the connection point (within 5 units)
-          // Always include the connection room itself
-          const connectionX = room.connected_room_x;
-          const connectionY = room.connected_room_y;
-          const previewRooms = connectedMapRooms
-            .filter(r => {
-              // Always include the exact connection room
-              if (r.x === connectionX && r.y === connectionY) return true;
-              // Include rooms within 5 units of connection
-              const dx = Math.abs(r.x - connectionX);
-              const dy = Math.abs(r.y - connectionY);
-              return dx <= 5 && dy <= 5;
-            })
-            .map(r => ({
-              id: r.id,
-              name: r.name,
-              x: r.x,
-              y: r.y,
-              mapId: r.map_id,
-              isPreview: true, // Mark as preview room
-              originalX: r.x,
-              originalY: r.y
-            }));
-          allRooms.push(...previewRooms);
-        }
         
         ws.send(JSON.stringify({
           type: 'mapData',
@@ -226,8 +172,7 @@ wss.on('connection', (ws) => {
             x: room.x,
             y: room.y
           },
-          mapId: room.map_id,
-          connectionInfo: connectionInfo
+          mapId: room.map_id
         }));
 
         // Notify others in the room
@@ -372,49 +317,16 @@ wss.on('connection', (ws) => {
 
           // If this was a map transition, send new map data
           if (isMapTransition) {
+            // Send map data (only rooms from current map - no preview of connected maps)
             const newMapRooms = db.getRoomsByMap(targetRoom.map_id);
             const allRooms = newMapRooms.map(r => ({
               id: r.id,
               name: r.name,
               x: r.x,
               y: r.y,
-              mapId: r.map_id
+              mapId: r.map_id,
+              connected_map_id: r.connected_map_id || null // Include connection info for white highlighting
             }));
-            
-            // Include connection info if this room has a connection back
-            let connectionInfo = null;
-            if (targetRoom.connected_map_id) {
-              connectionInfo = {
-                direction: targetRoom.connection_direction,
-                currentMapX: targetRoom.x,
-                currentMapY: targetRoom.y,
-                connectedMapX: targetRoom.connected_room_x,
-                connectedMapY: targetRoom.connected_room_y
-              };
-              
-              // Include preview rooms from connected map
-              const connectedMapRooms = db.getRoomsByMap(targetRoom.connected_map_id);
-              const connectionX = targetRoom.connected_room_x;
-              const connectionY = targetRoom.connected_room_y;
-              const previewRooms = connectedMapRooms
-                .filter(r => {
-                  if (r.x === connectionX && r.y === connectionY) return true;
-                  const dx = Math.abs(r.x - connectionX);
-                  const dy = Math.abs(r.y - connectionY);
-                  return dx <= 5 && dy <= 5;
-                })
-                .map(r => ({
-                  id: r.id,
-                  name: r.name,
-                  x: r.x,
-                  y: r.y,
-                  mapId: r.map_id,
-                  isPreview: true,
-                  originalX: r.x,
-                  originalY: r.y
-                }));
-              allRooms.push(...previewRooms);
-            }
             
             playerData.ws.send(JSON.stringify({
               type: 'mapData',
@@ -423,8 +335,7 @@ wss.on('connection', (ws) => {
                 x: targetRoom.x,
                 y: targetRoom.y
               },
-              mapId: targetRoom.map_id,
-              connectionInfo: connectionInfo
+              mapId: targetRoom.map_id
             }));
           } else {
             // Just update map position

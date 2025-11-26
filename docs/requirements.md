@@ -226,14 +226,40 @@ thegame/
 
 ## Player Character System
 
-### Stats (Base 10 for all players)
+### Dynamic Stats System (Prefix-Based Auto-Detection)
+The stats system is **fully dynamic** and uses **prefix-based auto-detection**. Stats are automatically detected from database column names using naming conventions:
+- **`stat_*`** - Attributes (base stats like `stat_brute_strength`, `stat_cunning`)
+- **`ability_*`** - Abilities (skills like `ability_crafting`, `ability_stealth`)
+- **`resource_*`** - Resources (hit points, mana, etc. like `resource_hit_points`, `resource_mana`)
+- **`resource_max_*`** - Max values for resources (like `resource_max_hit_points`, `resource_max_mana`)
+- **`flag_*`** - Special boolean flags (like `flag_god_mode`)
+
+**How It Works:**
+- The system queries the database schema on startup
+- Automatically detects all columns matching the prefix patterns
+- Generates display names from column names (e.g., `stat_brute_strength` → "Brute Strength")
+- Converts to camelCase for JavaScript (e.g., `stat_brute_strength` → `bruteStrength`)
+
+**How to Add a New Stat:**
+1. Add the column to the database with the appropriate prefix:
+   ```sql
+   ALTER TABLE players ADD COLUMN stat_new_stat_name INTEGER DEFAULT 10;
+   ```
+2. **That's it!** The system will automatically detect and display it - no code changes needed!
+
+**Examples:**
+- Add a new attribute: `stat_charisma` → automatically appears in "Attributes" section
+- Add a new ability: `ability_archery` → automatically appears in "Abilities" section
+- Add a new resource: `resource_energy` and `resource_max_energy` → automatically appears with a progress bar
+
+### Current Stats (Base 10 for all players)
 - **Brute Strength**: Physical power and melee damage potential
 - **Life Force**: Vitality and health capacity
 - **Cunning**: Deception and tactical thinking
 - **Intelligence**: Mental acuity and problem-solving
 - **Wisdom**: Insight and magical understanding
 
-### Abilities (Base 0, algorithm-driven later)
+### Current Abilities (Base 0, algorithm-driven later)
 - **Crafting**: Ability to create items
 - **Lockpicking**: Ability to open locks and containers
 - **Stealth**: Ability to move undetected

@@ -33,26 +33,26 @@ db.exec(`
   )
 `);
 
-// Create players table
+// Create players table with prefix-based column naming
 db.exec(`
   CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     current_room_id INTEGER NOT NULL,
-    brute_strength INTEGER DEFAULT 10,
-    life_force INTEGER DEFAULT 10,
-    cunning INTEGER DEFAULT 10,
-    intelligence INTEGER DEFAULT 10,
-    wisdom INTEGER DEFAULT 10,
-    crafting INTEGER DEFAULT 0,
-    lockpicking INTEGER DEFAULT 0,
-    stealth INTEGER DEFAULT 0,
-    dodge INTEGER DEFAULT 0,
-    critical_hit INTEGER DEFAULT 0,
-    hit_points INTEGER DEFAULT 50,
-    max_hit_points INTEGER DEFAULT 50,
-    mana INTEGER DEFAULT 0,
-    max_mana INTEGER DEFAULT 0,
+    stat_brute_strength INTEGER DEFAULT 10,
+    stat_life_force INTEGER DEFAULT 10,
+    stat_cunning INTEGER DEFAULT 10,
+    stat_intelligence INTEGER DEFAULT 10,
+    stat_wisdom INTEGER DEFAULT 10,
+    ability_crafting INTEGER DEFAULT 0,
+    ability_lockpicking INTEGER DEFAULT 0,
+    ability_stealth INTEGER DEFAULT 0,
+    ability_dodge INTEGER DEFAULT 0,
+    ability_critical_hit INTEGER DEFAULT 0,
+    resource_hit_points INTEGER DEFAULT 50,
+    resource_max_hit_points INTEGER DEFAULT 50,
+    resource_mana INTEGER DEFAULT 0,
+    resource_max_mana INTEGER DEFAULT 0,
     FOREIGN KEY (current_room_id) REFERENCES rooms(id)
   )
 `);
@@ -73,22 +73,23 @@ const addColumnIfNotExists = (tableName, columnName, defaultValue, columnType = 
   }
 };
 
-// Migrate existing players table
-addColumnIfNotExists('players', 'brute_strength', 10);
-addColumnIfNotExists('players', 'life_force', 10);
-addColumnIfNotExists('players', 'cunning', 10);
-addColumnIfNotExists('players', 'intelligence', 10);
-addColumnIfNotExists('players', 'wisdom', 10);
-addColumnIfNotExists('players', 'crafting', 0);
-addColumnIfNotExists('players', 'lockpicking', 0);
-addColumnIfNotExists('players', 'stealth', 0);
-addColumnIfNotExists('players', 'dodge', 0);
-addColumnIfNotExists('players', 'critical_hit', 0);
-addColumnIfNotExists('players', 'hit_points', 50);
-addColumnIfNotExists('players', 'max_hit_points', 50);
-addColumnIfNotExists('players', 'mana', 0);
-addColumnIfNotExists('players', 'max_mana', 0);
-addColumnIfNotExists('players', 'god_mode', 0);
+// Migrate existing players table (add new prefixed columns if they don't exist)
+// Migration function will handle renaming old columns
+addColumnIfNotExists('players', 'stat_brute_strength', 10);
+addColumnIfNotExists('players', 'stat_life_force', 10);
+addColumnIfNotExists('players', 'stat_cunning', 10);
+addColumnIfNotExists('players', 'stat_intelligence', 10);
+addColumnIfNotExists('players', 'stat_wisdom', 10);
+addColumnIfNotExists('players', 'ability_crafting', 0);
+addColumnIfNotExists('players', 'ability_lockpicking', 0);
+addColumnIfNotExists('players', 'ability_stealth', 0);
+addColumnIfNotExists('players', 'ability_dodge', 0);
+addColumnIfNotExists('players', 'ability_critical_hit', 0);
+addColumnIfNotExists('players', 'resource_hit_points', 50);
+addColumnIfNotExists('players', 'resource_max_hit_points', 50);
+addColumnIfNotExists('players', 'resource_mana', 0);
+addColumnIfNotExists('players', 'resource_max_mana', 0);
+addColumnIfNotExists('players', 'flag_god_mode', 0);
 
 // Migrate existing rooms table to include map_id and connection fields
 addColumnIfNotExists('rooms', 'map_id', 1);
@@ -411,13 +412,13 @@ cleanupRooms();
 const getTownSquare = db.prepare('SELECT id FROM rooms WHERE name = ?');
 const townSquare = getTownSquare.get('town square');
 
-// Insert initial players if they don't exist
+// Insert initial players if they don't exist (using prefixed column names)
 const insertPlayer = db.prepare(`
   INSERT OR IGNORE INTO players (
     name, current_room_id, 
-    brute_strength, life_force, cunning, intelligence, wisdom,
-    crafting, lockpicking, stealth, dodge, critical_hit,
-    hit_points, max_hit_points, mana, max_mana
+    stat_brute_strength, stat_life_force, stat_cunning, stat_intelligence, stat_wisdom,
+    ability_crafting, ability_lockpicking, ability_stealth, ability_dodge, ability_critical_hit,
+    resource_hit_points, resource_max_hit_points, resource_mana, resource_max_mana
   ) 
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
@@ -425,37 +426,37 @@ const insertPlayer = db.prepare(`
 // Update existing players with stats if they don't have them set
 const updatePlayerStats = db.prepare(`
   UPDATE players SET
-    brute_strength = COALESCE(brute_strength, 10),
-    life_force = COALESCE(life_force, 10),
-    cunning = COALESCE(cunning, 10),
-    intelligence = COALESCE(intelligence, 10),
-    wisdom = COALESCE(wisdom, 10),
-    crafting = COALESCE(crafting, 0),
-    lockpicking = COALESCE(lockpicking, 0),
-    stealth = COALESCE(stealth, 0),
-    dodge = COALESCE(dodge, 0),
-    critical_hit = COALESCE(critical_hit, 0),
-    hit_points = COALESCE(hit_points, 50),
-    max_hit_points = COALESCE(max_hit_points, 50),
-    mana = COALESCE(mana, 0),
-    max_mana = COALESCE(max_mana, 0)
+    stat_brute_strength = COALESCE(stat_brute_strength, 10),
+    stat_life_force = COALESCE(stat_life_force, 10),
+    stat_cunning = COALESCE(stat_cunning, 10),
+    stat_intelligence = COALESCE(stat_intelligence, 10),
+    stat_wisdom = COALESCE(stat_wisdom, 10),
+    ability_crafting = COALESCE(ability_crafting, 0),
+    ability_lockpicking = COALESCE(ability_lockpicking, 0),
+    ability_stealth = COALESCE(ability_stealth, 0),
+    ability_dodge = COALESCE(ability_dodge, 0),
+    ability_critical_hit = COALESCE(ability_critical_hit, 0),
+    resource_hit_points = COALESCE(resource_hit_points, 50),
+    resource_max_hit_points = COALESCE(resource_max_hit_points, 50),
+    resource_mana = COALESCE(resource_mana, 0),
+    resource_max_mana = COALESCE(resource_max_mana, 0)
   WHERE name = ?
 `);
 
 // Set specific values for Fliz and Hebron
 const setPlayerStats = db.prepare(`
   UPDATE players SET
-    brute_strength = ?, life_force = ?, cunning = ?, intelligence = ?, wisdom = ?,
-    crafting = ?, lockpicking = ?, stealth = ?, dodge = ?, critical_hit = ?,
-    hit_points = ?, max_hit_points = ?, mana = ?, max_mana = ?
+    stat_brute_strength = ?, stat_life_force = ?, stat_cunning = ?, stat_intelligence = ?, stat_wisdom = ?,
+    ability_crafting = ?, ability_lockpicking = ?, ability_stealth = ?, ability_dodge = ?, ability_critical_hit = ?,
+    resource_hit_points = ?, resource_max_hit_points = ?, resource_mana = ?, resource_max_mana = ?
   WHERE name = ?
 `);
 
 // Fliz: 50/50 HP, 0 Mana (not a caster), god mode enabled
 insertPlayer.run('Fliz', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0, 'Fliz');
-// Set Fliz's god_mode to 1
-const setGodMode = db.prepare('UPDATE players SET god_mode = ? WHERE name = ?');
+// Set Fliz's flag_god_mode to 1
+const setGodMode = db.prepare('UPDATE players SET flag_god_mode = ? WHERE name = ?');
 setGodMode.run(1, 'Fliz');
 
 // Hebron: 50/50 HP, 10/10 Mana
@@ -586,6 +587,207 @@ if (newhaven && northernTerritory) {
 const getRoomById = db.prepare('SELECT * FROM rooms WHERE id = ?');
 const getRoomByCoords = db.prepare('SELECT * FROM rooms WHERE map_id = ? AND x = ? AND y = ?');
 const getRoomsByMap = db.prepare('SELECT * FROM rooms WHERE map_id = ?');
+// Migration: Copy data from old columns to new prefixed columns
+// This handles the transition from old column names to prefix-based naming
+function migrateColumnsToPrefixes() {
+  const columnMigrations = [
+    // Stats (attributes)
+    { old: 'brute_strength', new: 'stat_brute_strength' },
+    { old: 'life_force', new: 'stat_life_force' },
+    { old: 'cunning', new: 'stat_cunning' },
+    { old: 'intelligence', new: 'stat_intelligence' },
+    { old: 'wisdom', new: 'stat_wisdom' },
+    // Abilities
+    { old: 'crafting', new: 'ability_crafting' },
+    { old: 'lockpicking', new: 'ability_lockpicking' },
+    { old: 'stealth', new: 'ability_stealth' },
+    { old: 'dodge', new: 'ability_dodge' },
+    { old: 'critical_hit', new: 'ability_critical_hit' },
+    // Resources
+    { old: 'hit_points', new: 'resource_hit_points' },
+    { old: 'max_hit_points', new: 'resource_max_hit_points' },
+    { old: 'mana', new: 'resource_mana' },
+    { old: 'max_mana', new: 'resource_max_mana' },
+    // Flags
+    { old: 'god_mode', new: 'flag_god_mode' }
+  ];
+
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(players)").all();
+    const existingColumns = tableInfo.map(col => col.name);
+    const needsMigration = columnMigrations.some(m => existingColumns.includes(m.old) && existingColumns.includes(m.new));
+
+    if (needsMigration) {
+      console.log('Migrating player data from old columns to prefixed columns...');
+      
+      // Copy data from old columns to new columns if both exist
+      columnMigrations.forEach(migration => {
+        if (existingColumns.includes(migration.old) && existingColumns.includes(migration.new)) {
+          try {
+            db.exec(`UPDATE players SET ${migration.new} = ${migration.old} WHERE ${migration.new} IS NULL OR ${migration.new} = 0`);
+            console.log(`Migrated data: ${migration.old} -> ${migration.new}`);
+          } catch (err) {
+            console.error(`Error migrating data for ${migration.old}:`, err.message);
+          }
+        }
+      });
+      
+      console.log('Data migration complete.');
+    }
+  } catch (err) {
+    console.error('Error during column migration:', err.message);
+  }
+}
+
+// Auto-detect stats, abilities, resources, and flags from database schema
+// Uses prefix-based naming: stat_*, ability_*, resource_*, flag_*
+function detectPlayerAttributes() {
+  const tableInfo = db.prepare("PRAGMA table_info(players)").all();
+  const attributes = {
+    stats: [],
+    abilities: [],
+    resources: [],
+    flags: []
+  };
+
+  tableInfo.forEach(column => {
+    const colName = column.name;
+    
+    // Convert snake_case to camelCase and generate display name
+    const toCamelCase = (str) => {
+      return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+    };
+    
+    const toDisplayName = (str) => {
+      // Remove prefix and convert to title case
+      const withoutPrefix = str.replace(/^(stat_|ability_|resource_|flag_)/, '');
+      return withoutPrefix
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+    };
+
+    if (colName.startsWith('stat_')) {
+      const baseName = colName.replace('stat_', '');
+      attributes.stats.push({
+        dbColumn: colName,
+        displayName: toDisplayName(colName),
+        camelCase: toCamelCase(baseName)
+      });
+    } else if (colName.startsWith('ability_')) {
+      const baseName = colName.replace('ability_', '');
+      attributes.abilities.push({
+        dbColumn: colName,
+        displayName: toDisplayName(colName),
+        camelCase: toCamelCase(baseName)
+      });
+    } else if (colName.startsWith('resource_')) {
+      const baseName = colName.replace('resource_', '');
+      // Check if this is a max value (resource_max_*)
+      if (baseName.startsWith('max_')) {
+        const resourceName = baseName.replace('max_', '');
+        attributes.resources.push({
+          dbColumn: colName,
+          displayName: `Max ${toDisplayName('resource_' + resourceName)}`,
+          camelCase: 'max' + toCamelCase(resourceName).charAt(0).toUpperCase() + toCamelCase(resourceName).slice(1),
+          isMax: true,
+          baseResource: toCamelCase(resourceName)
+        });
+      } else {
+        // Regular resource (not max)
+        attributes.resources.push({
+          dbColumn: colName,
+          displayName: toDisplayName(colName),
+          camelCase: toCamelCase(baseName),
+          isMax: false,
+          maxColumn: `resource_max_${baseName}`
+        });
+      }
+    } else if (colName.startsWith('flag_')) {
+      const baseName = colName.replace('flag_', '');
+      attributes.flags.push({
+        dbColumn: colName,
+        displayName: toDisplayName(colName),
+        camelCase: toCamelCase(baseName)
+      });
+    }
+  });
+
+  return attributes;
+}
+
+// Helper function to dynamically extract stats from a player record
+// Uses auto-detection based on column name prefixes
+function getPlayerStats(player) {
+  if (!player) return null;
+  
+  const attributes = detectPlayerAttributes();
+  const stats = {};
+  
+  // Extract stats (attributes)
+  attributes.stats.forEach(stat => {
+    if (player[stat.dbColumn] !== undefined) {
+      stats[stat.camelCase] = {
+        value: player[stat.dbColumn],
+        displayName: stat.displayName,
+        category: 'stats'
+      };
+    }
+  });
+  
+  // Extract abilities
+  attributes.abilities.forEach(ability => {
+    if (player[ability.dbColumn] !== undefined) {
+      stats[ability.camelCase] = {
+        value: player[ability.dbColumn],
+        displayName: ability.displayName,
+        category: 'abilities'
+      };
+    }
+  });
+  
+  // Extract resources
+  attributes.resources.forEach(resource => {
+    if (resource.isMax) {
+      // Max values are handled with their base resource
+      return;
+    }
+    
+    if (player[resource.dbColumn] !== undefined) {
+      stats[resource.camelCase] = {
+        value: player[resource.dbColumn],
+        displayName: resource.displayName,
+        category: 'resources'
+      };
+      
+      // Add max value if it exists
+      if (resource.maxColumn && player[resource.maxColumn] !== undefined) {
+        const maxResource = attributes.resources.find(r => r.dbColumn === resource.maxColumn && r.isMax);
+        if (maxResource) {
+          stats[maxResource.camelCase] = {
+            value: player[resource.maxColumn],
+            displayName: maxResource.displayName,
+            category: 'resources'
+          };
+        }
+      }
+    }
+  });
+  
+  // Extract flags
+  attributes.flags.forEach(flag => {
+    if (player[flag.dbColumn] !== undefined) {
+      stats[flag.camelCase] = {
+        value: player[flag.dbColumn] === 1,
+        displayName: flag.displayName,
+        category: 'flags'
+      };
+    }
+  });
+  
+  return stats;
+}
+
 const getPlayersInRoom = db.prepare('SELECT name FROM players WHERE current_room_id = ?');
 const updatePlayerRoom = db.prepare('UPDATE players SET current_room_id = ? WHERE name = ?');
 const getPlayerByName = db.prepare('SELECT * FROM players WHERE name = ?');
@@ -648,6 +850,12 @@ module.exports = {
   createRoom,
   updateRoom,
   getMapBounds,
-  updateMapSize
+  updateMapSize,
+  getPlayerStats,
+  detectPlayerAttributes
 };
+
+// Run migration after all columns are added
+// This copies data from old column names to new prefixed column names
+migrateColumnsToPrefixes();
 
