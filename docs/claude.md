@@ -262,23 +262,60 @@ thegame/
   - Show/hide god mode buttons based on `godMode` flag from `playerStats` message
   - Handle button clicks (Map button opens map editor)
 - **Map Editor Implementation**:
-  - **State Management**: Tracks current editor map, selected room, editor mode (edit/create/connect)
-  - **100x100 Grid Rendering**: Canvas-based rendering with automatic centering and scaling
-    - For maps with rooms: Calculates bounds, centers map, scales to fit canvas
-    - For empty maps: Displays full 100x100 grid with all grid lines, centered and scaled
+  - **State Management**: Tracks current editor map, selected room(s), editor mode (edit/create/connect), zoom level, pan offsets, speed mode status, drag selection state
+  - **Fixed 100x100 Grid Rendering**: Canvas-based rendering with automatic centering and scaling
+    - All maps display on fixed 100x100 grid centered at 0,0
+    - Coordinates adjusted for position relative to grid center
     - No scrolling required - everything fits on screen
+    - Grid lines drawn only for visible area (performance optimization)
+  - **Zoom System**:
+    - Zoom level variable (editorZoom): 1.0 = normal, >1.0 = zoomed in, <1.0 = zoomed out
+    - Range: 0.5x to 5.0x
+    - Applied to cell size calculation in rendering
+    - Mouse wheel event handler on canvas
+  - **Pan System**:
+    - Pan offset variables (editorPanX, editorPanY): Tracks view offset in map coordinates
+    - Arrow key event handler (global, only active when editor open)
+    - Pan amount: 5 squares per key press
+    - Applied to offset calculation in rendering
+  - **Speed Mode System**:
+    - Activated when clicking an existing room
+    - Keypad navigation (7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE)
+    - Automatically creates rooms with generic name "Room X,Y" when navigating to empty spaces
+    - Newly created rooms automatically selected for continued navigation
+  - **Room Color System**:
+    - Dark green (#006600) for rooms with adjacent rooms (adjoining)
+    - Blue (#0088ff) for generic rooms (name starts with "Room ") or merchant rooms
+    - Green (#00ff00) for named rooms (non-generic, non-merchant)
+    - Color priority: Adjoining > Generic/Merchant > Normal
+  - **Mass Selection System**:
+    - Mouse drag to select multiple rooms
+    - Tracks drag start/end coordinates
+    - Converts screen coordinates to map coordinates for selection
+    - Updates selectedRooms array with all rooms in drag rectangle
   - **Visual Selection System**:
     - Red highlight (#ff0000) for selected existing rooms
     - Red outline and fill for selected empty spaces (new room creation)
+    - All mass-selected rooms show red borders
     - Map re-renders on selection change to show/hide highlights
-  - **Room Selection**: Click room to select for editing (shows red border)
-  - **Room Creation**: Click empty space to create new room (shows red highlight, turns green after creation)
+  - **Room Selection**: Click room to select for editing (shows red border, activates speed mode)
+  - **Room Creation**: 
+    - Click empty space to create new room (shows red highlight, turns green after creation)
+    - Speed mode: Use keypad to quickly create rooms while navigating
   - **Room Editing**: Compact side panel form to edit name, description, and type
+  - **Global Edit Mode**: When multiple rooms selected, side panel shows "Global Edit" with ability to update all rooms at once
+  - **Delete Functionality**:
+    - Delete button for single rooms (shares line with "Update Room")
+    - Delete button for mass selection (in Global Edit mode)
+    - No confirmation modal
+    - Client-side and server-side validation prevents deleting connected rooms
+    - Shows alert modal if attempting to delete connected rooms
   - **New Map Creation**: Dialog form to create new map, opens blank 100x100 grid editor
   - **Map Size Calculation**: Auto-calculates map dimensions from room coordinate bounds
   - **Map Connection**: Select source room, choose direction and target map/coordinates
   - **Connection Validation**: Client-side and server-side validation of connections
-  - **Click Coordinate Conversion**: Handles both empty maps (100x100 grid) and maps with rooms (dynamic bounds)
+  - **Click Coordinate Conversion**: Always uses fixed 100x100 grid centered at 0,0, accounts for zoom and pan
+  - **Performance Optimization**: Only draws visible grid lines and rooms based on current viewport (zoom/pan)
 
 ### 7. WebSocket Message Protocol
 - Client → Server:
@@ -466,15 +503,28 @@ thegame/
 #### Recent Map Editor Improvements (Alpha Release)
 - **Map Centering & Scaling**: Map automatically centers and scales to fit canvas - no scrolling required
 - **Empty Map Grid Display**: Full 100x100 grid with all grid lines visible when map has no rooms
+- **Zoom & Pan Controls**:
+  - **Mouse Wheel Zoom**: Scroll up to zoom in, scroll down to zoom out
+    - Zoom range: 0.5x to 5.0x
+    - Zoom speed: 0.1 per scroll step
+    - Works on both empty maps and maps with rooms
+  - **Arrow Key Panning**: Move view by 5 squares in any direction
+    - Arrow Up: Pan up (north)
+    - Arrow Down: Pan down (south)
+    - Arrow Left: Pan left (west)
+    - Arrow Right: Pan right (east)
+    - Pan resets when loading new map or closing editor
 - **Visual Selection Feedback**: Red highlight system for selected rooms and empty spaces
-  - Selected existing rooms show red border
-  - Selected empty spaces show red outline with semi-transparent fill
+  - Selected existing rooms show red border (#ff0000) with 3px line width
+  - Selected empty spaces show red outline with semi-transparent fill (rgba(255, 0, 0, 0.2))
 - **Compact Side Panel**: Optimized layout with no scrolling
-  - X and Y coordinates on same line
-  - Room name label and input on same line
-  - Smaller fonts and reduced spacing
+  - X and Y coordinates on same line (format: "X: [value] Y: [value]")
+  - Room name label and input on same line using flexbox
+  - Smaller fonts (0.9em for titles, 11px for labels) and reduced spacing
+  - Textarea height: 60px min, 80px max
   - All content fits without scrolling
 - **Room Creation Feedback**: Newly created rooms automatically appear green after creation
+- **Performance Optimization**: Only visible grid lines and rooms are drawn for better performance when zoomed/panned
 
 #### God Mode Implementation
 - Added `god_mode` column to players table (INTEGER, default 0)
@@ -516,9 +566,11 @@ thegame/
 - Room type color coding in map editor
 - Empty space visualization (outlined squares near existing rooms)
 - **Map centering**: Automatic centering and scaling of map content to fit canvas
+- **Zoom & Pan controls**: Mouse wheel zoom and arrow key panning for better navigation
 - **Selection highlighting**: Red visual feedback for selected rooms and empty spaces
 - **Compact form layout**: Side panel optimized to fit all content without scrolling
 - **Empty map grid**: Full 100x100 grid displayed for maps with no rooms
+- **Performance optimization**: Only visible elements drawn based on current viewport
 
 ### Map with Connecting Areas Patch
 
@@ -569,18 +621,54 @@ God mode is a special privilege system that grants players administrative capabi
   - NPC: Reserved for future (disabled)
 
 ### Map Editor
-- **100x100 Grid**: Maximum map size representation
-- **Auto-Centering**: Map automatically centers and scales to fit canvas - no scrolling required
-- **Empty Map Support**: When map has no rooms, displays full 100x100 grid with all grid lines visible
+- **Fixed 100x100 Grid**: All maps display on a fixed 100x100 grid centered at 0,0
+  - Coordinates adjusted for position relative to grid center
+  - Makes editing easier and more expandable with zoom
+  - Works for both existing maps and new maps
+- **Auto-Centering**: Grid automatically centers and scales to fit canvas - no scrolling required
+- **Zoom Controls**:
+  - Mouse wheel zoom: 0.5x to 5.0x zoom range
+  - Zoom speed: 0.1 per scroll step
+  - Applied to all maps regardless of room count
+  - Zoom resets when loading new map or closing editor
+- **Pan Controls**:
+  - Arrow keys move view by 5 squares
+  - Up/Down arrows: Pan vertically
+  - Left/Right arrows: Pan horizontally
+  - Pan resets when loading new map or closing editor
+- **Speed Mode**:
+  - Click a room to activate speed mode
+  - Use keypad numbers for directional navigation:
+    - 7 = NW, 8 = N, 9 = NE
+    - 4 = W, 6 = E
+    - 1 = SW, 2 = S, 3 = SE
+  - Automatically creates rooms with generic name "Room X,Y" when navigating to empty spaces
+  - Newly created rooms are automatically selected
+- **Room Color System**:
+  - **Dark Green (#006600)**: Rooms with adjacent/adjoining rooms (connected)
+  - **Blue (#0088ff)**: Generic rooms (name starts with "Room ") or merchant rooms
+  - **Green (#00ff00)**: Named rooms (non-generic, non-merchant)
+  - Color priority: Adjoining > Generic/Merchant > Normal
 - **Visual Selection Feedback**:
   - Selected existing rooms: Red border (#ff0000) with 3px line width
   - Selected empty spaces: Red outline with semi-transparent red fill (rgba(255, 0, 0, 0.2))
+  - Mass selected rooms: All show red borders
   - Connection source rooms: Orange border (#ff8800)
-- **Room Types**: 
-  - Normal (green #00ff00 fill, yellow #ffff00 border)
-  - Merchant (blue #0088ff fill, darker blue #0066cc border)
 - **Room Editing**: Click existing room to edit name, description, and type
-- **Room Creation**: Click empty space to create new room (shows red highlight, turns green after creation)
+- **Room Creation**: 
+  - Click empty space to create new room (shows red highlight, turns green after creation)
+  - Speed mode: Use keypad to quickly create rooms while navigating
+- **Mass Selection & Global Edit**:
+  - Hold mouse button and drag to select multiple rooms
+  - Side panel shows "Global Edit" mode for multiple rooms
+  - Update all selected rooms at once (name, description, type)
+  - Delete all selected rooms at once
+- **Delete Functionality**:
+  - Delete button for single rooms (shares line with "Update Room")
+  - Delete button for mass selection (in Global Edit mode)
+  - No confirmation modal
+  - Server-side validation prevents deleting connected rooms
+  - Shows alert if attempting to delete connected rooms
 - **Map Creation**: Create new maps with auto-calculated size based on room bounds
 - **Map Connections**: Connect rooms between maps with validation
   - Source room must have available exit in requested direction

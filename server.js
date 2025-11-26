@@ -590,6 +590,52 @@ wss.on('connection', (ws) => {
         }
       }
 
+      else if (data.type === 'deleteRoom') {
+        const { roomId } = data;
+        
+        if (!roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID is required' }));
+          return;
+        }
+        
+        // Get room to check if it's connected
+        const room = db.getRoomById(roomId);
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+          return;
+        }
+        
+        // Check if room is part of a map connection
+        if (room.connected_map_id !== null && room.connected_map_id !== undefined) {
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: `Cannot delete room "${room.name}" (${room.x},${room.y}) - it is part of a map connection. Please disconnect it first.` 
+          }));
+          return;
+        }
+        
+        // Check if any other room connects to this room (incoming connection)
+        const allRooms = db.getAllRooms();
+        const connectingRoom = allRooms.find(r => 
+          r.connected_map_id === room.map_id && 
+          r.connected_room_x === room.x && 
+          r.connected_room_y === room.y
+        );
+        
+        if (connectingRoom) {
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: `Cannot delete room "${room.name}" (${room.x},${room.y}) - another room connects to it. Please disconnect it first.` 
+          }));
+          return;
+        }
+        
+        // Delete the room
+        db.db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+        
+        // Notify client
+        ws.send(JSON.stringify({ type: 'roomDeleted', roomId: roomId }));
+      }
       else if (data.type === 'updateRoom') {
         let currentPlayerName = null;
         connectedPlayers.forEach((playerData, name) => {
