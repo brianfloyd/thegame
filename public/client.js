@@ -13,7 +13,7 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('WebSocket connected');
         
-        // Check if we have a pending player selection or a player name in the title
+        // Check if we have a pending player selection, URL parameter, or player name in the title
         let playerToSelect = null;
         
         if (pendingPlayerSelection) {
@@ -21,10 +21,17 @@ function connectWebSocket() {
             playerToSelect = pendingPlayerSelection;
             pendingPlayerSelection = null;
         } else {
-            // Check title for saved player name
-            const titleMatch = document.title.match(/The Game - (.+)$/);
-            if (titleMatch && titleMatch[1]) {
-                playerToSelect = titleMatch[1];
+            // Check URL parameter first (for navigation from editors)
+            const urlParams = new URLSearchParams(window.location.search);
+            const playerParam = urlParams.get('player');
+            if (playerParam) {
+                playerToSelect = playerParam;
+            } else {
+                // Check title for saved player name
+                const titleMatch = document.title.match(/The Game - (.+)$/);
+                if (titleMatch && titleMatch[1]) {
+                    playerToSelect = titleMatch[1];
+                }
             }
         }
         
@@ -1576,16 +1583,38 @@ function updateGodModeUI(hasGodMode) {
     }
 }
 
-// Handle god mode button clicks
+// Check for player parameter in URL on page load
 document.addEventListener('DOMContentLoaded', () => {
+    // Check URL parameter for player name (for navigation from editors)
+    const urlParams = new URLSearchParams(window.location.search);
+    const playerParam = urlParams.get('player');
+    if (playerParam) {
+        // Set as pending selection so it gets picked up when WebSocket connects
+        pendingPlayerSelection = playerParam;
+        // Also update title immediately
+        document.title = `The Game - ${playerParam}`;
+    }
+    
     const godModeButtons = document.querySelectorAll('.god-mode-btn');
     godModeButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const action = btn.getAttribute('data-action');
             if (action === 'map') {
-                openMapEditor();
+                // Navigate to map editor route
+                const playerName = currentPlayerName || document.title.match(/The Game - (.+)$/)?.[1];
+                if (playerName) {
+                    window.location.href = `/map?player=${encodeURIComponent(playerName)}`;
+                } else {
+                    alert('Player name required. Please select a player first.');
+                }
             } else if (action === 'npc') {
-                openNpcEditor();
+                // Navigate to NPC editor route
+                const playerName = currentPlayerName || document.title.match(/The Game - (.+)$/)?.[1];
+                if (playerName) {
+                    window.location.href = `/npc?player=${encodeURIComponent(playerName)}`;
+                } else {
+                    alert('Player name required. Please select a player first.');
+                }
             }
             // Other actions (items, spells, craft) will be implemented later
         });

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map Editor - The Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Map Editor -->
+    <div id="mapEditor" class="map-editor-overlay" style="display: block;">
+        <div class="map-editor-container">
+            <div class="map-editor-header">
+                <h2>Map Editor</h2>
+                <button id="closeMapEditor" class="close-editor-btn">Close</button>
+            </div>
+            <div class="map-editor-toolbar">
+                <select id="mapSelector" class="map-selector">
+                    <option value="">Select a map...</option>
+                </select>
+                <button id="createNewMapBtn" class="editor-btn">Create New Map</button>
+                <button id="connectMapsBtn" class="editor-btn">Connect Maps</button>
+            </div>
+            <div class="map-editor-content">
+                <div class="map-editor-grid-container">
+                    <canvas id="mapEditorCanvas" class="map-editor-canvas"></canvas>
+                </div>
+                <div id="mapEditorSidePanel" class="map-editor-side-panel">
+                    <div id="sidePanelContent">
+                        <p>Select a room to edit or click empty space to create a new room.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create New Map Dialog -->
+    <div id="createMapDialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3>Create New Map</h3>
+            <div class="dialog-content">
+                <label>Map Name:</label>
+                <input type="text" id="newMapName" class="dialog-input" placeholder="Enter map name">
+                <label>Description:</label>
+                <textarea id="newMapDescription" class="dialog-textarea" placeholder="Enter map description"></textarea>
+            </div>
+            <div class="dialog-buttons">
+                <button id="createMapConfirm" class="dialog-btn">Create</button>
+                <button id="createMapCancel" class="dialog-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="map-editor.js"></script>
+</body>
+</html>
+

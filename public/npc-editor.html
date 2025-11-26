@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPC Editor - The Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- NPC Editor -->
+    <div id="npcEditor" class="map-editor-overlay" style="display: block;">
+        <div class="map-editor-container">
+            <div class="map-editor-header">
+                <h2>NPC Editor</h2>
+                <button id="closeNpcEditor" class="close-editor-btn">Close</button>
+            </div>
+            <div class="map-editor-toolbar">
+                <select id="npcSelector" class="map-selector">
+                    <option value="">Select an NPC...</option>
+                </select>
+                <button id="createNewNpcBtn" class="editor-btn">Create New NPC</button>
+            </div>
+            <div class="map-editor-content">
+                <div class="map-editor-grid-container" id="npcListContainer">
+                    <div id="npcList" class="npc-list">
+                        <!-- NPC list will be rendered here -->
+                    </div>
+                </div>
+                <div id="npcEditorSidePanel" class="map-editor-side-panel">
+                    <div id="npcSidePanelContent">
+                        <p>Select an NPC from the list or create a new NPC.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="npc-editor.js"></script>
+</body>
+</html>
+

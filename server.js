@@ -2,6 +2,7 @@ const express = require('express');
 const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 const db = require('./database');
 const npcLogic = require('./npcLogic');
 
@@ -9,8 +10,41 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Parse cookies
+app.use(cookieParser());
+
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Middleware to check god mode for protected routes
+function checkGodMode(req, res, next) {
+  const playerName = req.query.player || req.cookies?.playerName;
+  
+  if (!playerName) {
+    return res.status(403).send('Player name required. Please select a player first.');
+  }
+  
+  const player = db.getPlayerByName(playerName);
+  if (!player) {
+    return res.status(404).send('Player not found.');
+  }
+  
+  if (player.god_mode !== 1) {
+    return res.status(403).send('God mode required. You do not have access to this page.');
+  }
+  
+  req.player = player;
+  next();
+}
+
+// Protected routes for god mode editors
+app.get('/map', checkGodMode, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'map-editor.html'));
+});
+
+app.get('/npc', checkGodMode, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'npc-editor.html'));
+});
 
 // Track connected players: playerName -> { ws, roomId }
 const connectedPlayers = new Map();
