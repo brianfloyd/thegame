@@ -335,8 +335,10 @@ body {
 }
 
 .item-save-btn {
-    padding: 10px 30px;
+    padding: 12px 40px;
     font-size: 14px;
+    min-width: 150px;
+    white-space: nowrap;
 }
 
 .npc-placement-section {
