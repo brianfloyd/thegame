@@ -1,15 +1,5 @@
 // Map Editor - Standalone page
-// Get player name from URL query parameter
-const urlParams = new URLSearchParams(window.location.search);
-const playerName = urlParams.get('player');
-
-if (!playerName) {
-    document.body.innerHTML = '<div style="color: #ff0000; padding: 20px;">Error: Player name required. Please access this page from the game.</div>';
-    throw new Error('Player name required');
-}
-
-// Set page title
-document.title = `Map Editor - The Game - ${playerName}`;
+// Session-based authentication (no URL params needed)
 
 // WebSocket connection
 let ws = null;
@@ -46,13 +36,9 @@ function connectWebSocket() {
 
     ws.onopen = () => {
         console.log('WebSocket connected');
-        // Select player automatically
-        if (playerName) {
-            setTimeout(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'selectPlayer', playerName: playerName }));
-                }
-            }, 100);
+        // Authenticate with session
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'authenticateSession' }));
         }
     };
 
@@ -200,8 +186,8 @@ function handleMessage(data) {
 
 // Close map editor - navigate back to main game
 function closeMapEditor() {
-    // Navigate to main game with player parameter to auto-select and show game view
-    window.location.href = `/?player=${encodeURIComponent(playerName)}`;
+    // Navigate to main game (session-based, no params needed)
+    window.location.href = '/game';
 }
 
 // Load map for editor

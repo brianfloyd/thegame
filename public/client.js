@@ -1,6 +1,5 @@
 let ws = null;
 let currentPlayerName = null;
-let pendingPlayerSelection = null; // Store player name to auto-select on reconnect
 
 // Get protocol (ws or wss) based on current page protocol
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -13,36 +12,9 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('WebSocket connected');
         
-        // Check if we have a pending player selection, URL parameter, or player name in the title
-        let playerToSelect = null;
-        
-        if (pendingPlayerSelection) {
-            // Use pending selection first (from a failed selectPlayer call)
-            playerToSelect = pendingPlayerSelection;
-            pendingPlayerSelection = null;
-        } else {
-            // Check URL parameter first (for navigation from editors)
-            const urlParams = new URLSearchParams(window.location.search);
-            const playerParam = urlParams.get('player');
-            if (playerParam) {
-                playerToSelect = playerParam;
-            } else {
-                // Check title for saved player name
-                const titleMatch = document.title.match(/The Game - (.+)$/);
-                if (titleMatch && titleMatch[1]) {
-                    playerToSelect = titleMatch[1];
-                }
-            }
-        }
-        
-        if (playerToSelect) {
-            console.log(`Auto-reconnecting player: ${playerToSelect}`);
-            // Small delay to ensure connection is fully ready
-            setTimeout(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    selectPlayer(playerToSelect);
-                }
-            }, 100);
+        // Authenticate with session
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'authenticateSession' }));
         }
     };
 
@@ -79,8 +51,9 @@ function handleMessage(data) {
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
+            // godMode is returned as an object with .value property from dynamic stats system
             if (data.stats.godMode !== undefined) {
-                updateGodModeUI(data.stats.godMode);
+                updateGodModeUI(data.stats.godMode.value === true);
             }
             break;
         case 'mapData':
@@ -733,37 +706,35 @@ function updateCompassButtons(exits) {
 document.querySelectorAll('.player-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const playerName = btn.getAttribute('data-player');
-        selectPlayer(playerName);
+        selectCharacter(playerName);
     });
 });
 
 // Select player and send to server
-function selectPlayer(playerName) {
-    // Update page title immediately to show active player
-    document.title = `The Game - ${playerName}`;
-    
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        // Store player name for auto-selection when connection is ready
-        pendingPlayerSelection = playerName;
-        console.log(`Connection not ready, queued player selection: ${playerName}`);
-        // Don't show alert - connection will auto-reconnect and select player
-        return;
+// Character selection via POST (server-side)
+async function selectCharacter(playerName) {
+    try {
+        const response = await fetch('/api/select-character', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include', // Include cookies for session
+            body: JSON.stringify({ playerName })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+            // Redirect to game page (session cookie is set)
+            window.location.href = '/game';
+        } else {
+            alert(data.error || 'Failed to select character');
+        }
+    } catch (error) {
+        console.error('Error selecting character:', error);
+        alert('Failed to select character. Please try again.');
     }
-
-    currentPlayerName = playerName;
-    pendingPlayerSelection = null; // Clear any pending selection
-
-    // Send player selection to server
-    ws.send(JSON.stringify({
-        type: 'selectPlayer',
-        playerName: playerName
-    }));
-
-    // Show game view, hide player selection
-    document.getElementById('playerSelection').classList.add('hidden');
-    document.getElementById('gameView').classList.remove('hidden');
-    
-    // Don't auto-focus command input - allows number pad navigation by default
 }
 
 // Handle command input
@@ -1583,16 +1554,14 @@ function updateGodModeUI(hasGodMode) {
     }
 }
 
-// Check for player parameter in URL on page load
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
-    // Check URL parameter for player name (for navigation from editors)
-    const urlParams = new URLSearchParams(window.location.search);
-    const playerParam = urlParams.get('player');
-    if (playerParam) {
-        // Set as pending selection so it gets picked up when WebSocket connects
-        pendingPlayerSelection = playerParam;
-        // Also update title immediately
-        document.title = `The Game - ${playerParam}`;
+    // Hide player selection if we're on game.html (game view is always visible there)
+    const gameView = document.getElementById('gameView');
+    const playerSelection = document.getElementById('playerSelection');
+    if (gameView && !playerSelection) {
+        // We're on game.html, connect WebSocket
+        connectWebSocket();
     }
     
     const godModeButtons = document.querySelectorAll('.god-mode-btn');
@@ -1600,21 +1569,11 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => {
             const action = btn.getAttribute('data-action');
             if (action === 'map') {
-                // Navigate to map editor route
-                const playerName = currentPlayerName || document.title.match(/The Game - (.+)$/)?.[1];
-                if (playerName) {
-                    window.location.href = `/map?player=${encodeURIComponent(playerName)}`;
-                } else {
-                    alert('Player name required. Please select a player first.');
-                }
+                // Navigate to map editor route (session-based, no URL params needed)
+                window.location.href = '/map';
             } else if (action === 'npc') {
-                // Navigate to NPC editor route
-                const playerName = currentPlayerName || document.title.match(/The Game - (.+)$/)?.[1];
-                if (playerName) {
-                    window.location.href = `/npc?player=${encodeURIComponent(playerName)}`;
-                } else {
-                    alert('Player name required. Please select a player first.');
-                }
+                // Navigate to NPC editor route (session-based, no URL params needed)
+                window.location.href = '/npc';
             }
             // Other actions (items, spells, craft) will be implemented later
         });

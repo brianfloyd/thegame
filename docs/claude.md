@@ -6,10 +6,16 @@ thegame/
 ├── package.json
 ├── server.js
 ├── database.js
+├── npcLogic.js
 ├── public/
-│   ├── index.html
+│   ├── index.html (landing/character selection page)
+│   ├── game.html (main game UI)
+│   ├── map-editor.html (standalone map editor)
+│   ├── npc-editor.html (standalone NPC editor)
 │   ├── style.css
-│   └── client.js
+│   ├── client.js (game client)
+│   ├── map-editor.js (map editor logic)
+│   └── npc-editor.js (NPC editor logic)
 ├── docs/
 │   └── claude.md
 └── game.db (SQLite database, auto-created)
@@ -522,7 +528,72 @@ thegame/
 
 ## Recent Updates
 
-### NPC Editor UI Refactoring (Latest)
+### Route-Based Authentication and Session Management (Latest)
+
+#### Session-Based Authentication System
+- **express-session Integration**: Server uses `express-session` middleware with MemoryStore
+- **HttpOnly Cookies**: Session cookies are HttpOnly (not accessible via JavaScript)
+- **24-Hour Expiration**: Sessions expire after 24 hours of inactivity
+- **Server-Side Session Store**: Custom session store (`sessionStore` Map) tracks player data per session
+
+#### Route Structure
+- **`/` (Root)**: Landing page with character selection (public/index.html)
+- **`/game`**: Main game UI (public/game.html) - requires valid session
+- **`/map`**: Map Editor (public/map-editor.html) - requires valid session AND god mode
+- **`/npc`**: NPC Editor (public/npc-editor.html) - requires valid session AND god mode
+
+#### Character Selection Flow
+1. User visits `/` and sees character selection screen
+2. User clicks character button (Fliz or Hebron)
+3. Client sends `POST /api/select-character` with `{ playerName }`
+4. Server validates player exists, creates session, sets cookie
+5. Client redirects to `/game`
+6. WebSocket connects and sends `authenticateSession` message
+7. Server validates session cookie and associates WebSocket with player
+
+#### Protected Routes Middleware
+- **`validateSession(req, res, next)`**: Ensures valid session exists, redirects to `/` if not
+- **`optionalSession(req, res, next)`**: Loads session if exists but doesn't require it
+- **`checkGodMode(req, res, next)`**: Requires valid session AND `flag_god_mode = 1`
+
+#### WebSocket Authentication
+- WebSocket upgrade request includes session cookie
+- `getSessionFromRequest(req)` extracts and validates session from cookie
+- `authenticateSession` message type validates existing session on WebSocket connect
+- All subsequent WebSocket messages require valid `sessionId` in `connectedPlayers` map
+- `connectedPlayers` Map uses `sessionId` as key (not playerName)
+
+#### God Mode UI Visibility
+- God mode buttons (Map, NPC, Items, Spells, Craft) only visible to god mode players
+- `updateGodModeUI(hasGodMode)` adds/removes `hidden` class from button bar
+- Non-god mode players see no god mode UI elements
+- God mode status from `playerStats.godMode.value` (dynamic stats system)
+
+#### Security Features
+- **Rate Limiting**: Character selection limited to 30 attempts per 30 seconds per IP
+- **Input Sanitization**: Player names trimmed and validated
+- **Session Cleanup**: Expired sessions cleaned up every 5 minutes
+- **No URL Parameters**: No sensitive data in URL strings (session-based instead)
+
+#### API Endpoints
+- **`POST /api/select-character`**: Creates session for player
+  - Request: `{ playerName: string }`
+  - Response: `{ success: true, sessionId: string }` or `{ success: false, error: string }`
+
+#### Future Security Roadmap
+- Session store can be upgraded to Redis for scalability
+- Character selection endpoint can be extended to require password
+- Add `accounts` and `user_characters` tables for full account system
+- Add password hashing and authentication
+- Add account recovery mechanisms
+
+### Code Cleanup (This Update)
+- **Removed NPC Seeding Code**: One-time NPC seed data (10 Glowroot NPCs) removed from database.js
+- **Removed Duplicate Cleanup**: Duplicate NPC cleanup function no longer needed
+- **Fixed ConnectedPlayers Bug**: Fixed bug where god mode checks used sessionId instead of playerName
+- **Fixed GodMode Value Access**: Client now correctly accesses `godMode.value` from dynamic stats
+
+### NPC Editor UI Refactoring
 
 #### NPC Editor Layout Structure
 - **Fixed Header**: NPC Editor header and toolbar remain fixed at top (never scrolls)

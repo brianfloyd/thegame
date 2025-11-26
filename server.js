@@ -3,6 +3,8 @@ const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
 const cookieParser = require('cookie-parser');
+const session = require('express-session');
+// uuid no longer needed - using express-session's sessionID
 const db = require('./database');
 const npcLogic = require('./npcLogic');
 
@@ -10,43 +12,222 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Parse cookies
+// Parse cookies and JSON bodies
 app.use(cookieParser());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Use express-session's built-in MemoryStore
+const MemoryStore = require('express-session').MemoryStore;
+const memoryStore = new MemoryStore();
+
+// Session store for our custom session data (playerName, playerId, etc.)
+// This is separate from express-session's session data but uses the same sessionId
+const sessionStore = new Map(); // Map<sessionId, { playerName, playerId, createdAt, expiresAt }>
+
+// Session cleanup job - remove expired sessions every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, sessionData] of sessionStore.entries()) {
+    if (sessionData.expiresAt < now) {
+      sessionStore.delete(sessionId);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Configure session middleware
+const sessionMiddleware = session({
+  name: 'gameSession',
+  secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  store: memoryStore,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: 'strict'
+  }
+});
+
+app.use(sessionMiddleware);
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware to check god mode for protected routes
-function checkGodMode(req, res, next) {
-  const playerName = req.query.player || req.cookies?.playerName;
+// Session validation middleware
+function validateSession(req, res, next) {
+  const sessionId = req.sessionID;
   
-  if (!playerName) {
-    return res.status(403).send('Player name required. Please select a player first.');
+  if (!sessionId || !req.session.playerName) {
+    return res.status(401).send('Session required. Please select a character first.');
   }
   
-  const player = db.getPlayerByName(playerName);
+  const sessionData = sessionStore.get(sessionId);
+  if (!sessionData || sessionData.expiresAt < Date.now()) {
+    req.session.destroy();
+    return res.status(401).send('Session expired. Please select a character again.');
+  }
+  
+  const player = db.getPlayerByName(req.session.playerName);
   if (!player) {
+    req.session.destroy();
     return res.status(404).send('Player not found.');
-  }
-  
-  if (player.god_mode !== 1) {
-    return res.status(403).send('God mode required. You do not have access to this page.');
   }
   
   req.player = player;
   next();
 }
 
+// Optional session middleware (doesn't fail if no session)
+function optionalSession(req, res, next) {
+  const sessionId = req.sessionID;
+  
+  if (sessionId && req.session.playerName) {
+    const sessionData = sessionStore.get(sessionId);
+    if (sessionData && sessionData.expiresAt >= Date.now()) {
+      const player = db.getPlayerByName(req.session.playerName);
+      if (player) {
+        req.player = player;
+      }
+    }
+  }
+  
+  next();
+}
+
+// Middleware to check god mode (requires valid session)
+function checkGodMode(req, res, next) {
+  if (!req.player) {
+    return res.status(401).send('Session required. Please select a character first.');
+  }
+  
+  if (req.player.god_mode !== 1) {
+    return res.status(403).send('God mode required. You do not have access to this page.');
+  }
+  
+  next();
+}
+
+// Rate limiting for character selection (simple in-memory store)
+const characterSelectionAttempts = new Map(); // Map<ip, { count, resetTime }>
+
+// Character selection endpoint
+app.post('/api/select-character', (req, res) => {
+  const { playerName } = req.body;
+  const clientIp = req.ip || req.connection.remoteAddress;
+  
+  // Basic rate limiting (30 attempts per 30 seconds per IP - relaxed for development)
+  const now = Date.now();
+  const attempts = characterSelectionAttempts.get(clientIp);
+  if (attempts) {
+    if (now < attempts.resetTime) {
+      if (attempts.count >= 30) {
+        return res.status(429).json({ success: false, error: 'Too many attempts. Please try again later.' });
+      }
+      attempts.count++;
+    } else {
+      characterSelectionAttempts.set(clientIp, { count: 1, resetTime: now + 30000 });
+    }
+  } else {
+    characterSelectionAttempts.set(clientIp, { count: 1, resetTime: now + 30000 });
+  }
+  
+  // Clean up old rate limit entries periodically
+  if (Math.random() < 0.01) { // 1% chance on each request
+    for (const [ip, data] of characterSelectionAttempts.entries()) {
+      if (now >= data.resetTime) {
+        characterSelectionAttempts.delete(ip);
+      }
+    }
+  }
+  
+  // Validate input
+  if (!playerName || typeof playerName !== 'string') {
+    return res.status(400).json({ success: false, error: 'Player name is required' });
+  }
+  
+  // Sanitize player name (prevent injection)
+  const sanitizedPlayerName = playerName.trim();
+  if (sanitizedPlayerName.length === 0 || sanitizedPlayerName.length > 50) {
+    return res.status(400).json({ success: false, error: 'Invalid player name' });
+  }
+  
+  // Validate player exists
+  const player = db.getPlayerByName(sanitizedPlayerName);
+  if (!player) {
+    console.log(`Security: Invalid character selection attempt for: ${sanitizedPlayerName} from ${clientIp}`);
+    return res.status(404).json({ success: false, error: 'Player not found' });
+  }
+  
+  // Check if player is already in an active session (optional - could reject if you want single session per player)
+  // For now, we'll allow multiple sessions but log it
+  const existingSessions = [];
+  for (const [sessionId, sessionData] of sessionStore.entries()) {
+    if (sessionData.playerName === sanitizedPlayerName && sessionData.expiresAt >= Date.now()) {
+      existingSessions.push(sessionId);
+    }
+  }
+  
+  if (existingSessions.length > 0) {
+    console.log(`Info: Player ${sanitizedPlayerName} already has ${existingSessions.length} active session(s)`);
+  }
+  
+  // Create session using express-session's sessionID
+  const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+  
+  // Store in our custom session store using express-session's sessionID
+  sessionStore.set(req.sessionID, {
+    playerName: player.name,
+    playerId: player.id,
+    createdAt: Date.now(),
+    expiresAt: expiresAt
+  });
+  
+  // Set session data in express-session
+  req.session.playerName = player.name;
+  req.session.playerId = player.id;
+  
+  // Save session to ensure it's persisted before redirecting
+  req.session.save((err) => {
+    if (err) {
+      console.error('Session save error:', err);
+      return res.status(500).json({ success: false, error: 'Failed to create session' });
+    }
+    console.log(`Character selected: ${player.name} (session: ${req.sessionID.substring(0, 8)}...)`);
+    res.json({ success: true, sessionId: req.sessionID });
+  });
+});
+
+// Root route - landing page (character selection)
+app.get('/', optionalSession, (req, res) => {
+  // If already has valid session, redirect to game
+  if (req.player) {
+    return res.redirect('/game');
+  }
+  // Otherwise show landing page
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Game route - requires valid session
+app.get('/game', optionalSession, (req, res) => {
+  // If no valid session, redirect to character selection
+  if (!req.player) {
+    return res.redirect('/');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'game.html'));
+});
+
 // Protected routes for god mode editors
-app.get('/map', checkGodMode, (req, res) => {
+app.get('/map', validateSession, checkGodMode, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'map-editor.html'));
 });
 
-app.get('/npc', checkGodMode, (req, res) => {
+app.get('/npc', validateSession, checkGodMode, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'npc-editor.html'));
 });
 
-// Track connected players: playerName -> { ws, roomId }
+// Track connected players: sessionId -> { ws, roomId, playerName, playerId }
 const connectedPlayers = new Map();
 
 // Helper function to get available exits for a room
@@ -104,23 +285,23 @@ function getExits(room) {
 // Helper function to get connected players in a room
 function getConnectedPlayersInRoom(roomId) {
   const players = [];
-  connectedPlayers.forEach((playerData, playerName) => {
+  connectedPlayers.forEach((playerData, sessionId) => {
     if (playerData.roomId === roomId && playerData.ws.readyState === WebSocket.OPEN) {
-      players.push(playerName);
+      players.push(playerData.playerName);
     }
   });
   return players;
 }
 
-// Helper function to send room update to a player
-function sendRoomUpdate(playerName, room) {
-  const playerData = connectedPlayers.get(playerName);
+// Helper function to send room update to a player by sessionId
+function sendRoomUpdate(sessionId, room) {
+  const playerData = connectedPlayers.get(sessionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
   }
 
   // Only get connected players in the room, excluding the current player
-  const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerName);
+  const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerData.playerName);
   const exits = getExits(room);
   
   // Get NPCs in the room
@@ -153,47 +334,108 @@ function sendRoomUpdate(playerName, room) {
 }
 
 // Helper function to broadcast to all players in a room
-function broadcastToRoom(roomId, message, excludePlayer = null) {
-  connectedPlayers.forEach((playerData, playerName) => {
-    if (playerName === excludePlayer) return;
+function broadcastToRoom(roomId, message, excludeSessionId = null) {
+  connectedPlayers.forEach((playerData, sessionId) => {
+    if (sessionId === excludeSessionId) return;
     if (playerData.roomId === roomId && playerData.ws.readyState === WebSocket.OPEN) {
       playerData.ws.send(JSON.stringify(message));
     }
   });
 }
 
+// Helper to get session from WebSocket upgrade request
+function getSessionFromRequest(req) {
+  // Parse cookies from upgrade request
+  const cookies = {};
+  if (req.headers.cookie) {
+    req.headers.cookie.split(';').forEach(cookie => {
+      const parts = cookie.trim().split('=');
+      if (parts.length === 2) {
+        cookies[parts[0]] = decodeURIComponent(parts[1]);
+      }
+    });
+  }
+  
+  let sessionId = cookies['gameSession'];
+  if (!sessionId) return null;
+  
+  // express-session signs cookies with format: s:sessionId.signature
+  // We need to extract just the sessionId part
+  if (sessionId.startsWith('s:')) {
+    // Remove 's:' prefix and signature
+    const dotIndex = sessionId.indexOf('.', 2);
+    if (dotIndex > 0) {
+      sessionId = sessionId.substring(2, dotIndex);
+    } else {
+      sessionId = sessionId.substring(2);
+    }
+  }
+  
+  const sessionData = sessionStore.get(sessionId);
+  if (!sessionData || sessionData.expiresAt < Date.now()) {
+    return null;
+  }
+  
+  return { sessionId, sessionData };
+}
+
 // WebSocket connection handling
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   console.log('New WebSocket connection');
+  
+  let sessionId = null;
+  let playerName = null;
+  
+  // Get session from upgrade request
+  const session = getSessionFromRequest(req);
+  if (session) {
+    sessionId = session.sessionId;
+    playerName = session.sessionData.playerName;
+  }
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
 
-      if (data.type === 'selectPlayer') {
-        const playerName = data.playerName;
-        const player = db.getPlayerByName(playerName);
+      if (data.type === 'authenticateSession') {
+        // Validate session
+        if (!session || !sessionId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'No valid session. Please select a character first.' }));
+          return;
+        }
 
+        const player = db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
 
-        // Check if player is already connected
-        if (connectedPlayers.has(playerName)) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Player already connected' }));
-          return;
+        // Check if session is already connected (optional - could allow multiple connections)
+        if (connectedPlayers.has(sessionId)) {
+          // Disconnect old connection
+          const oldConnection = connectedPlayers.get(sessionId);
+          if (oldConnection.ws.readyState === WebSocket.OPEN) {
+            oldConnection.ws.close();
+          }
         }
 
         // Store connection
         const room = db.getRoomById(player.current_room_id);
-        connectedPlayers.set(playerName, { ws, roomId: room.id });
+        connectedPlayers.set(sessionId, { 
+          ws, 
+          roomId: room.id, 
+          playerName: player.name,
+          playerId: player.id
+        });
 
         // Send initial room update
-        sendRoomUpdate(playerName, room);
+        sendRoomUpdate(sessionId, room);
 
         // Send player stats (dynamically extracted using configuration)
         const playerStats = db.getPlayerStats(player);
+        if (playerStats) {
+          playerStats.playerName = player.name; // Include player name for client
+        }
         ws.send(JSON.stringify({
           type: 'playerStats',
           stats: playerStats || {}
@@ -224,26 +466,34 @@ wss.on('connection', (ws) => {
         broadcastToRoom(room.id, {
           type: 'playerJoined',
           playerName: playerName
-        }, playerName);
+        }, sessionId);
 
         console.log(`Player ${playerName} connected in room ${room.name}`);
+        return;
       }
+      
+      // All other messages require authentication
+      if (!sessionId || !connectedPlayers.has(sessionId)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated. Please authenticate first.' }));
+        return;
+      }
+      
+      const playerData = connectedPlayers.get(sessionId);
+      if (playerData.ws !== ws) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session mismatch' }));
+        return;
+      }
+      
+      playerName = playerData.playerName;
 
-      else if (data.type === 'move') {
-        // Find player by WebSocket connection
-        let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
-          if (playerData.ws === ws) {
-            currentPlayerName = name;
-          }
-        });
-
-        if (!currentPlayerName) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+      if (data.type === 'move') {
+        // Player is already authenticated, use sessionId
+        if (!sessionId || !playerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
@@ -325,20 +575,20 @@ wss.on('connection', (ws) => {
         }
 
         // Update player's room
-        db.updatePlayerRoom(targetRoom.id, currentPlayerName);
-        const playerData = connectedPlayers.get(currentPlayerName);
+        db.updatePlayerRoom(targetRoom.id, playerName);
+        const playerData = connectedPlayers.get(sessionId);
         const oldRoomId = playerData.roomId;
         playerData.roomId = targetRoom.id;
 
         // Notify players in old room
         broadcastToRoom(oldRoomId, {
           type: 'playerLeft',
-          playerName: currentPlayerName
-        }, currentPlayerName);
+          playerName: playerName
+        }, sessionId);
 
         // Send moved message to moving player
         // Only get connected players in the new room, excluding the current player
-        const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== currentPlayerName);
+        const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== playerName);
         const exits = getExits(targetRoom);
         
         // Get map name
@@ -418,9 +668,9 @@ wss.on('connection', (ws) => {
       else if (data.type === 'getMapEditorData') {
         // Find player by WebSocket connection
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -465,9 +715,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'createMap') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -502,9 +752,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'createRoom') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -604,9 +854,9 @@ wss.on('connection', (ws) => {
       }
       else if (data.type === 'updateRoom') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -650,9 +900,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'getAllMaps') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -676,9 +926,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'connectMaps') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -778,9 +1028,9 @@ wss.on('connection', (ws) => {
       // NPC Editor Handlers (God Mode)
       else if (data.type === 'getAllNPCs') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -804,9 +1054,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'createNPC') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -846,9 +1096,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'updateNPC') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -888,9 +1138,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'getNpcPlacements') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -921,9 +1171,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'getNpcPlacementRooms') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -954,9 +1204,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'addNpcToRoom') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -993,9 +1243,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'removeNpcFromRoom') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -1033,9 +1283,9 @@ wss.on('connection', (ws) => {
       else if (data.type === 'look') {
         // Find player by WebSocket connection
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -1092,9 +1342,9 @@ wss.on('connection', (ws) => {
 
       else if (data.type === 'disconnectMap') {
         let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, name) => {
+        connectedPlayers.forEach((playerData) => {
           if (playerData.ws === ws) {
-            currentPlayerName = name;
+            currentPlayerName = playerData.playerName;
           }
         });
 
@@ -1151,26 +1401,20 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    // Find and remove disconnected player
-    let disconnectedPlayer = null;
-    connectedPlayers.forEach((playerData, playerName) => {
-      if (playerData.ws === ws) {
-        disconnectedPlayer = playerName;
-      }
-    });
-
-    if (disconnectedPlayer) {
-      const playerData = connectedPlayers.get(disconnectedPlayer);
+    // Find and remove disconnected player by sessionId
+    if (sessionId && connectedPlayers.has(sessionId)) {
+      const playerData = connectedPlayers.get(sessionId);
       const roomId = playerData.roomId;
-      connectedPlayers.delete(disconnectedPlayer);
+      const disconnectedPlayerName = playerData.playerName;
+      connectedPlayers.delete(sessionId);
 
       // Notify others in the room
       broadcastToRoom(roomId, {
         type: 'playerLeft',
-        playerName: disconnectedPlayer
+        playerName: disconnectedPlayerName
       });
 
-      console.log(`Player ${disconnectedPlayer} disconnected`);
+      console.log(`Player ${disconnectedPlayerName} disconnected`);
     }
   });
 });
