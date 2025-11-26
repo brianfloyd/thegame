@@ -302,6 +302,84 @@ The stats system is **fully dynamic** and uses **prefix-based auto-detection**. 
 - **Player Safety**: Moves players to Town Square before deleting their current room
 - **Migration**: Handles existing databases gracefully
 
+## Scriptable NPCs System (Glowroot Region)
+
+### Database Structure
+- **Table**: `scriptable_npcs`
+- **Purpose**: Stores NPCs that can be interacted with through scriptable mechanics
+- **Columns**:
+  - `id`: Primary key
+  - `name`: NPC name
+  - `description`: NPC description
+  - `npc_type`: Type of interaction (rhythm, stability, worker, tending, machine, rotation, economic, farm, patrol, threshold)
+  - `base_cycle_time`: Base time in milliseconds for interaction cycles
+  - `difficulty`: Difficulty level (1-2)
+  - `required_stats`: JSON object of required stat values (e.g., `{"wisdom":4}`)
+  - `required_buffs`: JSON array of required buffs (e.g., `["spore_resist"]`)
+  - `input_items`: JSON object of required input items (e.g., `{"root_nutrient":2}`)
+  - `output_items`: JSON object of output items (e.g., `{"lumin_spore":1}`)
+  - `failure_states`: JSON array of possible failure states (e.g., `["pulse_missed"]`)
+  - `scriptable`: Boolean flag (default 1)
+  - `active`: Boolean flag (default 1)
+
+### Glowroot Region NPCs
+The following 10 NPCs have been added to the database:
+
+1. **Glowroot Pulsecap** (rhythm, difficulty 1)
+   - Requires: Wisdom 4, spore_resist buff
+   - Output: lumin_spore
+   - Cycle time: 3500ms
+
+2. **Embergut Shroomling** (stability, difficulty 2)
+   - Requires: Intelligence 6, heat_resist buff
+   - Output: ember_gel
+   - Cycle time: 6000ms
+
+3. **Mycelium Forager** (worker, difficulty 1)
+   - Requires: Crafting 5, steady_hands buff, 2x root_nutrient
+   - Output: glowroot_dust
+   - Cycle time: 7000ms
+
+4. **Lantern Moth Swarm** (tending, difficulty 1)
+   - Requires: Wisdom 5, calm buff, nectar_drop
+   - Output: liquid_lumen
+   - Cycle time: 5000ms
+
+5. **Biotide Condenser** (machine, difficulty 1)
+   - Requires: Intelligence 4, cooling_aura buff, humid_air
+   - Output: biotide
+   - Cycle time: 8000ms
+
+6. **Crystalbloom Weaver** (rotation, difficulty 2)
+   - Requires: Crafting 7, Intelligence 5, precision buff, 2x raw_fiber
+   - Output: woven_glowfiber
+   - Cycle time: 9000ms
+
+7. **Glowroot Barter Wisp** (economic, difficulty 1)
+   - Requires: Cunning 4, clarity buff, 4x copper_bit
+   - Output: trade_spore
+   - Cycle time: 4000ms
+
+8. **Silkroot Crawler Nest** (farm, difficulty 1)
+   - Requires: Wisdom 3, Crafting 3, gentle_touch buff, crawler_feed
+   - Output: 2x glow_silk
+   - Cycle time: 6500ms
+
+9. **Ooze-Walker Collector** (patrol, difficulty 2)
+   - Requires: Dexterity 5, slick_grip buff
+   - Output: ooze_core
+   - Cycle time: 7000ms
+
+10. **Aetherbud Sprite** (threshold, difficulty 2)
+    - Requires: Wisdom 7, Intelligence 5, aether_sense buff
+    - Output: aether_bud
+    - Cycle time: 5200ms
+
+### Implementation Status
+- **Database Schema**: ✅ Created
+- **NPC Data**: ✅ Inserted (10 NPCs)
+- **Game Logic**: ⏳ Pending (to be implemented in future)
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database

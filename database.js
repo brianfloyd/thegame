@@ -57,6 +57,25 @@ db.exec(`
   )
 `);
 
+// Create scriptable_npcs table (Glowroot Region)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scriptable_npcs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    npc_type TEXT NOT NULL,
+    base_cycle_time INTEGER NOT NULL,
+    difficulty INTEGER NOT NULL DEFAULT 1,
+    required_stats TEXT,
+    required_buffs TEXT,
+    input_items TEXT,
+    output_items TEXT,
+    failure_states TEXT,
+    scriptable BOOLEAN NOT NULL DEFAULT 1,
+    active BOOLEAN NOT NULL DEFAULT 1
+  )
+`);
+
 // Add new columns to existing table if they don't exist (for migration)
 const addColumnIfNotExists = (tableName, columnName, defaultValue, columnType = 'INTEGER') => {
   try {
@@ -462,6 +481,143 @@ setGodMode.run(1, 'Fliz');
 // Hebron: 50/50 HP, 10/10 Mana
 insertPlayer.run('Hebron', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 'Hebron');
+
+// Insert scriptable NPCs for Glowroot Region
+const insertScriptableNPC = db.prepare(`
+  INSERT OR IGNORE INTO scriptable_npcs 
+  (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+insertScriptableNPC.run(
+  'Glowroot Pulsecap',
+  'A fungal creature that releases bioluminescent spores in perfect rhythmic pulses.',
+  'rhythm',
+  3500,
+  1,
+  '{"wisdom":4}',
+  '["spore_resist"]',
+  '{}',
+  '{"lumin_spore":1}',
+  '["pulse_missed"]'
+);
+
+insertScriptableNPC.run(
+  'Embergut Shroomling',
+  'A heat-cycling fungus whose core must be stabilized to extract ember-gel safely.',
+  'stability',
+  6000,
+  2,
+  '{"intelligence":6}',
+  '["heat_resist"]',
+  '{}',
+  '{"ember_gel":1}',
+  '["overheat","rupture"]'
+);
+
+insertScriptableNPC.run(
+  'Mycelium Forager',
+  'A root-creeping creature that gathers nutrients and refines them into glowroot dust.',
+  'worker',
+  7000,
+  1,
+  '{"crafting":5}',
+  '["steady_hands"]',
+  '{"root_nutrient":2}',
+  '{"glowroot_dust":1}',
+  '["tangle","starve"]'
+);
+
+insertScriptableNPC.run(
+  'Lantern Moth Swarm',
+  'A cluster of moths that condense light into liquid lumen when brushed properly.',
+  'tending',
+  5000,
+  1,
+  '{"wisdom":5}',
+  '["calm"]',
+  '{"nectar_drop":1}',
+  '{"liquid_lumen":1}',
+  '["flight_disruption"]'
+);
+
+insertScriptableNPC.run(
+  'Biotide Condenser',
+  'A living membrane engine that filters moisture into radiant biotide fluid.',
+  'machine',
+  8000,
+  1,
+  '{"intelligence":4}',
+  '["cooling_aura"]',
+  '{"humid_air":1}',
+  '{"biotide":1}',
+  '["clog","overspill"]'
+);
+
+insertScriptableNPC.run(
+  'Crystalbloom Weaver',
+  'A fungal crystal hybrid that folds luminescent fibers in predictable rotations.',
+  'rotation',
+  9000,
+  2,
+  '{"crafting":7,"intelligence":5}',
+  '["precision"]',
+  '{"raw_fiber":2}',
+  '{"woven_glowfiber":1}',
+  '["bad_fold"]'
+);
+
+insertScriptableNPC.run(
+  'Glowroot Barter Wisp',
+  'A negotiating light-spirit that trades rare spores based on stable price cycles.',
+  'economic',
+  4000,
+  1,
+  '{"cunning":4}',
+  '["clarity"]',
+  '{"copper_bit":4}',
+  '{"trade_spore":1}',
+  '["poor_trade"]'
+);
+
+insertScriptableNPC.run(
+  'Silkroot Crawler Nest',
+  'A silk-harvesting fungus-colony whose crawlers produce glowing strands when fed.',
+  'farm',
+  6500,
+  1,
+  '{"wisdom":3,"crafting":3}',
+  '["gentle_touch"]',
+  '{"crawler_feed":1}',
+  '{"glow_silk":2}',
+  '["infestation"]'
+);
+
+insertScriptableNPC.run(
+  'Ooze-Walker Collector',
+  'A slow-moving gel organism that absorbs impurities and outputs refined ooze cores.',
+  'patrol',
+  7000,
+  2,
+  '{"dexterity":5}',
+  '["slick_grip"]',
+  '{}',
+  '{"ooze_core":1}',
+  '["slip","rupture"]'
+);
+
+insertScriptableNPC.run(
+  'Aetherbud Sprite',
+  'A tiny fungal sprite that captures ambient aether whenever Glowroot energy surges.',
+  'threshold',
+  5200,
+  2,
+  '{"wisdom":7,"intelligence":5}',
+  '["aether_sense"]',
+  '{}',
+  '{"aether_bud":1}',
+  '["energy_backfire"]'
+);
 
 // Ensure the connection room exists in Northern Territory (south street 6 at x=0, y=-5)
 const newhaven = getMapByNameStmt.get('Newhaven');
