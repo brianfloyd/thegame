@@ -164,7 +164,8 @@ wss.on('connection', (ws) => {
             hitPoints: player.hit_points,
             maxHitPoints: player.max_hit_points,
             mana: player.mana,
-            maxMana: player.max_mana
+            maxMana: player.max_mana,
+            godMode: player.god_mode === 1
           }
         }));
 
@@ -445,6 +446,321 @@ wss.on('connection', (ws) => {
         }, currentPlayerName);
 
         console.log(`Player ${currentPlayerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
+      }
+
+      // Map Editor Handlers
+      else if (data.type === 'getMapEditorData') {
+        // Find player by WebSocket connection
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const mapId = data.mapId;
+        const map = db.getMapById(mapId);
+        if (!map) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Map not found' }));
+          return;
+        }
+
+        const rooms = db.getRoomsByMap(mapId);
+        ws.send(JSON.stringify({
+          type: 'mapEditorData',
+          rooms: rooms.map(r => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            x: r.x,
+            y: r.y,
+            roomType: r.room_type || 'normal',
+            mapId: r.map_id,
+            connected_map_id: r.connected_map_id,
+            connected_room_x: r.connected_room_x,
+            connected_room_y: r.connected_room_y,
+            connection_direction: r.connection_direction
+          })),
+          mapId: map.id,
+          mapName: map.name
+        }));
+      }
+
+      else if (data.type === 'createMap') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { name, width, height, description } = data;
+        if (!name) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Map name required' }));
+          return;
+        }
+
+        try {
+          const mapId = db.createMap(name, width || 100, height || 100, description || '');
+          ws.send(JSON.stringify({
+            type: 'mapCreated',
+            mapId: mapId,
+            name: name
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to create map: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'createRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { mapId, name, description, x, y, roomType } = data;
+        if (!name || mapId === undefined || x === undefined || y === undefined) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Missing required fields' }));
+          return;
+        }
+
+        // Check if room already exists at these coordinates
+        const existing = db.getRoomByCoords(mapId, x, y);
+        if (existing) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room already exists at these coordinates' }));
+          return;
+        }
+
+        try {
+          const roomId = db.createRoom(name, description || '', x, y, mapId, roomType || 'normal');
+          const room = db.getRoomById(roomId);
+          
+          // Update map size based on new room
+          db.updateMapSize(mapId);
+          
+          ws.send(JSON.stringify({
+            type: 'roomCreated',
+            room: {
+              id: room.id,
+              name: room.name,
+              description: room.description,
+              x: room.x,
+              y: room.y,
+              roomType: room.room_type || 'normal',
+              mapId: room.map_id
+            }
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to create room: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'updateRoom') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId, name, description, roomType } = data;
+        if (!roomId || !name) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Missing required fields' }));
+          return;
+        }
+
+        try {
+          db.updateRoom(roomId, name, description || '', roomType || 'normal');
+          const room = db.getRoomById(roomId);
+          
+          ws.send(JSON.stringify({
+            type: 'roomUpdated',
+            room: {
+              id: room.id,
+              name: room.name,
+              description: room.description,
+              x: room.x,
+              y: room.y,
+              roomType: room.room_type || 'normal',
+              mapId: room.map_id
+            }
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to update room: ' + err.message }));
+        }
+      }
+
+      else if (data.type === 'getAllMaps') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const maps = db.getAllMaps();
+        ws.send(JSON.stringify({
+          type: 'allMaps',
+          maps: maps.map(m => ({ id: m.id, name: m.name }))
+        }));
+      }
+
+      else if (data.type === 'connectMaps') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, name) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = name;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { sourceRoomId, sourceDirection, targetMapId, targetX, targetY } = data;
+        
+        // Get source room
+        const sourceRoom = db.getRoomById(sourceRoomId);
+        if (!sourceRoom) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Source room not found' }));
+          return;
+        }
+
+        // Validate source room has available exit in requested direction
+        const exits = getExits(sourceRoom);
+        const directionMap = {
+          'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west',
+          'NE': 'northeast', 'NW': 'northwest', 'SE': 'southeast', 'SW': 'southwest'
+        };
+        const exitKey = directionMap[sourceDirection];
+        if (!exitKey || exits[exitKey]) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Source room already has exit in that direction' }));
+          return;
+        }
+
+        // Check if target room exists
+        const targetRoom = db.getRoomByCoords(targetMapId, targetX, targetY);
+        if (!targetRoom) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Target room does not exist at those coordinates' }));
+          return;
+        }
+
+        // Calculate opposite direction
+        const oppositeDir = {
+          'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E',
+          'NE': 'SW', 'NW': 'SE', 'SE': 'NW', 'SW': 'NE'
+        };
+        const targetDirection = oppositeDir[sourceDirection];
+
+        // Validate target room has available exit in opposite direction
+        const targetExits = getExits(targetRoom);
+        const targetExitKey = directionMap[targetDirection];
+        if (!targetExitKey || targetExits[targetExitKey]) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Target room already has exit in opposite direction' }));
+          return;
+        }
+
+        // Update source room with connection
+        const updateSourceConnection = db.db.prepare(`
+          UPDATE rooms 
+          SET connected_map_id = ?, connected_room_x = ?, connected_room_y = ?, connection_direction = ?
+          WHERE id = ?
+        `);
+        updateSourceConnection.run(targetMapId, targetX, targetY, sourceDirection, sourceRoomId);
+
+        // Update target room with reverse connection
+        const updateTargetConnection = db.db.prepare(`
+          UPDATE rooms 
+          SET connected_map_id = ?, connected_room_x = ?, connected_room_y = ?, connection_direction = ?
+          WHERE id = ?
+        `);
+        updateTargetConnection.run(sourceRoom.map_id, sourceRoom.x, sourceRoom.y, targetDirection, targetRoom.id);
+
+        // Get updated rooms
+        const updatedSource = db.getRoomById(sourceRoomId);
+        const updatedTarget = db.getRoomById(targetRoom.id);
+
+        ws.send(JSON.stringify({
+          type: 'mapConnected',
+          sourceRoom: {
+            id: updatedSource.id,
+            name: updatedSource.name,
+            x: updatedSource.x,
+            y: updatedSource.y,
+            mapId: updatedSource.map_id
+          },
+          targetRoom: {
+            id: updatedTarget.id,
+            name: updatedTarget.name,
+            x: updatedTarget.x,
+            y: updatedTarget.y,
+            mapId: updatedTarget.map_id
+          }
+        }));
       }
     } catch (error) {
       console.error('Error handling message:', error);

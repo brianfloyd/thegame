@@ -1,0 +1,597 @@
+# Node Game Server Implementation Plan
+
+## Project Structure
+```
+thegame/
+├── package.json
+├── server.js
+├── database.js
+├── public/
+│   ├── index.html
+│   ├── style.css
+│   └── client.js
+├── docs/
+│   └── claude.md
+└── game.db (SQLite database, auto-created)
+```
+
+## Implementation Steps
+
+### 1. Initialize Project and Dependencies
+- Create `package.json` with dependencies:
+  - `express` - web server
+  - `ws` - WebSocket library
+  - `better-sqlite3` - SQLite database (synchronous, faster than sqlite3)
+  - `nodemon` - Development tool for auto-restart (dev dependency)
+- Set up npm scripts for running the server (`start` and `dev`)
+
+### 2. Database Setup (`database.js`)
+- Initialize SQLite database connection
+- Create `maps` table with columns: `id`, `name`, `width`, `height`, `description`
+- Create `rooms` table with columns:
+  - Basic: `id`, `name`, `description`, `x`, `y` (coordinate-based map)
+  - **Map System**: `map_id` (foreign key to maps), `connected_map_id`, `connected_room_x`, `connected_room_y`, `connection_direction`
+  - **Room Types**: `room_type` (TEXT, default 'normal') - room classification (normal, merchant, etc.)
+  - UNIQUE constraint on `(map_id, x, y)` to prevent duplicate rooms
+- Create `players` table with columns:
+  - Basic: `id`, `name` (unique constraint), `current_room_id` (foreign key to rooms)
+  - **Stats** (all default 10): `brute_strength`, `life_force`, `cunning`, `intelligence`, `wisdom`
+  - **Abilities** (all default 0): `crafting`, `lockpicking`, `stealth`, `dodge`, `critical_hit`
+  - **Resources**: `hit_points` (default 50), `max_hit_points` (default 50), `mana` (default 0), `max_mana` (default 0)
+  - **God Mode**: `god_mode` (INTEGER, default 0) - administrative privileges flag
+- Database migration: Automatically adds new columns to existing databases
+- Insert initial data:
+  - **Maps**:
+    - **Newhaven** (20x20): Main town with organized streets
+    - **Northern Territory** (10x10): Wild northern area, half the size of Newhaven
+  - **Newhaven Map Structure**: 20x20 grid (coordinates -10 to +9)
+    - **Perimeter Rooms**: Outer square boundary
+      - Westwall Street (x = -10): 20 rooms along western edge
+      - Eastwall Street (x = 9): 20 rooms along eastern edge
+      - North Street (y = 9): 20 rooms along northern edge
+      - South Street (y = -10): 20 rooms along southern edge
+    - **Center Street**: Vertical road (x = 0) connecting north to south
+      - 20 rooms total, including the 3 original special rooms
+      - Town Square at (0, 0) - center intersection
+      - Northern Room at (0, 1) - on Center Street
+      - Southern Room at (0, -1) - on Center Street
+  - **Northern Territory Map Structure**: 10x10 grid (coordinates -5 to +4)
+    - **Perimeter Rooms**: Outer square boundary
+      - Westwall Street (x = -5): 10 rooms along western edge
+      - Eastwall Street (x = 4): 10 rooms along eastern edge
+      - North Street (y = 4): 10 rooms along northern edge
+      - South Street (y = -5): 10 rooms along southern edge
+    - **Center Street**: Vertical road (x = 0) connecting north to south
+      - 10 rooms total
+      - Intersection with North Street at (0, 4) - "north street 6"
+      - Intersection with South Street at (0, -5) - "south street 6" (connection point to Newhaven)
+  - **Map Connections**:
+    - **Newhaven "north street 11" (0, 9)** ↔ **Northern Territory "south street 6" (0, -5)**
+    - Bidirectional connection: North from Newhaven enters Northern Territory, South from Northern Territory returns to Newhaven
+    - Connection direction stored in `connection_direction` field ('N' or 'S')
+  - **Total Rooms**: ~80 rooms in Newhaven + ~40 rooms in Northern Territory
+  - Players: "Fliz" and "Hebron" (both start in town square, current_room_id=1)
+  - **Database Cleanup**: Automatic migration removes invalid rooms (district/interior rooms) while preserving player data
+  - **Player Stats**:
+    - Fliz: All stats 10, all abilities 0, 50/50 HP, 0 Mana (not a caster), **God Mode enabled (1)**
+    - Hebron: All stats 10, all abilities 0, 50/50 HP, 10/10 Mana, God Mode disabled (0)
+- Enhanced room descriptions with detailed narrative text
+
+### 3. Server Setup (`server.js`)
+- Create Express server listening on port 3434
+- Serve static files from `public/` directory
+- Set up WebSocket server using `ws` library
+- WebSocket connection handling:
+  - Track connected players (player name -> WebSocket connection)
+  - Track which room each player is in (from database)
+  - Handle player movement: validate direction (N/S/E/W/NE/NW/SE/SW/U/D), check if adjacent room exists at target coordinates OR if map connection exists, update database
+  - Broadcast player join/leave events to all clients in the same room (real-time)
+  - Broadcast player movement events when players change rooms
+  - Handle player selection and room entry messages
+  - Only show connected players in room (not all players from database)
+  - Send player stats to client on connection via WebSocket (including `godMode` flag)
+  - Send map data with connection info and preview rooms
+  - **Map Editor Handlers** (god mode only):
+    - Handle `getMapEditorData` - return all rooms for a map
+    - Handle `createMap` - create new map with auto-assigned ID
+    - Handle `createRoom` - create new room in a map
+    - Handle `updateRoom` - update room name, description, and type
+    - Handle `getAllMaps` - return list of all maps
+    - Handle `connectMaps` - connect two maps with validation
+- Movement logic: 
+  - **Map Connection Check**: First check if current room has a map connection in the requested direction
+  - If connection exists, transition to connected map at specified coordinates
+  - Otherwise, calculate target coordinates (N: y+1, S: y-1, E: x+1, W: x-1, NE: x+1,y+1, etc.)
+  - Query database for room at those coordinates in the same map
+  - Support diagonal directions (NE, NW, SE, SW)
+  - Support vertical directions (U, D) - prepared for future z-coordinate implementation
+- **Map Transition Handling**:
+  - When player moves to a new map, send complete `mapData` message with all rooms from new map
+  - Include connection info for preview rooms if the new room has connections
+  - Update player's `current_room_id` to the target room in the new map
+- **Map Data Messages**:
+  - On connection: Send all rooms from current map + preview rooms from connected maps (within 5 units of connection point)
+  - On map transition: Send all rooms from new map + preview rooms if applicable
+  - Include `mapId` for each room, `connectionInfo` for coordinate transformation
+  - Include `mapName` in room updates for display
+- Error messages: "Ouch! You walked into the wall to the [direction]." when movement fails
+- Room persistence: Players rejoin in the room they left
+- **Exit Detection**: `getExits()` function checks for map connections first, then adjacent rooms in same map
+
+### 4. Frontend - MajorMUD-Style Interface (`public/index.html`)
+- Player selection screen with two options: "Fliz" and "Hebron"
+- Game view with split layout:
+  - **Left 2/3**: Text terminal (MUD-style interface)
+  - **Right 1/3**: Divided into 4 quadrants
+    - Top-left quadrant: Player Stats widget
+    - Top-right quadrant: Compass widget with coordinates display
+    - Bottom-left quadrant: Map widget (25x25 grid view)
+    - Bottom-right quadrant: Reserved for future features
+- Text terminal displays:
+  - Room name with map name prefix (e.g., "Newhaven, north street 11") (yellow, uppercase)
+  - Room description (green, formatted text)
+  - "Also here:" section with player names (cyan, inline)
+  - **God Mode Button Bar** (visible only to god mode players, fixed above command input):
+    - Buttons: "Map", "Items", "Spells", "Craft", "NPC"
+    - Only "Map" button is functional (opens map editor)
+    - Other buttons reserved for future features
+  - Command prompt at bottom with `>` symbol
+- Compass widget with all 8 cardinal/intercardinal directions plus Up/Down buttons
+- **Coordinates Display**: Shows current map name and coordinates (x, y) at bottom of compass widget
+- **Map Editor Overlay** (full-screen, hidden by default):
+  - 100x100 grid canvas for map editing
+  - Side panel for room editing forms
+  - Map selector dropdown
+  - Create New Map button
+  - Connect Maps button
+  - Create New Map dialog
+
+### 5. Frontend Styling (`public/style.css`)
+- MajorMUD-style retro terminal aesthetic:
+  - Black background with green text (#00ff00)
+  - Yellow for room names (#ffff00)
+  - Cyan for player names (#00ffff)
+  - Red for error messages (#ff0000)
+  - Monospace font (Courier New)
+- Terminal container (2/3 width):
+  - Scrollable content area
+  - Custom scrollbar styling
+  - Command line with prompt
+- Right panel (1/3 width):
+  - 4-quadrant grid layout
+  - Player Stats widget in top-left quadrant
+  - Compass widget in top-right quadrant
+  - Map widget in bottom-left quadrant (flexible height, min 200px)
+  - Smaller widgets (max-width 100%) for compact display
+  - Overflow hidden to prevent content from flowing off screen
+- Compass button states:
+  - Available: Bright green border and text
+  - Unavailable: Lowlighted (40% opacity, dark colors) but still visible
+  - All buttons always visible for centered appearance
+- **Compass Coordinates Display**:
+  - Green text matching compass theme
+  - Centered alignment
+  - Top border separator
+  - Small font size (0.75em)
+  - Shows map name and coordinates on separate lines
+- Player Stats widget styling:
+  - Retro terminal aesthetic matching game theme
+  - Green borders and text (#00ff00)
+  - Yellow section titles (#ffff00)
+  - Cyan stat labels (#00ffff)
+  - Visual HP bar (red) and Mana bar (blue)
+  - Compact layout with organized sections
+  - Overflow handling for long content
+- Map widget styling:
+  - Flexible height with minimum 200px
+  - Canvas-based rendering
+  - Black background with green border
+- **God Mode Button Bar** styling:
+  - Fixed position above command input
+  - Retro terminal aesthetic (green borders, black background)
+  - Button hover states
+  - Disabled buttons with reduced opacity
+- **Map Editor** styling:
+  - Full-screen overlay (z-index 1000)
+  - 100x100 grid canvas with room squares
+  - Room colors: Normal (green #00ff00 fill, yellow #ffff00 border), Merchant (blue #0088ff fill, darker blue #0066cc border)
+  - Empty spaces as outlined squares (only near existing rooms)
+  - Side panel for room editing forms
+  - Dialog overlay for map creation
+- Responsive design for smaller screens
+
+### 6. Frontend WebSocket Client (`public/client.js`)
+- Connect to WebSocket server
+- Handle player selection: send player name to server
+- Text command system:
+  - Command line input at bottom of terminal
+  - Supports full words: `north`, `south`, `east`, `west`, `northeast`, `northwest`, `southeast`, `southwest`, `up`, `down`
+  - Supports abbreviations: `n`, `s`, `e`, `w`, `ne`, `nw`, `se`, `sw`, `u`, `d`
+  - Command normalization and validation
+- Compass widget interaction:
+  - Clickable direction buttons
+  - Only available directions are enabled
+  - All directions visible but unavailable ones are lowlighted
+- Real-time updates:
+  - Listen for room state updates (who's in the room, room details, available exits)
+  - Update UI instantly when other players join/leave the current room
+  - Update UI instantly when other players move to/from adjacent rooms
+  - Display real-time player list
+- Player list management:
+  - "Also here:" and player names on same line
+  - Multiple players comma-separated
+  - "No one else is here." when room is empty
+  - Automatically removes "No one else is here." when player joins
+  - Automatically restores "No one else is here." when last player leaves
+- Terminal display:
+  - Room name with map name prefix, description, and players displayed in terminal
+  - Auto-scroll to bottom on updates
+  - Error messages displayed in terminal
+- **Map Display**:
+  - 25x25 grid view centered on player's current room
+  - Rooms displayed as squares (10x10 pixels)
+  - **Current room**: Bright green fill (#00ff00) with yellow border (#ffff00), 2px line width
+  - **Other rooms**: Gray fill (#666) with dark border (#333)
+  - **Preview rooms**: Dimmer green fill (#1a331a) with dimmer green border (#336633) - rooms from connected maps
+  - Connection lines between adjacent rooms in all 8 directions
+  - Automatically re-centers when player moves
+  - Canvas-based rendering with retro terminal aesthetic
+  - Shows all rooms within 25x25 viewport
+  - **Coordinate Transformation**: Preview rooms from connected maps are transformed to appear in correct position relative to connection point
+  - **Player Indicator Fallback**: Always draws current room indicator even if room not found in mapRooms array
+  - **Y-axis Correction**: Properly inverts Y-axis so north appears at top of map
+- **Map Preview System**:
+  - When near a map connection, shows preview rooms from connected map
+  - Preview rooms appear within 5 units of connection point
+  - Preview rooms are transformed to appear in correct direction (north of connection shows rooms north, etc.)
+  - Preview rooms are visually distinct (dimmer green) to indicate they're from a different map
+  - Connection room itself is always included in preview
+- **Coordinates Display**:
+  - Updates automatically when room changes or map transitions
+  - Shows current map name and coordinates (x, y)
+  - Displays at bottom of compass widget
+  - Format: `MapName\n(x, y)`
+- Player stats display:
+  - Receives player stats from server on connection
+  - Displays all 5 attributes (Brute Strength, Life Force, Cunning, Intelligence, Wisdom)
+  - Displays all 5 abilities (Crafting, Lockpicking, Stealth, Dodge, Critical Hit)
+  - Shows Hit Points with current/max and visual bar
+  - Shows Mana with current/max and visual bar (only if maxMana > 0)
+  - Updates automatically when stats change
+- **God Mode UI**:
+  - Show/hide god mode buttons based on `godMode` flag from `playerStats` message
+  - Handle button clicks (Map button opens map editor)
+- **Map Editor Implementation**:
+  - **State Management**: Tracks current editor map, selected room, editor mode (edit/create/connect)
+  - **100x100 Grid Rendering**: Canvas-based rendering centered on map rooms
+  - **Room Selection**: Click room to select for editing
+  - **Room Creation**: Click empty space to create new room
+  - **Room Editing**: Side panel form to edit name, description, and type
+  - **New Map Creation**: Dialog form to create new map, opens blank editor
+  - **Map Size Calculation**: Auto-calculates map dimensions from room bounds
+  - **Map Connection**: Select source room, choose direction and target map/coordinates
+  - **Connection Validation**: Client-side and server-side validation of connections
+
+### 7. WebSocket Message Protocol
+- Client → Server:
+  - `{ type: 'selectPlayer', playerName: 'Fliz' }` - when player selects character
+  - `{ type: 'move', direction: 'N' }` - when player wants to move (N/S/E/W/NE/NW/SE/SW/U/D)
+  - **Map Editor Messages** (god mode only):
+    - `{ type: 'getMapEditorData', mapId: 1 }` - get all rooms for map editor
+    - `{ type: 'createMap', name: 'New Map', width: 100, height: 100, description: '...' }` - create new map
+    - `{ type: 'createRoom', mapId: 1, name: 'Room Name', description: '...', x: 0, y: 0, roomType: 'normal' }` - create new room
+    - `{ type: 'updateRoom', roomId: 1, name: 'Updated Name', description: '...', roomType: 'merchant' }` - update room properties
+    - `{ type: 'getAllMaps' }` - get list of all maps
+    - `{ type: 'connectMaps', sourceRoomId: 1, sourceDirection: 'N', targetMapId: 2, targetX: 0, targetY: 0 }` - connect two maps
+- Server → Client:
+  - `{ type: 'roomUpdate', room: { id, name, description, x, y, mapName }, players: ['Fliz'], exits: { north: true, south: true, east: false, west: false, northeast: false, ... } }` - room state updates
+  - `{ type: 'playerJoined', playerName: 'Hebron' }` - when someone joins current room
+  - `{ type: 'playerLeft', playerName: 'Fliz' }` - when someone leaves current room
+  - `{ type: 'moved', room: { id, name, description, x, y, mapName }, players: [...], exits: {...} }` - when player successfully moves to new room
+  - `{ type: 'playerStats', stats: { bruteStrength, lifeForce, cunning, intelligence, wisdom, crafting, lockpicking, stealth, dodge, criticalHit, hitPoints, maxHitPoints, mana, maxMana, godMode: true/false } }` - player stats sent on connection (includes godMode flag)
+  - `{ type: 'mapData', rooms: [{ id, name, x, y, mapId, isPreview, originalX, originalY }, ...], currentRoom: { x, y }, mapId: 1, connectionInfo: { direction, currentMapX, currentMapY, connectedMapX, connectedMapY } }` - all rooms data sent on connection or map transition
+  - `{ type: 'mapUpdate', currentRoom: { x, y }, mapId: 1 }` - map position update when player moves within same map
+  - `{ type: 'error', message: 'Ouch! You walked into the wall to the east.' }` - error messages
+  - **Map Editor Messages** (god mode only):
+    - `{ type: 'mapEditorData', rooms: [{ id, name, description, x, y, roomType, mapId, ... }], mapId: 1, mapName: 'Newhaven' }` - all rooms for editor
+    - `{ type: 'mapCreated', mapId: 1, name: 'New Map' }` - new map created
+    - `{ type: 'roomCreated', room: { id, name, description, x, y, roomType, mapId } }` - new room created
+    - `{ type: 'roomUpdated', room: { id, name, description, x, y, roomType, mapId } }` - room updated
+    - `{ type: 'allMaps', maps: [{ id: 1, name: 'Newhaven' }, ...] }` - list of all maps
+    - `{ type: 'mapConnected', sourceRoom: {...}, targetRoom: {...} }` - maps connected successfully
+
+## Key Files
+
+1. **package.json** - Project dependencies and scripts
+2. **database.js** - SQLite initialization, multi-map system, room queries, map connections, god mode and room type support, map editor query functions
+3. **server.js** - Express server + WebSocket server + movement handling + map transitions + god mode handlers + map editor WebSocket handlers
+4. **public/index.html** - Frontend HTML with MajorMUD-style layout, compass coordinates, god mode buttons, map editor overlay
+5. **public/style.css** - Retro terminal styling with coordinates display, god mode button bar, map editor styling
+6. **public/client.js** - WebSocket client, UI logic, map rendering, preview system, coordinates display, god mode UI, map editor implementation
+7. **docs/claude.md** - This documentation file
+
+## Technical Decisions
+
+- Using `better-sqlite3` for synchronous SQLite operations (simpler, faster)
+- WebSocket server integrated with Express HTTP server
+- Real-time updates via WebSocket broadcasts (no polling)
+- Simple JSON message protocol for WebSocket communication
+- **Multi-Map System**: Separate maps with local coordinates (0,0 at center for each map)
+- **Map Connections**: Bidirectional connections between maps at specific rooms
+- **Coordinate-based map system**: Rooms have x,y coordinates within their map
+- **Map Transitions**: Seamless movement between maps without player awareness
+- **Preview System**: Shows rooms from connected maps when near connection points
+- Movement validation: server checks if adjacent room exists OR if map connection exists before allowing movement
+- Players track their current room in database for persistence (players rejoin where they left)
+- Direction mapping: 
+  - N=(0,+1), S=(0,-1), E=(+1,0), W=(-1,0)
+  - NE=(+1,+1), NW=(-1,+1), SE=(+1,-1), SW=(-1,-1)
+  - U/D prepared for future z-coordinate implementation
+- Only connected players shown in room (not all players from database)
+- MajorMUD-style terminal interface for authentic retro gaming experience
+- Text command system with multiple command variations for user convenience
+- Compass widget always shows all directions (unavailable ones lowlighted) for visual consistency
+- **Coordinate Display**: Always visible current position for navigation reference
+- **God Mode System**: Privilege-based administrative interface for map editing and future features
+- **Room Type System**: Classification system for rooms (normal, merchant, etc.) with visual distinction
+- **Map Editor**: Full-featured map creation and editing tool with 100x100 grid, room management, and map connections
+
+## UI/UX Features
+
+- **Layout**: 2/3 terminal, 1/3 right panel (4 quadrants)
+- **Terminal**: Retro green-on-black text interface
+- **Room Display**: Map name prefix on room names (e.g., "Newhaven, north street 11")
+- **Player Stats**: Comprehensive stat display in top-left quadrant
+  - Attributes section (5 stats)
+  - Abilities section (5 abilities)
+  - Hit Points bar with current/max display
+  - Mana bar with current/max display (caster only)
+- **Map**: 25x25 grid view in bottom-left quadrant
+  - Shows rooms as squares (10x10 pixels) with connection lines
+  - Current room highlighted (bright green with yellow border)
+  - Preview rooms from connected maps (dimmer green)
+  - Automatically centers on player
+  - Displays all rooms within viewport
+  - Proper Y-axis orientation (north at top)
+  - Always shows player indicator even if room data missing
+- **Compass**: Visual navigation widget with all directions visible
+  - Coordinates display at bottom showing map name and (x, y)
+  - Updates automatically on movement and map transitions
+- **Commands**: Text-based with multiple input formats
+- **Player List**: Inline display with automatic "No one else is here." management
+- **Error Messages**: Descriptive wall collision messages
+- **Real-time Updates**: Instant visibility of players entering/leaving rooms
+- **Map Preview**: Visual indication of connected areas before entering them
+- **God Mode Buttons**: Fixed button bar above command input (visible only to god mode players)
+  - Map button opens full-screen map editor
+  - Other buttons (Items, Spells, Craft, NPC) reserved for future
+- **Map Editor**: Full-screen overlay for map creation and editing
+  - 100x100 grid canvas with room visualization
+  - Room type color coding (normal=green, merchant=blue)
+  - Click-to-edit and click-to-create functionality
+  - Map connection system with validation
+  - Auto-calculated map dimensions based on room bounds
+
+## Player Character System
+
+### Stats (Base 10 for all players)
+- **Brute Strength**: Physical power and melee damage potential
+- **Life Force**: Vitality and health capacity
+- **Cunning**: Deception and tactical thinking
+- **Intelligence**: Mental acuity and problem-solving
+- **Wisdom**: Insight and magical understanding
+
+### Abilities (Base 0, algorithm-driven later)
+- **Crafting**: Ability to create items
+- **Lockpicking**: Ability to open locks and containers
+- **Stealth**: Ability to move undetected
+- **Dodge**: Ability to avoid attacks
+- **Critical Hit**: Chance for enhanced damage
+
+### Resources
+- **Hit Points**: Current health (50/50 for both players)
+- **Mana**: Magical energy (0 for Fliz, 10/10 for Hebron)
+
+### Character Differences
+- **Fliz**: Non-caster, 0 Mana, **God Mode enabled** (administrative privileges)
+- **Hebron**: Caster, 10/10 Mana, God Mode disabled
+
+## Map System
+
+### Multi-Map Architecture
+- **Separate Maps**: Each map is a distinct zone with its own coordinate system
+- **Local Coordinates**: Each map has (0,0) at its center
+- **Map Connections**: Specific rooms can connect to rooms in other maps
+- **Bidirectional**: Connections work in both directions
+- **Seamless Transitions**: Players don't realize they're switching maps
+
+### Newhaven Map (20x20)
+- **Coordinates**: -10 to +9 in both X and Y
+- **Structure**: Perimeter roads + Center Street
+  - Perimeter: Westwall, Eastwall, North, South Streets
+  - Center Street: Vertical road at x=0
+  - Town Square: Center intersection at (0, 0)
+- **Connection Point**: "north street 11" at (0, 9) connects north to Northern Territory
+
+### Northern Territory Map (10x10)
+- **Coordinates**: -5 to +4 in both X and Y
+- **Structure**: Perimeter roads + Center Street
+  - Perimeter: Westwall, Eastwall, North, South Streets
+  - Center Street: Vertical road at x=0
+  - Connection Point: "south street 6" at (0, -5) connects south to Newhaven
+- **Half the size** of Newhaven for variety
+
+### Map Widget Features
+- **25x25 Viewport**: Shows 25x25 grid area centered on player
+- **Dynamic Centering**: Automatically re-centers when player moves
+- **Room Visualization**: 
+  - Rooms as squares (10x10 pixels)
+  - Current room: Bright green fill with yellow border
+  - Other rooms: Gray fill with dark border
+  - Preview rooms: Dimmer green fill and border
+- **Connection Lines**: Gray lines connecting adjacent rooms in all 8 directions
+- **Coordinate System**: Y-axis properly inverted (north = up on screen)
+- **Preview System**: Shows rooms from connected maps when near connection points
+- **Player Indicator**: Always visible, even if room data is missing
+
+### Map Preview System
+- **Trigger**: When player is in a room with a map connection
+- **Range**: Shows rooms within 5 units of connection point
+- **Visual Distinction**: Preview rooms use dimmer green colors
+- **Coordinate Transformation**: Preview rooms positioned correctly relative to connection
+- **Connection Room**: Always included in preview
+- **Purpose**: Allows players to see what's ahead before entering
+
+### Database Management
+- **Automatic Cleanup**: Removes invalid rooms (not on perimeter or center street)
+- **Player Safety**: Moves players to Town Square before deleting their current room
+- **Migration**: Handles existing databases gracefully
+- **Connection Room Creation**: Automatically ensures connection rooms exist with proper connection info
+- **Room Type System**: Rooms can be classified by type (normal, merchant, etc.) with visual distinction
+- **Map Size Calculation**: Map dimensions automatically calculated from room coordinate bounds
+- **God Mode Support**: Database tracks god mode status per player for administrative features
+
+## Recent Updates
+
+### God Mode and Map Editor System (Latest)
+
+#### God Mode Implementation
+- Added `god_mode` column to players table (INTEGER, default 0)
+- Fliz has god mode enabled (value 1), Hebron does not (value 0)
+- God mode buttons visible only to players with god mode enabled
+- Button bar fixed above command input with retro terminal styling
+
+#### Map Editor Features
+- Full-screen map editor overlay with 100x100 grid canvas
+- Room type system: Normal (green) and Merchant (blue) with visual distinction
+- Click-to-edit existing rooms (name, description, type)
+- Click-to-create new rooms in empty spaces
+- Create new maps with auto-calculated dimensions
+- Map connection system with bidirectional validation
+- Side panel for room editing forms
+- Map selector dropdown for switching between maps
+
+#### Database Enhancements
+- Added `room_type` column to rooms table (TEXT, default 'normal')
+- Added query functions: `getAllMaps`, `createMap`, `createRoom`, `updateRoom`, `getMapBounds`, `updateMapSize`
+- Map dimensions automatically calculated from room coordinate bounds
+
+#### Server Enhancements
+- Send `godMode` flag in `playerStats` message
+- Map editor WebSocket handlers with god mode validation
+- Map connection validation (checks exits, conflicts, bidirectional setup)
+
+#### UI Enhancements
+- God mode button bar styling
+- Map editor overlay and dialog styling
+- Room type color coding in map editor
+- Empty space visualization (outlined squares near existing rooms)
+
+### Map with Connecting Areas Patch
+
+### Multi-Map System
+- Implemented separate maps (Newhaven and Northern Territory)
+- Added map connection system with bidirectional travel
+- Seamless map transitions without player awareness
+- Map name display in room names and coordinates
+
+### Map Preview Feature
+- Preview rooms from connected maps visible when near connection points
+- Visual distinction for preview rooms (dimmer green)
+- Coordinate transformation for correct positioning
+- Always includes connection room in preview
+
+### Map Rendering Improvements
+- Fixed player indicator visibility (always shows current room)
+- Corrected Y-axis orientation (north at top)
+- Increased room size from 8px to 10px
+- Added fallback rendering for missing room data
+- Improved viewport calculations
+
+### UI Enhancements
+- Added coordinates display to compass widget
+- Map name prefix on room names
+- Improved layout to prevent overflow
+- Better widget sizing and spacing
+
+### Bug Fixes
+- Fixed missing connection room creation
+- Fixed map data not including mapId for all rooms
+- Fixed player indicator not showing in new maps
+- Fixed map orientation issues
+- Fixed preview room coordinate transformation
+
+## God Mode System
+
+### Overview
+God mode is a special privilege system that grants players administrative capabilities. Currently, only Fliz has god mode enabled.
+
+### Features
+- **God Mode Flag**: Stored in `players.god_mode` column (INTEGER, 0 or 1)
+- **God Mode Buttons**: Visible only to players with god mode enabled
+  - Map: Opens map editor (functional)
+  - Items: Reserved for future (disabled)
+  - Spells: Reserved for future (disabled)
+  - Craft: Reserved for future (disabled)
+  - NPC: Reserved for future (disabled)
+
+### Map Editor
+- **100x100 Grid**: Maximum map size representation
+- **Room Types**: 
+  - Normal (green #00ff00 fill, yellow #ffff00 border)
+  - Merchant (blue #0088ff fill, darker blue #0066cc border)
+- **Room Editing**: Click existing room to edit name, description, and type
+- **Room Creation**: Click empty space to create new room
+- **Map Creation**: Create new maps with auto-calculated size based on room bounds
+- **Map Connections**: Connect rooms between maps with validation
+  - Source room must have available exit in requested direction
+  - Target room must exist and have available exit in opposite direction
+  - Bidirectional connection automatically established
+
+### Map Editor UI
+- Full-screen overlay with 100x100 grid canvas
+- Side panel for room editing forms
+- Map selector dropdown
+- Create New Map button
+- Connect Maps button (enters connection mode)
+- Empty spaces shown as outlined squares (only near existing rooms)
+
+### Database Schema
+- `players.god_mode` (INTEGER, default 0)
+- `rooms.room_type` (TEXT, default 'normal')
+
+### WebSocket Messages
+- Client → Server:
+  - `getMapEditorData` - Get all rooms for map editor
+  - `createMap` - Create new map
+  - `createRoom` - Create new room
+  - `updateRoom` - Update room properties
+  - `getAllMaps` - Get list of all maps
+  - `connectMaps` - Connect two maps
+- Server → Client:
+  - `mapEditorData` - All rooms for editor
+  - `mapCreated` - New map created
+  - `roomCreated` - New room created
+  - `roomUpdated` - Room updated
+  - `allMaps` - List of all maps
+  - `mapConnected` - Maps connected successfully
+
+## Future Enhancements (Prepared)
+
+- Vertical movement (Up/Down) - requires z-coordinate in database
+- Additional UI panels in remaining quadrants
+- Expanded world map with more areas and connections
+- Additional player commands and interactions
+- Ability calculation algorithms based on stats and game elements
+- Stat progression and leveling system
+- Combat system utilizing stats and abilities
+- Map zoom and pan controls
+- Room labels on map
+- Multiple map connections from single room
+- Map-specific features and mechanics
+- Fast travel system using map coordinates
+- Additional room types (beyond normal and merchant)
+- NPC placement in rooms
+- Item placement in rooms
+- Room deletion functionality
+

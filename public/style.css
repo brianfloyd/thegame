@@ -192,6 +192,45 @@ body {
     color: #006600;
 }
 
+/* God Mode Button Bar */
+.god-mode-bar {
+    display: flex;
+    gap: 10px;
+    padding: 10px;
+    border-bottom: 1px solid #00ff00;
+    background: #0a0a0a;
+    justify-content: center;
+}
+
+.god-mode-bar.hidden {
+    display: none;
+}
+
+.god-mode-btn {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+}
+
+.god-mode-btn:hover:not(:disabled) {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.god-mode-btn:disabled {
+    border-color: #333;
+    color: #666;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
 /* Right Panel Container (Right 1/3) */
 .right-panel {
     width: 33.333%;
@@ -450,6 +489,280 @@ body {
     width: 100%;
     height: 100%;
     display: block;
+}
+
+/* Map Editor Overlay */
+.map-editor-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.map-editor-overlay.hidden {
+    display: none;
+}
+
+.map-editor-container {
+    width: 95%;
+    height: 95%;
+    background: #0a0a0a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+}
+
+.map-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 2px solid #00ff00;
+    margin-bottom: 10px;
+}
+
+.map-editor-header h2 {
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase;
+    margin: 0;
+}
+
+.close-editor-btn {
+    background: #0a0a0a;
+    border: 2px solid #ff0000;
+    color: #ff0000;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.close-editor-btn:hover {
+    background: #3a0a0a;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+}
+
+.map-editor-toolbar {
+    display: flex;
+    gap: 10px;
+    padding: 10px;
+    border-bottom: 1px solid #333;
+    margin-bottom: 10px;
+}
+
+.map-selector, .editor-btn {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    font-size: 12px;
+}
+
+.map-selector {
+    flex: 1;
+    max-width: 300px;
+}
+
+.editor-btn {
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.editor-btn:hover {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.map-editor-content {
+    flex: 1;
+    display: flex;
+    gap: 10px;
+    overflow: hidden;
+}
+
+.map-editor-grid-container {
+    flex: 1;
+    background: #000;
+    border: 2px solid #00ff00;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.map-editor-canvas {
+    display: block;
+    cursor: crosshair;
+    width: 100%;
+    height: 100%;
+}
+
+.map-editor-side-panel {
+    width: 300px;
+    background: #1a1a1a;
+    border: 2px solid #00ff00;
+    border-radius: 4px;
+    padding: 15px;
+    overflow-y: hidden;
+    overflow-x: hidden;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+}
+
+.map-editor-side-panel h3 {
+    color: #ffff00;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    font-size: 0.9em;
+}
+
+#sidePanelContent {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.map-editor-side-panel label {
+    display: block;
+    color: #00ffff;
+    margin-top: 8px;
+    margin-bottom: 5px;
+    font-size: 11px;
+}
+
+.map-editor-side-panel input,
+.map-editor-side-panel textarea,
+.map-editor-side-panel select {
+    width: 100%;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 5px;
+    font-size: 12px;
+}
+
+.map-editor-side-panel textarea {
+    min-height: 60px;
+    max-height: 80px;
+    resize: vertical;
+}
+
+.map-editor-side-panel button {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    margin-top: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    width: 100%;
+}
+
+.map-editor-side-panel button:hover {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+/* Dialog Overlay */
+.dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dialog-overlay.hidden {
+    display: none;
+}
+
+.dialog {
+    background: #1a1a1a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    padding: 20px;
+    min-width: 400px;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+}
+
+.dialog h3 {
+    color: #ffff00;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+}
+
+.dialog-content {
+    margin-bottom: 15px;
+}
+
+.dialog-content label {
+    display: block;
+    color: #00ffff;
+    margin-bottom: 5px;
+    font-size: 12px;
+}
+
+.dialog-input, .dialog-textarea {
+    width: 100%;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 8px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.dialog-textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.dialog-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.dialog-btn {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.dialog-btn:hover {
+    background: #1a3a1a;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
 }
 
 /* Responsive adjustments */

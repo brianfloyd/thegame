@@ -1,3 +1,4 @@
 ---
 alwaysApply: true
 ---
+Before creating any new code always refer back to requiements.md in you docs folder to make sure that what we are implmenting does not conflict with the new implemntation

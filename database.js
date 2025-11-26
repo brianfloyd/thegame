@@ -88,6 +88,7 @@ addColumnIfNotExists('players', 'hit_points', 50);
 addColumnIfNotExists('players', 'max_hit_points', 50);
 addColumnIfNotExists('players', 'mana', 0);
 addColumnIfNotExists('players', 'max_mana', 0);
+addColumnIfNotExists('players', 'god_mode', 0);
 
 // Migrate existing rooms table to include map_id and connection fields
 addColumnIfNotExists('rooms', 'map_id', 1);
@@ -95,6 +96,7 @@ addColumnIfNotExists('rooms', 'connected_map_id', null);
 addColumnIfNotExists('rooms', 'connected_room_x', null);
 addColumnIfNotExists('rooms', 'connected_room_y', null);
 addColumnIfNotExists('rooms', 'connection_direction', null, 'TEXT');
+addColumnIfNotExists('rooms', 'room_type', 'normal', 'TEXT');
 
 // Migration: Clean up unwanted rooms (district rooms, etc.)
 function cleanupRooms() {
@@ -449,9 +451,12 @@ const setPlayerStats = db.prepare(`
   WHERE name = ?
 `);
 
-// Fliz: 50/50 HP, 0 Mana (not a caster)
+// Fliz: 50/50 HP, 0 Mana (not a caster), god mode enabled
 insertPlayer.run('Fliz', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0, 'Fliz');
+// Set Fliz's god_mode to 1
+const setGodMode = db.prepare('UPDATE players SET god_mode = ? WHERE name = ?');
+setGodMode.run(1, 'Fliz');
 
 // Hebron: 50/50 HP, 10/10 Mana
 insertPlayer.run('Hebron', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
@@ -586,6 +591,47 @@ const updatePlayerRoom = db.prepare('UPDATE players SET current_room_id = ? WHER
 const getPlayerByName = db.prepare('SELECT * FROM players WHERE name = ?');
 const getAllRooms = db.prepare('SELECT * FROM rooms');
 
+// New query functions for map editor
+const getAllMapsStmt = db.prepare('SELECT * FROM maps ORDER BY id');
+const createMapStmt = db.prepare('INSERT INTO maps (name, width, height, description) VALUES (?, ?, ?, ?)');
+const createRoomStmt = db.prepare('INSERT INTO rooms (name, description, x, y, map_id, room_type) VALUES (?, ?, ?, ?, ?, ?)');
+const updateRoomStmt = db.prepare('UPDATE rooms SET name = ?, description = ?, room_type = ? WHERE id = ?');
+const updateMapSizeStmt = db.prepare('UPDATE maps SET width = ?, height = ? WHERE id = ?');
+const getMapBoundsStmt = db.prepare('SELECT MIN(x) as minX, MAX(x) as maxX, MIN(y) as minY, MAX(y) as maxY FROM rooms WHERE map_id = ?');
+
+function getAllMaps() {
+  return getAllMapsStmt.all();
+}
+
+function createMap(name, width, height, description) {
+  const result = createMapStmt.run(name, width, height, description);
+  return result.lastInsertRowid;
+}
+
+function createRoom(name, description, x, y, mapId, roomType = 'normal') {
+  const result = createRoomStmt.run(name, description, x, y, mapId, roomType);
+  return result.lastInsertRowid;
+}
+
+function updateRoom(roomId, name, description, roomType) {
+  updateRoomStmt.run(name, description, roomType, roomId);
+}
+
+function getMapBounds(mapId) {
+  return getMapBoundsStmt.get(mapId);
+}
+
+function updateMapSize(mapId) {
+  const bounds = getMapBounds(mapId);
+  if (bounds && bounds.minX !== null) {
+    const width = bounds.maxX - bounds.minX + 1;
+    const height = bounds.maxY - bounds.minY + 1;
+    updateMapSizeStmt.run(width, height, mapId);
+    return { width, height };
+  }
+  return null;
+}
+
 module.exports = {
   db,
   getRoomById: (id) => getRoomById.get(id),
@@ -596,6 +642,12 @@ module.exports = {
   getPlayerByName: (name) => getPlayerByName.get(name),
   getAllRooms: () => getAllRooms.all(),
   getMapByName: (name) => getMapByNameStmt.get(name),
-  getMapById: (id) => getMapByIdStmt.get(id)
+  getMapById: (id) => getMapByIdStmt.get(id),
+  getAllMaps,
+  createMap,
+  createRoom,
+  updateRoom,
+  getMapBounds,
+  updateMapSize
 };
 

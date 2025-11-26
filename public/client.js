@@ -46,6 +46,9 @@ function handleMessage(data) {
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
+            if (data.stats.godMode !== undefined) {
+                updateGodModeUI(data.stats.godMode);
+            }
             break;
         case 'mapData':
             initializeMap(data.rooms, data.currentRoom, data.mapId, data.connectionInfo);
@@ -55,6 +58,68 @@ function handleMessage(data) {
             break;
         case 'error':
             addToTerminal(data.message, 'error');
+            break;
+        case 'mapEditorData':
+            editorMapRooms = data.rooms;
+            renderMapEditor();
+            break;
+        case 'mapCreated':
+            // Add to map selector and load it
+            const mapSelector = document.getElementById('mapSelector');
+            if (mapSelector) {
+                const option = document.createElement('option');
+                option.value = data.mapId;
+                option.textContent = data.name;
+                mapSelector.appendChild(option);
+                mapSelector.value = data.mapId;
+            }
+            loadMapForEditor(data.mapId);
+            break;
+        case 'roomCreated':
+            // Add room to editor and re-render
+            editorMapRooms.push(data.room);
+            // Clear selection after room is created (it will now show as green)
+            selectedRoom = null;
+            updateSidePanel();
+            renderMapEditor();
+            break;
+        case 'roomUpdated':
+            // Update room in editor
+            const index = editorMapRooms.findIndex(r => r.id === data.room.id);
+            if (index !== -1) {
+                editorMapRooms[index] = data.room;
+            }
+            renderMapEditor();
+            break;
+        case 'allMaps':
+            // Populate map selector
+            const selector = document.getElementById('mapSelector');
+            const targetMapSelect = document.getElementById('targetMapSelect');
+            if (selector) {
+                selector.innerHTML = '<option value="">Select a map...</option>';
+                data.maps.forEach(map => {
+                    const option = document.createElement('option');
+                    option.value = map.id;
+                    option.textContent = map.name;
+                    selector.appendChild(option);
+                });
+            }
+            if (targetMapSelect) {
+                targetMapSelect.innerHTML = '<option value="">Select target map...</option>';
+                data.maps.forEach(map => {
+                    const option = document.createElement('option');
+                    option.value = map.id;
+                    option.textContent = map.name;
+                    targetMapSelect.appendChild(option);
+                });
+            }
+            break;
+        case 'mapConnected':
+            // Reload map data
+            if (currentEditorMapId) {
+                loadMapForEditor(currentEditorMapId);
+            }
+            alert('Maps connected successfully!');
             break;
     }
 }
@@ -701,7 +766,642 @@ function renderMap() {
     }
 }
 
-// Handle window resize
+
+// Initialize WebSocket connection when page loads
+connectWebSocket();
+
+// God Mode Variables
+let godMode = false;
+let godModeBar = null;
+
+// Map Editor Variables
+let mapEditor = null;
+let mapEditorCanvas = null;
+let mapEditorCtx = null;
+let currentEditorMapId = null;
+let editorMapRooms = [];
+let selectedRoom = null;
+let editorMode = 'edit'; // 'edit' | 'create' | 'connect'
+let connectionSourceRoom = null;
+const EDITOR_GRID_SIZE = 100;
+const EDITOR_CELL_SIZE = 8;
+
+// Update god mode UI
+function updateGodModeUI(hasGodMode) {
+    godMode = hasGodMode;
+    godModeBar = document.getElementById('godModeBar');
+    if (godModeBar) {
+        if (hasGodMode) {
+            godModeBar.classList.remove('hidden');
+        } else {
+            godModeBar.classList.add('hidden');
+        }
+    }
+}
+
+// Handle god mode button clicks
+document.addEventListener('DOMContentLoaded', () => {
+    const godModeButtons = document.querySelectorAll('.god-mode-btn');
+    godModeButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.getAttribute('data-action');
+            if (action === 'map') {
+                openMapEditor();
+            }
+            // Other actions (items, spells, craft, npc) will be implemented later
+        });
+    });
+
+    // Map editor close button
+    const closeEditorBtn = document.getElementById('closeMapEditor');
+    if (closeEditorBtn) {
+        closeEditorBtn.addEventListener('click', () => {
+            closeMapEditor();
+        });
+    }
+
+    // Create new map button
+    const createNewMapBtn = document.getElementById('createNewMapBtn');
+    if (createNewMapBtn) {
+        createNewMapBtn.addEventListener('click', () => {
+            showCreateMapDialog();
+        });
+    }
+
+    // Connect maps button
+    const connectMapsBtn = document.getElementById('connectMapsBtn');
+    if (connectMapsBtn) {
+        connectMapsBtn.addEventListener('click', () => {
+            toggleConnectMode();
+        });
+    }
+
+    // Map selector
+    const mapSelector = document.getElementById('mapSelector');
+    if (mapSelector) {
+        mapSelector.addEventListener('change', (e) => {
+            const mapId = parseInt(e.target.value);
+            if (mapId) {
+                loadMapForEditor(mapId);
+            }
+        });
+    }
+
+    // Create map dialog
+    const createMapConfirm = document.getElementById('createMapConfirm');
+    const createMapCancel = document.getElementById('createMapCancel');
+    if (createMapConfirm) {
+        createMapConfirm.addEventListener('click', () => {
+            createNewMap();
+        });
+    }
+    if (createMapCancel) {
+        createMapCancel.addEventListener('click', () => {
+            hideCreateMapDialog();
+        });
+    }
+
+    // Initialize map editor canvas
+    mapEditor = document.getElementById('mapEditor');
+    mapEditorCanvas = document.getElementById('mapEditorCanvas');
+    if (mapEditorCanvas) {
+        mapEditorCtx = mapEditorCanvas.getContext('2d');
+        
+        // Set canvas size - use requestAnimationFrame to ensure container is sized
+        requestAnimationFrame(() => {
+            const container = mapEditorCanvas.parentElement;
+            if (container) {
+                mapEditorCanvas.width = container.clientWidth;
+                mapEditorCanvas.height = container.clientHeight;
+            }
+        });
+
+        // Handle canvas clicks
+        mapEditorCanvas.addEventListener('click', (e) => {
+            handleMapEditorClick(e);
+        });
+    }
+});
+
+// Open map editor
+function openMapEditor() {
+    if (!mapEditor) return;
+    
+    mapEditor.classList.remove('hidden');
+    
+    // Set canvas size - use requestAnimationFrame to ensure container is sized
+    requestAnimationFrame(() => {
+        if (mapEditorCanvas) {
+            const container = mapEditorCanvas.parentElement;
+            if (container) {
+                mapEditorCanvas.width = container.clientWidth;
+                mapEditorCanvas.height = container.clientHeight;
+                renderMapEditor();
+            }
+        }
+    });
+    
+    // Load all maps
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getAllMaps' }));
+    }
+    
+    // Load current player's map if available
+    if (currentMapId) {
+        loadMapForEditor(currentMapId);
+    }
+}
+
+// Close map editor
+function closeMapEditor() {
+    if (mapEditor) {
+        mapEditor.classList.add('hidden');
+    }
+    selectedRoom = null;
+    editorMode = 'edit';
+    connectionSourceRoom = null;
+}
+
+// Load map for editor
+function loadMapForEditor(mapId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    currentEditorMapId = mapId;
+    ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
+}
+
+// Show create map dialog
+function showCreateMapDialog() {
+    const dialog = document.getElementById('createMapDialog');
+    if (dialog) {
+        dialog.classList.remove('hidden');
+        document.getElementById('newMapName').value = '';
+        document.getElementById('newMapDescription').value = '';
+    }
+}
+
+// Hide create map dialog
+function hideCreateMapDialog() {
+    const dialog = document.getElementById('createMapDialog');
+    if (dialog) {
+        dialog.classList.add('hidden');
+    }
+}
+
+// Create new map
+function createNewMap() {
+    const name = document.getElementById('newMapName').value.trim();
+    const description = document.getElementById('newMapDescription').value.trim();
+    
+    if (!name) {
+        alert('Map name is required');
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'createMap',
+        name: name,
+        width: 100,
+        height: 100,
+        description: description
+    }));
+    
+    hideCreateMapDialog();
+}
+
+// Toggle connect mode
+function toggleConnectMode() {
+    if (editorMode === 'connect') {
+        editorMode = 'edit';
+        connectionSourceRoom = null;
+        updateSidePanel();
+    } else {
+        editorMode = 'connect';
+        connectionSourceRoom = null;
+        updateSidePanel();
+    }
+}
+
+// Handle map editor click
+function handleMapEditorClick(e) {
+    if (!mapEditorCanvas || !mapEditorCtx || editorMapRooms.length === 0) return;
+    
+    const rect = mapEditorCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Calculate bounds (same as in renderMapEditor)
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    editorMapRooms.forEach(room => {
+        minX = Math.min(minX, room.x);
+        maxX = Math.max(maxX, room.x);
+        minY = Math.min(minY, room.y);
+        maxY = Math.max(maxY, room.y);
+    });
+    
+    const padding = 5;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+    
+    const mapWidth = maxX - minX + 1;
+    const mapHeight = maxY - minY + 1;
+    
+    // Calculate scale (same as renderMapEditor)
+    const canvasWidth = mapEditorCanvas.width;
+    const canvasHeight = mapEditorCanvas.height;
+    const scaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
+    const scaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
+    const scale = Math.min(scaleX, scaleY, 1);
+    
+    const scaledCellSize = EDITOR_CELL_SIZE * scale;
+    
+    // Calculate offset (same as renderMapEditor)
+    const scaledMapWidth = mapWidth * scaledCellSize;
+    const scaledMapHeight = mapHeight * scaledCellSize;
+    const offsetX = (canvasWidth - scaledMapWidth) / 2;
+    const offsetY = (canvasHeight - scaledMapHeight) / 2;
+    
+    // Convert click coordinates to map coordinates
+    const mapX = Math.floor((x - offsetX) / scaledCellSize) + minX;
+    const mapY = maxY - Math.floor((y - offsetY) / scaledCellSize); // Invert Y axis
+    
+    if (editorMode === 'connect') {
+        // In connect mode, select source room first
+        const clickedRoom = editorMapRooms.find(r => r.x === mapX && r.y === mapY);
+        if (clickedRoom) {
+            connectionSourceRoom = clickedRoom;
+            updateSidePanel();
+            renderMapEditor(); // Re-render to show highlight
+        }
+    } else {
+        // In edit/create mode
+        const clickedRoom = editorMapRooms.find(r => r.x === mapX && r.y === mapY);
+        if (clickedRoom) {
+            // Select existing room for editing
+            selectedRoom = clickedRoom;
+            updateSidePanel();
+            renderMapEditor(); // Re-render to show red highlight
+        } else {
+            // Clicked empty space - create new room
+            selectedRoom = { x: mapX, y: mapY, isNew: true };
+            updateSidePanel();
+            renderMapEditor(); // Re-render to show red highlight
+        }
+    }
+}
+
+// Render map editor
+function renderMapEditor() {
+    if (!mapEditorCanvas || !mapEditorCtx || editorMapRooms.length === 0) {
+        // Clear canvas if no rooms
+        if (mapEditorCanvas && mapEditorCtx) {
+            mapEditorCtx.fillStyle = '#000';
+            mapEditorCtx.fillRect(0, 0, mapEditorCanvas.width, mapEditorCanvas.height);
+        }
+        return;
+    }
+    
+    // Calculate bounds of all rooms
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    editorMapRooms.forEach(room => {
+        minX = Math.min(minX, room.x);
+        maxX = Math.max(maxX, room.x);
+        minY = Math.min(minY, room.y);
+        maxY = Math.max(maxY, room.y);
+    });
+    
+    // Add padding around rooms
+    const padding = 5;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+    
+    // Calculate map dimensions
+    const mapWidth = maxX - minX + 1;
+    const mapHeight = maxY - minY + 1;
+    
+    // Calculate scale to fit in canvas
+    const canvasWidth = mapEditorCanvas.width;
+    const canvasHeight = mapEditorCanvas.height;
+    const scaleX = canvasWidth / (mapWidth * EDITOR_CELL_SIZE);
+    const scaleY = canvasHeight / (mapHeight * EDITOR_CELL_SIZE);
+    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+    
+    const scaledCellSize = EDITOR_CELL_SIZE * scale;
+    
+    // Calculate offset to center the map
+    const scaledMapWidth = mapWidth * scaledCellSize;
+    const scaledMapHeight = mapHeight * scaledCellSize;
+    const offsetX = (canvasWidth - scaledMapWidth) / 2;
+    const offsetY = (canvasHeight - scaledMapHeight) / 2;
+    
+    // Clear canvas
+    mapEditorCtx.fillStyle = '#000';
+    mapEditorCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Draw grid (only show cells near existing rooms)
+    const roomCoords = new Set();
+    editorMapRooms.forEach(room => {
+        roomCoords.add(`${room.x},${room.y}`);
+    });
+    
+    // Draw empty cells near rooms (within 2 squares)
+    editorMapRooms.forEach(room => {
+        for (let dx = -2; dx <= 2; dx++) {
+            for (let dy = -2; dy <= 2; dy++) {
+                const checkX = room.x + dx;
+                const checkY = room.y + dy;
+                const key = `${checkX},${checkY}`;
+                if (!roomCoords.has(key) && checkX >= minX && checkX <= maxX && checkY >= minY && checkY <= maxY) {
+                    const screenX = offsetX + (checkX - minX) * scaledCellSize;
+                    const screenY = offsetY + (maxY - checkY) * scaledCellSize; // Invert Y
+                    mapEditorCtx.strokeStyle = '#333';
+                    mapEditorCtx.lineWidth = 1;
+                    mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+                }
+            }
+        }
+    });
+    
+    // Draw rooms
+    editorMapRooms.forEach(room => {
+        const screenX = offsetX + (room.x - minX) * scaledCellSize;
+        const screenY = offsetY + (maxY - room.y) * scaledCellSize; // Invert Y
+        
+        // Determine color based on room type
+        let fillColor = '#00ff00'; // Normal (green)
+        let borderColor = '#ffff00'; // Yellow border
+        
+        if (room.roomType === 'merchant') {
+            fillColor = '#0088ff'; // Blue
+            borderColor = '#0066cc'; // Darker blue border
+        }
+        
+        // Highlight selected room (existing room being edited)
+        if (selectedRoom && selectedRoom.id === room.id) {
+            borderColor = '#ff0000'; // Red for selected
+            mapEditorCtx.lineWidth = 3;
+        } else {
+            mapEditorCtx.lineWidth = 1;
+        }
+        
+        // Highlight connection source room
+        if (connectionSourceRoom && connectionSourceRoom.id === room.id) {
+            borderColor = '#ff8800'; // Orange for connection source
+            mapEditorCtx.lineWidth = 3;
+        }
+        
+        const cellPadding = Math.max(1, scaledCellSize * 0.1);
+        
+        mapEditorCtx.fillStyle = fillColor;
+        mapEditorCtx.fillRect(screenX + cellPadding, screenY + cellPadding, scaledCellSize - cellPadding * 2, scaledCellSize - cellPadding * 2);
+        
+        mapEditorCtx.strokeStyle = borderColor;
+        mapEditorCtx.strokeRect(screenX + cellPadding, screenY + cellPadding, scaledCellSize - cellPadding * 2, scaledCellSize - cellPadding * 2);
+    });
+    
+    // Draw selected empty space (for new room creation) with red highlight
+    if (selectedRoom && selectedRoom.isNew) {
+        const screenX = offsetX + (selectedRoom.x - minX) * scaledCellSize;
+        const screenY = offsetY + (maxY - selectedRoom.y) * scaledCellSize; // Invert Y
+        
+        const cellPadding = Math.max(1, scaledCellSize * 0.1);
+        
+        // Draw red outline for selected empty space
+        mapEditorCtx.strokeStyle = '#ff0000'; // Red
+        mapEditorCtx.lineWidth = 3;
+        mapEditorCtx.strokeRect(screenX, screenY, scaledCellSize, scaledCellSize);
+        
+        // Also draw a light red fill to make it more visible
+        mapEditorCtx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+        mapEditorCtx.fillRect(screenX, screenY, scaledCellSize, scaledCellSize);
+    }
+}
+
+// Update side panel
+function updateSidePanel() {
+    const sidePanel = document.getElementById('sidePanelContent');
+    if (!sidePanel) return;
+    
+    if (editorMode === 'connect' && connectionSourceRoom) {
+        // Show connection form
+        sidePanel.innerHTML = `
+            <h3>Connect Maps</h3>
+            <p><strong>Source Room:</strong> ${connectionSourceRoom.name} (${connectionSourceRoom.x}, ${connectionSourceRoom.y})</p>
+            <label>Direction:</label>
+            <select id="connectionDirection">
+                <option value="N">North</option>
+                <option value="S">South</option>
+                <option value="E">East</option>
+                <option value="W">West</option>
+                <option value="NE">Northeast</option>
+                <option value="NW">Northwest</option>
+                <option value="SE">Southeast</option>
+                <option value="SW">Southwest</option>
+            </select>
+            <label>Target Map:</label>
+            <select id="targetMapSelect"></select>
+            <label>Target Room X:</label>
+            <input type="number" id="targetRoomX" value="0">
+            <label>Target Room Y:</label>
+            <input type="number" id="targetRoomY" value="0">
+            <button id="connectMapsConfirm">Connect</button>
+            <button id="connectMapsCancel">Cancel</button>
+        `;
+        
+        // Load maps for target map selector
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getAllMaps' }));
+        }
+        
+        // Set up button handlers
+        document.getElementById('connectMapsConfirm').addEventListener('click', () => {
+            connectMaps();
+        });
+        document.getElementById('connectMapsCancel').addEventListener('click', () => {
+            connectionSourceRoom = null;
+            updateSidePanel();
+        });
+    } else if (selectedRoom && selectedRoom.isNew) {
+        // Show create room form
+        sidePanel.innerHTML = `
+            <h3 style="font-size: 0.9em; margin-bottom: 8px;">Create New Room</h3>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <label style="margin: 0; min-width: 80px;">Room Name:</label>
+                <input type="text" id="newRoomName" placeholder="Enter room name" style="flex: 1;">
+            </div>
+            <label style="margin-top: 8px;">Description:</label>
+            <textarea id="newRoomDescription" placeholder="Enter room description" style="min-height: 60px; margin-bottom: 8px;"></textarea>
+            <label style="margin-top: 8px;">Room Type:</label>
+            <select id="newRoomType" style="margin-bottom: 8px;">
+                <option value="normal">Normal</option>
+                <option value="merchant">Merchant</option>
+            </select>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <label style="margin: 0; min-width: 20px;">X:</label>
+                <input type="number" id="newRoomX" value="${selectedRoom.x}" style="flex: 1;">
+                <label style="margin: 0; min-width: 20px; margin-left: 8px;">Y:</label>
+                <input type="number" id="newRoomY" value="${selectedRoom.y}" style="flex: 1;">
+            </div>
+            <button id="createRoomConfirm">Create Room</button>
+            <button id="createRoomCancel">Cancel</button>
+        `;
+        
+        document.getElementById('createRoomConfirm').addEventListener('click', () => {
+            createRoom();
+        });
+        document.getElementById('createRoomCancel').addEventListener('click', () => {
+            selectedRoom = null;
+            updateSidePanel();
+            renderMapEditor(); // Re-render to remove highlight
+        });
+    } else if (selectedRoom) {
+        // Show edit room form
+        sidePanel.innerHTML = `
+            <h3 style="font-size: 0.9em; margin-bottom: 8px;">Edit Room</h3>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <span style="min-width: 60px;">X: ${selectedRoom.x}</span>
+                <span>Y: ${selectedRoom.y}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <label style="margin: 0; min-width: 80px;">Room Name:</label>
+                <input type="text" id="editRoomName" value="${selectedRoom.name}" style="flex: 1;">
+            </div>
+            <label style="margin-top: 8px;">Description:</label>
+            <textarea id="editRoomDescription" style="min-height: 60px; margin-bottom: 8px;">${selectedRoom.description || ''}</textarea>
+            <label style="margin-top: 8px;">Room Type:</label>
+            <select id="editRoomType" style="margin-bottom: 8px;">
+                <option value="normal" ${selectedRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
+                <option value="merchant" ${selectedRoom.roomType === 'merchant' ? 'selected' : ''}>Merchant</option>
+            </select>
+            <button id="updateRoomConfirm">Update Room</button>
+            <button id="updateRoomCancel">Cancel</button>
+        `;
+        
+        document.getElementById('updateRoomConfirm').addEventListener('click', () => {
+            updateRoom();
+        });
+        document.getElementById('updateRoomCancel').addEventListener('click', () => {
+            selectedRoom = null;
+            updateSidePanel();
+            renderMapEditor(); // Re-render to remove highlight
+        });
+    } else {
+        // Default message
+        sidePanel.innerHTML = `
+            <p>Select a room to edit or click empty space to create a new room.</p>
+            ${editorMode === 'connect' ? '<p><strong>Connect Mode:</strong> Click a room to select as source.</p>' : ''}
+        `;
+    }
+}
+
+// Create room
+function createRoom() {
+    const name = document.getElementById('newRoomName').value.trim();
+    const description = document.getElementById('newRoomDescription').value.trim();
+    const roomType = document.getElementById('newRoomType').value;
+    const x = parseInt(document.getElementById('newRoomX').value);
+    const y = parseInt(document.getElementById('newRoomY').value);
+    
+    if (!name) {
+        alert('Room name is required');
+        return;
+    }
+    
+    if (!currentEditorMapId) {
+        alert('No map selected');
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'createRoom',
+        mapId: currentEditorMapId,
+        name: name,
+        description: description,
+        x: x,
+        y: y,
+        roomType: roomType
+    }));
+    
+    selectedRoom = null;
+    updateSidePanel();
+}
+
+// Update room
+function updateRoom() {
+    const name = document.getElementById('editRoomName').value.trim();
+    const description = document.getElementById('editRoomDescription').value.trim();
+    const roomType = document.getElementById('editRoomType').value;
+    
+    if (!name) {
+        alert('Room name is required');
+        return;
+    }
+    
+    if (!selectedRoom || !selectedRoom.id) {
+        alert('No room selected');
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'updateRoom',
+        roomId: selectedRoom.id,
+        name: name,
+        description: description,
+        roomType: roomType
+    }));
+    
+    selectedRoom = null;
+    updateSidePanel();
+}
+
+// Connect maps
+function connectMaps() {
+    const direction = document.getElementById('connectionDirection').value;
+    const targetMapId = parseInt(document.getElementById('targetMapSelect').value);
+    const targetX = parseInt(document.getElementById('targetRoomX').value);
+    const targetY = parseInt(document.getElementById('targetRoomY').value);
+    
+    if (!connectionSourceRoom || !connectionSourceRoom.id) {
+        alert('No source room selected');
+        return;
+    }
+    
+    if (!targetMapId || isNaN(targetX) || isNaN(targetY)) {
+        alert('Please fill in all connection fields');
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    ws.send(JSON.stringify({
+        type: 'connectMaps',
+        sourceRoomId: connectionSourceRoom.id,
+        sourceDirection: direction,
+        targetMapId: targetMapId,
+        targetX: targetX,
+        targetY: targetY
+    }));
+    
+    connectionSourceRoom = null;
+    editorMode = 'edit';
+    updateSidePanel();
+}
+
+// Handle window resize for map editor
 window.addEventListener('resize', () => {
     if (mapCanvas && mapCtx) {
         const viewport = document.querySelector('.map-viewport');
@@ -711,7 +1411,15 @@ window.addEventListener('resize', () => {
             renderMap();
         }
     }
+    
+    if (mapEditorCanvas && mapEditorCtx) {
+        requestAnimationFrame(() => {
+            const container = mapEditorCanvas.parentElement;
+            if (container) {
+                mapEditorCanvas.width = container.clientWidth;
+                mapEditorCanvas.height = container.clientHeight;
+                renderMapEditor();
+            }
+        });
+    }
 });
-
-// Initialize WebSocket connection when page loads
-connectWebSocket();
