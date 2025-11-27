@@ -1,0 +1,2 @@
+ALTER TABLE items ADD COLUMN poofable INTEGER DEFAULT 0;
+
