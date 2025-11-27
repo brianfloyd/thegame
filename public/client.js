@@ -1,5 +1,11 @@
 let ws = null;
 let currentPlayerName = null;
+let currentRoomId = null; // Track current room to detect room changes
+
+// Widget system state
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map'];
+let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets
+let npcWidgetVisible = false; // NPC widget is special - auto-managed
 
 // Get protocol (ws or wss) based on current page protocol
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -38,7 +44,7 @@ function connectWebSocket() {
 function handleMessage(data) {
     switch (data.type) {
         case 'roomUpdate':
-            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
             break;
         case 'inventoryList':
             displayInventory(data.items);
@@ -50,7 +56,7 @@ function handleMessage(data) {
             removePlayerFromTerminal(data.playerName);
             break;
         case 'moved':
-            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
@@ -70,8 +76,7 @@ function handleMessage(data) {
             break;
         case 'message':
             if (data.message) {
-                const duration = data.duration || 1; // Default 1x, can be 3x for cooldown messages
-                addToTerminal(data.message, 'info', duration);
+                addToTerminal(data.message, 'info');
             }
             break;
         case 'mapEditorData':
@@ -555,133 +560,95 @@ function normalizeCommand(input) {
     return commandMap[key] || null;
 }
 
-// Update room view in terminal
-function updateRoomView(room, players, exits, npcs, roomItems) {
+// Update room view in terminal - called on room updates
+// Only shows full room info when entering a new room
+function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay = false) {
     const terminalContent = document.getElementById('terminalContent');
+    const isNewRoom = room.id !== currentRoomId;
     
-    // Clear terminal (persistent messages are in a separate container)
-    terminalContent.innerHTML = '';
-    
-    // Display room name with map name prefix
-    const roomNameDiv = document.createElement('div');
-    roomNameDiv.className = 'room-name';
-    const displayName = room.mapName ? `${room.mapName}, ${room.name}` : room.name;
-    roomNameDiv.textContent = displayName;
-    terminalContent.appendChild(roomNameDiv);
-    
-    // Display room description
-    const roomDescDiv = document.createElement('div');
-    roomDescDiv.className = 'room-description';
-    roomDescDiv.textContent = room.description;
-    terminalContent.appendChild(roomDescDiv);
-    
-    // Display players
-    const playersSection = document.createElement('div');
-    playersSection.className = 'players-section';
-    
-    const playersLine = document.createElement('div');
-    playersLine.className = 'players-line';
-    
-    const playersTitle = document.createElement('span');
-    playersTitle.className = 'players-section-title';
-    playersTitle.textContent = 'Also here:';
-    playersLine.appendChild(playersTitle);
-    
-    // Filter out current player
-    const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
-    
-    if (otherPlayers.length === 0) {
-        const noPlayers = document.createElement('span');
-        noPlayers.className = 'player-item';
-        noPlayers.textContent = ' No one else is here.';
-        playersLine.appendChild(noPlayers);
-    } else {
-        otherPlayers.forEach((playerName, index) => {
-            const playerSpan = document.createElement('span');
-            playerSpan.className = 'player-item';
-            playerSpan.setAttribute('data-player', playerName);
-            playerSpan.textContent = (index > 0 ? ', ' : ' ') + playerName;
-            playersLine.appendChild(playerSpan);
-        });
+    // Track current room
+    if (isNewRoom) {
+        currentRoomId = room.id;
     }
     
-    playersSection.appendChild(playersLine);
-    terminalContent.appendChild(playersSection);
+    // Only display full room info when entering a new room or forced (look command)
+    if (isNewRoom || forceFullDisplay) {
+        // Add separator for readability
+        if (terminalContent.children.length > 0) {
+            const separator = document.createElement('div');
+            separator.className = 'terminal-separator';
+            separator.textContent = '─'.repeat(40);
+            terminalContent.appendChild(separator);
+        }
+        
+        // Display room name with map name prefix
+        const roomNameDiv = document.createElement('div');
+        roomNameDiv.className = 'room-name';
+        const displayName = room.mapName ? `${room.mapName}, ${room.name}` : room.name;
+        roomNameDiv.textContent = displayName;
+        terminalContent.appendChild(roomNameDiv);
+        
+        // Display room description
+        const roomDescDiv = document.createElement('div');
+        roomDescDiv.className = 'room-description';
+        roomDescDiv.textContent = room.description;
+        terminalContent.appendChild(roomDescDiv);
+        
+        // Display players
+        const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
+        if (otherPlayers.length > 0) {
+            const playersDiv = document.createElement('div');
+            playersDiv.className = 'players-section';
+            playersDiv.innerHTML = `<span class="players-section-title">Also here:</span> ${otherPlayers.join(', ')}`;
+            terminalContent.appendChild(playersDiv);
+        }
+        
+        // Display NPCs
+        if (npcs && npcs.length > 0) {
+            const npcsDiv = document.createElement('div');
+            npcsDiv.className = 'npcs-section';
+            const npcNames = npcs.map(npc => {
+                const stateDesc = getNPCStateDescription(npc);
+                return npc.name + (stateDesc ? ` (${stateDesc})` : '');
+            });
+            npcsDiv.innerHTML = `<span class="npcs-section-title">You see here:</span> ${npcNames.join(', ')}`;
+            terminalContent.appendChild(npcsDiv);
+        }
+        
+        // Display exits (room items are shown in the dynamic status bar)
+        if (exits && exits.length > 0) {
+            const exitsDiv = document.createElement('div');
+            exitsDiv.className = 'exits-section';
+            exitsDiv.innerHTML = `<span class="exits-section-title">Exits:</span> ${exits.join(', ')}`;
+            terminalContent.appendChild(exitsDiv);
+        }
+        
+        // Scroll to bottom
+        terminalContent.scrollTop = terminalContent.scrollHeight;
+    }
     
-    // Display NPCs
+    // Always update NPC widget state (for harvest/cooldown progress)
+    let activeHarvestNPC = null;
     if (npcs && npcs.length > 0) {
-        const npcsSection = document.createElement('div');
-        npcsSection.className = 'npcs-section';
-        
-        const npcsTitle = document.createElement('div');
-        npcsTitle.className = 'npcs-section-title';
-        npcsTitle.textContent = 'You see here:';
-        npcsSection.appendChild(npcsTitle);
-        
-        npcs.forEach((npc, index) => {
-            const npcContainer = document.createElement('div');
-            npcContainer.className = 'npc-container';
-            
-            const npcNameSpan = document.createElement('span');
-            npcNameSpan.className = 'npc-item';
-            // Generate state description from NPC state
-            const stateDesc = getNPCStateDescription(npc);
-            npcNameSpan.textContent = npc.name + (stateDesc ? ` (${stateDesc})` : '');
-            npcNameSpan.style.color = npc.color || '#00ffff';
-            npcContainer.appendChild(npcNameSpan);
-            
-            // Add progress bar for rhythm NPCs with harvest/cooldown info
+        npcs.forEach(npc => {
             if (npc.harvestStatus && (npc.harvestStatus === 'active' || npc.harvestStatus === 'cooldown')) {
-                const progressBarContainer = document.createElement('div');
-                progressBarContainer.className = 'npc-progress-container';
-                
-                const progressBar = document.createElement('div');
-                progressBar.className = 'npc-progress-bar';
-                progressBar.className += ` npc-progress-${npc.harvestStatus}`;
-                
-                // Progress: 0.0 to 1.0
-                // For active harvest: 1.0 = full bar (time remaining), 0.0 = empty (time expired)
-                // For cooldown: 0.0 = start (just started), 1.0 = done (ready)
-                const progressPercent = Math.max(0, Math.min(100, (npc.harvestProgress || 0) * 100));
-                progressBar.style.width = `${progressPercent}%`;
-                
-                progressBarContainer.appendChild(progressBar);
-                npcContainer.appendChild(progressBarContainer);
+                activeHarvestNPC = npc;
             }
-            
-            npcsSection.appendChild(npcContainer);
         });
-        
-        terminalContent.appendChild(npcsSection);
     }
     
-    // Display room items (items on the ground)
-    if (roomItems && roomItems.length > 0) {
-        const itemsSection = document.createElement('div');
-        itemsSection.className = 'items-section';
-        
-        const itemsLine = document.createElement('div');
-        itemsLine.className = 'items-line';
-        
-        const itemsTitle = document.createElement('span');
-        itemsTitle.className = 'items-section-title';
-        itemsTitle.textContent = 'On the ground:';
-        itemsLine.appendChild(itemsTitle);
-        
-        roomItems.forEach((item, index) => {
-            const itemSpan = document.createElement('span');
-            itemSpan.className = 'item-item';
-            const qtyText = item.quantity > 1 ? ` (x${item.quantity})` : '';
-            itemSpan.textContent = (index > 0 ? ', ' : ' ') + item.item_name + qtyText;
-            itemsLine.appendChild(itemSpan);
+    if (activeHarvestNPC) {
+        showNPCWidget(activeHarvestNPC.name, activeHarvestNPC.harvestStatus, activeHarvestNPC.harvestProgress || 0, {
+            baseCycleTime: activeHarvestNPC.baseCycleTime,
+            harvestableTime: activeHarvestNPC.harvestableTime,
+            cooldownTime: activeHarvestNPC.cooldownTime
         });
-        
-        itemsSection.appendChild(itemsLine);
-        terminalContent.appendChild(itemsSection);
+    } else {
+        hideNPCWidget();
     }
     
-    // Scroll to bottom
-    terminalContent.scrollTop = terminalContent.scrollHeight;
+    // Always update room items display (dynamic, doesn't scroll)
+    updateRoomItemsDisplay(roomItems);
     
     // Update compass buttons
     updateCompassButtons(exits);
@@ -830,13 +797,7 @@ function removePlayerFromTerminal(playerName) {
 }
 
 // Add message to terminal
-function addToTerminal(message, type = 'info', duration = 1) {
-    // For long-duration messages, use the persistent message container
-    if (duration > 1) {
-        showPersistentMessage(message, duration);
-        return;
-    }
-    
+function addToTerminal(message, type = 'info') {
     const terminalContent = document.getElementById('terminalContent');
     const msgDiv = document.createElement('div');
     msgDiv.className = type === 'error' ? 'error-message' : 'info-message';
@@ -845,43 +806,29 @@ function addToTerminal(message, type = 'info', duration = 1) {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
-// Show a persistent message that won't be cleared by room updates
-function showPersistentMessage(message, durationSeconds) {
-    // Get or create the persistent message container
-    let container = document.getElementById('persistentMessages');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'persistentMessages';
-        const terminal = document.querySelector('.terminal');
-        if (terminal) {
-            terminal.appendChild(container);
-        }
+// Update the room items display bar (dynamic, updates in place)
+function updateRoomItemsDisplay(roomItems) {
+    const display = document.getElementById('roomItemsDisplay');
+    if (!display) return;
+    
+    if (!roomItems || roomItems.length === 0) {
+        display.textContent = 'Nothing';
+        display.className = 'room-items-display empty';
+        return;
     }
     
-    // Check if this exact message is already showing
-    const existing = Array.from(container.children).find(el => el.textContent === message);
-    if (existing) {
-        return; // Don't show duplicate messages
-    }
-    
-    const msgDiv = document.createElement('div');
-    msgDiv.className = 'persistent-message';
-    msgDiv.textContent = message;
-    container.appendChild(msgDiv);
-    
-    // Remove after duration
-    const durationMs = durationSeconds * 1000;
-    setTimeout(() => {
-        if (msgDiv.parentNode) {
-            msgDiv.classList.add('fade-out');
-            setTimeout(() => {
-                if (msgDiv.parentNode) {
-                    msgDiv.remove();
-                }
-            }, 1000);
+    // Build item list with quantities
+    const itemStrings = roomItems.map(item => {
+        if (item.quantity > 1) {
+            return `${item.item_name} <span class="item-count">(x${item.quantity})</span>`;
         }
-    }, durationMs);
+        return item.item_name;
+    });
+    
+    display.innerHTML = itemStrings.join(', ');
+    display.className = 'room-items-display';
 }
+
 
 // Update compass coordinates display
 function updateCompassCoordinates(x, y) {
@@ -1893,6 +1840,144 @@ function updateGodModeUI(hasGodMode) {
     }
 }
 
+// ============================================================
+// WIDGET MANAGEMENT SYSTEM
+// ============================================================
+
+// Toggle a widget on/off
+function toggleWidget(widgetName) {
+    if (!TOGGLEABLE_WIDGETS.includes(widgetName)) return;
+    
+    const isActive = activeWidgets.includes(widgetName);
+    
+    if (isActive) {
+        // Hide the widget
+        activeWidgets = activeWidgets.filter(w => w !== widgetName);
+    } else {
+        // Show the widget
+        if (activeWidgets.length >= 4 || (activeWidgets.length >= 3 && npcWidgetVisible)) {
+            // At max capacity, replace bottom-right widget (last in array)
+            activeWidgets.pop();
+        }
+        activeWidgets.push(widgetName);
+    }
+    
+    updateWidgetDisplay();
+}
+
+// Update the widget display based on activeWidgets state
+function updateWidgetDisplay() {
+    const slots = document.querySelectorAll('.widget-slot');
+    const toggleBar = document.querySelector('.widget-toggle-bar');
+    
+    // Update toggle bar icons
+    TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
+        if (icon) {
+            if (activeWidgets.includes(widgetName)) {
+                icon.classList.add('active');
+            } else {
+                icon.classList.remove('active');
+            }
+        }
+    });
+    
+    // Build list of widgets to show (activeWidgets + NPC widget if visible)
+    let widgetsToShow = [...activeWidgets];
+    if (npcWidgetVisible) {
+        widgetsToShow.push('npc');
+    }
+    
+    // Assign widgets to slots
+    slots.forEach((slot, index) => {
+        // Hide all widgets in this slot first
+        const widgets = slot.querySelectorAll('.widget');
+        widgets.forEach(w => w.classList.add('hidden'));
+        
+        // Show the appropriate widget for this slot
+        if (index < widgetsToShow.length) {
+            const widgetName = widgetsToShow[index];
+            const widget = slot.querySelector(`[data-widget="${widgetName}"]`);
+            if (widget) {
+                widget.classList.remove('hidden');
+            } else {
+                // Widget doesn't exist in this slot, need to move it
+                const existingWidget = document.getElementById(`widget-${widgetName}`);
+                if (existingWidget) {
+                    existingWidget.classList.remove('hidden');
+                    slot.appendChild(existingWidget);
+                }
+            }
+        } else {
+            // Show empty widget placeholder
+            const emptyWidget = slot.querySelector('.widget-empty');
+            if (emptyWidget) {
+                emptyWidget.classList.remove('hidden');
+            }
+        }
+    });
+}
+
+// Show the NPC widget (auto-triggered during harvest/cooldown)
+function showNPCWidget(npcName, status, progress, timingData = {}) {
+    const npcWidget = document.getElementById('widget-npc');
+    if (!npcWidget) return;
+    
+    npcWidgetVisible = true;
+    
+    // Update widget content
+    const nameEl = document.getElementById('npcWidgetName');
+    const statusEl = document.getElementById('npcWidgetStatus');
+    const progressBar = document.getElementById('npcWidgetProgressBar');
+    
+    if (nameEl) nameEl.textContent = npcName;
+    if (statusEl) statusEl.textContent = status === 'active' ? 'Harvesting...' : 'Recharging...';
+    
+    if (progressBar) {
+        progressBar.className = 'npc-widget-progress-bar';
+        progressBar.classList.add(status === 'active' ? 'harvesting' : 'cooldown');
+        progressBar.style.width = `${progress * 100}%`;
+    }
+    
+    // Update timing info (convert ms to seconds)
+    const pulseEl = document.getElementById('npcWidgetPulse');
+    const harvestEl = document.getElementById('npcWidgetHarvest');
+    const cooldownEl = document.getElementById('npcWidgetCooldown');
+    
+    if (pulseEl && timingData.baseCycleTime) {
+        pulseEl.textContent = `${(timingData.baseCycleTime / 1000).toFixed(1)}s`;
+    }
+    if (harvestEl && timingData.harvestableTime) {
+        harvestEl.textContent = `${(timingData.harvestableTime / 1000).toFixed(0)}s`;
+    }
+    if (cooldownEl && timingData.cooldownTime) {
+        cooldownEl.textContent = `${(timingData.cooldownTime / 1000).toFixed(0)}s`;
+    }
+    
+    updateWidgetDisplay();
+}
+
+// Hide the NPC widget (auto-triggered when harvest/cooldown complete)
+function hideNPCWidget() {
+    if (!npcWidgetVisible) return;
+    
+    npcWidgetVisible = false;
+    updateWidgetDisplay();
+}
+
+// Initialize widget toggle bar click handlers
+function initWidgetToggleBar() {
+    const toggleBar = document.querySelector('.widget-toggle-bar');
+    if (!toggleBar) return;
+    
+    toggleBar.querySelectorAll('.widget-icon').forEach(icon => {
+        icon.addEventListener('click', () => {
+            const widgetName = icon.getAttribute('data-widget');
+            toggleWidget(widgetName);
+        });
+    });
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     // Hide player selection if we're on game.html (game view is always visible there)
@@ -1901,6 +1986,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (gameView && !playerSelection) {
         // We're on game.html, connect WebSocket
         connectWebSocket();
+        // Initialize widget toggle bar
+        initWidgetToggleBar();
+        updateWidgetDisplay();
     }
     
     const godModeButtons = document.querySelectorAll('.god-mode-btn');

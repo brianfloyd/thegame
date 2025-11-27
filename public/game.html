@@ -16,6 +16,11 @@
                     <div class="terminal-content" id="terminalContent">
                         <!-- Room info and players will be displayed here -->
                     </div>
+                    <!-- Dynamic room status (items on ground - updates in place) -->
+                    <div id="roomStatusBar" class="room-status-bar">
+                        <span class="room-status-label">On the ground:</span>
+                        <span id="roomItemsDisplay" class="room-items-display">Nothing</span>
+                    </div>
                     <!-- God Mode Button Bar -->
                     <div id="godModeBar" class="god-mode-bar hidden">
                         <button class="god-mode-btn" data-action="map">Map</button>
@@ -31,58 +36,92 @@
                 </div>
             </div>
 
-            <!-- Right: Panel with 4 quadrants (1/3 of screen) -->
+            <!-- Right: Widget Panel (1/3 of screen) -->
             <div class="right-panel">
-                <!-- Top Left Quadrant: Player Stats -->
-                <div class="stats-container">
-                    <div class="stats-widget">
-                        <h3>Player Stats</h3>
-                        <div id="playerStatsContent">
-                            <!-- Stats will be populated by JavaScript -->
+                <!-- Widget Toggle Bar -->
+                <div class="widget-toggle-bar">
+                    <button class="widget-icon active" data-widget="stats" title="Player Stats">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    </button>
+                    <button class="widget-icon active" data-widget="compass" title="Compass">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5.5-2.5l7.51-3.49L17.5 6.5 9.99 9.99 6.5 17.5zm5.5-6.6c.61 0 1.1.49 1.1 1.1s-.49 1.1-1.1 1.1-1.1-.49-1.1-1.1.49-1.1 1.1-1.1z"/></svg>
+                    </button>
+                    <button class="widget-icon active" data-widget="map" title="Map">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg>
+                    </button>
+                </div>
+                
+                <!-- Widget Grid (2x2) -->
+                <div class="widget-grid">
+                    <!-- Slot 1: Player Stats -->
+                    <div class="widget-slot" data-slot="0">
+                        <div class="widget" id="widget-stats" data-widget="stats">
+                            <div class="widget-header">Player Stats</div>
+                            <div class="widget-content" id="playerStatsContent">
+                                <!-- Stats will be populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Slot 2: Compass -->
+                    <div class="widget-slot" data-slot="1">
+                        <div class="widget" id="widget-compass" data-widget="compass">
+                            <div class="widget-header">Compass</div>
+                            <div class="widget-content">
+                                <div class="compass-grid">
+                                    <button id="compass-nw" class="compass-btn" data-direction="NW">NW</button>
+                                    <button id="compass-n" class="compass-btn" data-direction="N">N</button>
+                                    <button id="compass-ne" class="compass-btn" data-direction="NE">NE</button>
+                                    <button id="compass-w" class="compass-btn" data-direction="W">W</button>
+                                    <div class="compass-center">●</div>
+                                    <button id="compass-e" class="compass-btn" data-direction="E">E</button>
+                                    <button id="compass-sw" class="compass-btn" data-direction="SW">SW</button>
+                                    <button id="compass-s" class="compass-btn" data-direction="S">S</button>
+                                    <button id="compass-se" class="compass-btn" data-direction="SE">SE</button>
+                                    <button id="compass-up" class="compass-btn vertical" data-direction="U">UP</button>
+                                    <button id="compass-down" class="compass-btn vertical" data-direction="D">DN</button>
+                                </div>
+                                <div class="compass-coordinates" id="compassCoordinates"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Slot 3: Map -->
+                    <div class="widget-slot" data-slot="2">
+                        <div class="widget" id="widget-map" data-widget="map">
+                            <div class="widget-header">Map</div>
+                            <div class="widget-content">
+                                <div class="map-viewport" id="mapViewport">
+                                    <canvas id="mapCanvas"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Slot 4: Empty (or NPC widget when harvesting) -->
+                    <div class="widget-slot" data-slot="3">
+                        <div class="widget widget-empty" id="widget-empty">
+                            <div class="widget-header">-</div>
+                            <div class="widget-content"></div>
+                        </div>
+                        <!-- NPC Widget (hidden by default, auto-shows during harvest/cooldown) -->
+                        <div class="widget hidden" id="widget-npc" data-widget="npc">
+                            <div class="widget-header">NPC Activity</div>
+                            <div class="widget-content">
+                                <div id="npcWidgetName" class="npc-widget-name"></div>
+                                <div id="npcWidgetStatus" class="npc-widget-status"></div>
+                                <div class="npc-widget-progress-container">
+                                    <div id="npcWidgetProgressBar" class="npc-widget-progress-bar"></div>
+                                </div>
+                                <div class="npc-widget-timing">
+                                    <div class="timing-row"><span class="timing-label">Pulse:</span> <span id="npcWidgetPulse">-</span></div>
+                                    <div class="timing-row"><span class="timing-label">Harvest:</span> <span id="npcWidgetHarvest">-</span></div>
+                                    <div class="timing-row"><span class="timing-label">Cooldown:</span> <span id="npcWidgetCooldown">-</span></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-                
-                <!-- Top Right Quadrant: Compass Widget -->
-                <div class="compass-container">
-                    <div class="compass-widget">
-                        <h3>Compass</h3>
-                        <div class="compass-grid">
-                            <!-- Top row: NW, N, NE -->
-                            <button id="compass-nw" class="compass-btn" data-direction="NW" style="grid-column: 1; grid-row: 1;">NW</button>
-                            <button id="compass-n" class="compass-btn" data-direction="N" style="grid-column: 2; grid-row: 1;">N</button>
-                            <button id="compass-ne" class="compass-btn" data-direction="NE" style="grid-column: 3; grid-row: 1;">NE</button>
-                            
-                            <!-- Middle row: W, Center, E -->
-                            <button id="compass-w" class="compass-btn" data-direction="W" style="grid-column: 1; grid-row: 2;">W</button>
-                            <div class="compass-center" style="grid-column: 2; grid-row: 2;">●</div>
-                            <button id="compass-e" class="compass-btn" data-direction="E" style="grid-column: 3; grid-row: 2;">E</button>
-                            
-                            <!-- Bottom row: SW, S, SE -->
-                            <button id="compass-sw" class="compass-btn" data-direction="SW" style="grid-column: 1; grid-row: 3;">SW</button>
-                            <button id="compass-s" class="compass-btn" data-direction="S" style="grid-column: 2; grid-row: 3;">S</button>
-                            <button id="compass-se" class="compass-btn" data-direction="SE" style="grid-column: 3; grid-row: 3;">SE</button>
-                            
-                            <!-- Vertical: Up and Down -->
-                            <button id="compass-up" class="compass-btn vertical" data-direction="U" style="grid-column: 4; grid-row: 1;">UP</button>
-                            <button id="compass-down" class="compass-btn vertical" data-direction="D" style="grid-column: 4; grid-row: 3;">DOWN</button>
-                        </div>
-                        <div class="compass-coordinates" id="compassCoordinates"></div>
-                    </div>
-                </div>
-                
-                <!-- Bottom Left Quadrant: Map Widget -->
-                <div class="map-container">
-                    <div class="map-widget">
-                        <h3>Map</h3>
-                        <div class="map-viewport" id="mapViewport">
-                            <canvas id="mapCanvas"></canvas>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Bottom Right Quadrant (empty for now) -->
-                <div class="quadrant"></div>
             </div>
         </div>
     </div>

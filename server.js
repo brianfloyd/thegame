@@ -298,7 +298,8 @@ function getConnectedPlayersInRoom(roomId) {
 }
 
 // Helper function to send room update to a player by sessionId
-function sendRoomUpdate(sessionId, room) {
+// showFullInfo: true to force full room display (for look command, entering room)
+function sendRoomUpdate(sessionId, room, showFullInfo = false) {
   const playerData = connectedPlayers.get(sessionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
@@ -317,6 +318,7 @@ function sendRoomUpdate(sessionId, room) {
       description: npc.description,
       state: npc.state,
       color: npc.display_color || npc.color || '#00ffff',
+      baseCycleTime: npc.base_cycle_time || 5000, // Pulse time in ms
       harvestableTime: npc.harvestableTime || 60000,
       cooldownTime: npc.cooldownTime || 120000
     };
@@ -363,7 +365,8 @@ function sendRoomUpdate(sessionId, room) {
     players: playersInRoom,
     npcs: npcsInRoom,
     roomItems: roomItems,
-    exits: exits
+    exits: exits,
+    showFullInfo: showFullInfo
   }));
 }
 
@@ -462,8 +465,8 @@ wss.on('connection', (ws, req) => {
           playerId: player.id
         });
 
-        // Send initial room update
-        sendRoomUpdate(sessionId, room);
+        // Send initial room update (with full info for first display)
+        sendRoomUpdate(sessionId, room, true);
 
         // Send player stats (dynamically extracted using configuration)
         const playerStats = db.getPlayerStats(player);
@@ -705,7 +708,8 @@ wss.on('connection', (ws, req) => {
             players: playersInNewRoom,
             npcs: npcsInNewRoom,
             roomItems: roomItemsInNewRoom,
-            exits: exits
+            exits: exits,
+            showFullInfo: true // Always show full room info when entering a new room
           }));
 
           // If this was a map transition, send new map data
@@ -1648,7 +1652,7 @@ wss.on('connection', (ws, req) => {
         const target = (data.target || '').trim();
         if (!target) {
           // No specific target: send full room update (same as entering room)
-          sendRoomUpdate(currentSessionId, currentRoom);
+          sendRoomUpdate(currentSessionId, currentRoom, true); // showFullInfo = true
           return;
         }
 
@@ -1937,8 +1941,7 @@ wss.on('connection', (ws, req) => {
         if (npcState.cooldown_until && now < npcState.cooldown_until) {
           ws.send(JSON.stringify({ 
             type: 'message', 
-            message: `This creature is not currently capable of harvest`,
-            duration: 10 // Display for 10 seconds
+            message: `This creature is not currently capable of harvest`
           }));
           return;
         }

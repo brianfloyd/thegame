@@ -123,6 +123,12 @@ body {
     background: #00cc00;
 }
 
+.terminal-separator {
+    color: #333;
+    margin: 10px 0;
+    font-family: 'Courier New', monospace;
+}
+
 .room-name {
     color: #ffff00;
     font-weight: bold;
@@ -181,32 +187,6 @@ body {
     margin-bottom: 4px;
 }
 
-/* NPC Harvest/Cooldown Progress Bar */
-.npc-progress-container {
-    width: 25%;
-    height: 8px;
-    background: #001100;
-    border: 1px solid #003300;
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 4px;
-}
-
-.npc-progress-bar {
-    height: 100%;
-    transition: width 0.3s ease;
-}
-
-.npc-progress-active {
-    background: linear-gradient(90deg, #00ff00, #00cc00);
-    box-shadow: 0 0 4px #00ff00;
-}
-
-.npc-progress-cooldown {
-    background: linear-gradient(90deg, #ff6600, #ff9900);
-    box-shadow: 0 0 4px #ff6600;
-}
-
 /* Room items (on the ground) styles */
 .items-section {
     margin-top: 15px;
@@ -224,6 +204,17 @@ body {
 
 .item-item {
     color: #ffcc00;
+}
+
+/* Exits section */
+.exits-section {
+    margin-top: 10px;
+    color: #888;
+}
+
+.exits-section-title {
+    color: #666;
+    font-weight: bold;
 }
 
 /* Inventory table styles */
@@ -538,41 +529,28 @@ body {
     margin-top: 10px;
 }
 
-/* Persistent message container - not cleared by room updates */
-#persistentMessages {
-    position: absolute;
-    bottom: 60px;
-    left: 20px;
-    right: 20px;
-    z-index: 100;
-    pointer-events: none;
+/* Room status bar - dynamic display of room items */
+.room-status-bar {
+    background: #0a1a0a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
 }
 
-.persistent-message {
-    background: rgba(0, 0, 0, 0.9);
-    border: 2px solid #ffff00;
-    color: #ffff00;
-    font-weight: bold;
-    padding: 12px 20px;
-    margin-bottom: 10px;
-    text-shadow: 0 0 10px #ffff00, 0 0 20px #ffff00;
-    font-size: 16px;
-    text-align: center;
+.room-status-label {
+    color: #666;
+    margin-right: 8px;
 }
 
-.persistent-message.fade-out {
-    animation: messageFadeOut 1s ease-out forwards;
+.room-items-display {
+    color: #ffcc00;
 }
 
-@keyframes messageFadeOut {
-    from {
-        opacity: 1;
-        text-shadow: 0 0 10px #ffff00, 0 0 20px #ffff00;
-    }
-    to {
-        opacity: 0;
-        text-shadow: none;
-    }
+.room-items-display .item-count {
+    color: #ff9900;
 }
 
 .command-line {
@@ -647,48 +625,121 @@ body {
     width: 33.333%;
     height: 100vh;
     background: #0a0a0a;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* Widget Toggle Bar */
+.widget-toggle-bar {
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: #111;
+    border-bottom: 1px solid #333;
+    justify-content: center;
+}
+
+.widget-icon {
+    width: 36px;
+    height: 36px;
+    border: 2px solid #333;
+    border-radius: 6px;
+    background: #0a0a0a;
+    color: #444;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.widget-icon:hover {
+    border-color: #666;
+    color: #888;
+}
+
+.widget-icon.active {
+    border-color: #00ff00;
+    color: #00ff00;
+    background: #0a2a0a;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.widget-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Widget Grid (2x2) */
+.widget-grid {
+    flex: 1;
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: 1fr 1fr;
     gap: 5px;
     padding: 5px;
-    box-sizing: border-box;
     overflow: hidden;
 }
 
-/* Stats Container (Top Left Quadrant) */
-.stats-container {
-    grid-column: 1;
-    grid-row: 1;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 5px;
+.widget-slot {
+    position: relative;
     overflow: hidden;
 }
 
-.stats-widget {
+.widget {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: #1a1a1a;
     border: 2px solid #00ff00;
     border-radius: 8px;
-    padding: 10px;
+    display: flex;
+    flex-direction: column;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
-    width: 100%;
-    max-width: 100%;
+    overflow: hidden;
+}
+
+.widget.hidden {
+    display: none;
+}
+
+.widget.widget-empty {
+    border-color: #333;
+    box-shadow: none;
+}
+
+.widget.widget-empty .widget-header {
+    color: #333;
+}
+
+.widget-header {
+    color: #00ff00;
+    text-align: center;
+    padding: 8px;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+}
+
+.widget-content {
+    flex: 1;
+    padding: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Stats Widget Styles */
+#widget-stats .widget-content {
     font-family: 'Courier New', monospace;
     font-size: 10px;
     color: #00ff00;
-    overflow-y: auto;
-    max-height: 100%;
-}
-
-.stats-widget h3 {
-    color: #00ff00;
-    text-align: center;
-    margin-bottom: 10px;
-    font-size: 0.9em;
-    text-transform: uppercase;
-    font-family: 'Courier New', monospace;
 }
 
 .stats-section {
@@ -742,36 +793,7 @@ body {
     transition: width 0.3s;
 }
 
-/* Compass Container (Top Right Quadrant) */
-.compass-container {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 5px;
-    overflow: hidden;
-}
-
-.compass-widget {
-    background: #1a1a1a;
-    border: 2px solid #00ff00;
-    border-radius: 8px;
-    padding: 10px;
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
-    width: 100%;
-    max-width: 100%;
-}
-
-.compass-widget h3 {
-    color: #00ff00;
-    text-align: center;
-    margin-bottom: 10px;
-    font-size: 0.9em;
-    text-transform: uppercase;
-    font-family: 'Courier New', monospace;
-}
-
+/* Compass Widget Styles */
 .compass-coordinates {
     color: #00ff00;
     text-align: center;
@@ -784,9 +806,9 @@ body {
 
 .compass-grid {
     display: grid;
-    grid-template-columns: repeat(4, 35px);
-    grid-template-rows: repeat(3, 35px);
-    gap: 5px;
+    grid-template-columns: repeat(3, 32px) 32px;
+    grid-template-rows: repeat(3, 32px);
+    gap: 4px;
     justify-content: center;
     align-items: center;
 }
@@ -796,13 +818,13 @@ body {
     border: 2px solid #333;
     color: #666;
     font-family: 'Courier New', monospace;
-    font-size: 9px;
+    font-size: 8px;
     font-weight: bold;
     cursor: pointer;
     transition: all 0.2s;
     border-radius: 3px;
-    height: 35px;
-    width: 35px;
+    height: 32px;
+    width: 32px;
     text-transform: uppercase;
     padding: 0;
 }
@@ -842,53 +864,18 @@ body {
 }
 
 .compass-btn.vertical {
-    height: 35px;
-    width: 35px;
+    height: 32px;
+    width: 32px;
 }
 
-.quadrant {
-    background: #0a0a0a;
-    overflow: hidden;
-    /* Empty quadrants for future use */
-}
-
-/* Map Container (Bottom Left Quadrant) */
-.map-container {
-    grid-column: 1;
-    grid-row: 2;
-    display: flex;
-    align-items: stretch;
-    justify-content: center;
-    padding: 5px;
-    overflow: hidden;
-}
-
-.map-widget {
-    background: #1a1a1a;
-    border: 2px solid #00ff00;
-    border-radius: 8px;
-    padding: 10px;
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
-    width: 100%;
-    max-width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-
-.map-widget h3 {
-    color: #00ff00;
-    text-align: center;
-    margin-bottom: 10px;
-    font-size: 0.9em;
-    text-transform: uppercase;
-    font-family: 'Courier New', monospace;
+/* Map Widget Styles */
+#widget-map .widget-content {
+    padding: 4px;
 }
 
 .map-viewport {
     width: 100%;
-    flex: 1;
-    min-height: 200px;
+    height: 100%;
     background: #0a0a0a;
     border: 1px solid #333;
     border-radius: 4px;
@@ -900,6 +887,82 @@ body {
     width: 100%;
     height: 100%;
     display: block;
+}
+
+/* NPC Widget Styles */
+#widget-npc {
+    border-color: #ff9900;
+    box-shadow: 0 0 10px rgba(255, 153, 0, 0.4);
+}
+
+#widget-npc .widget-header {
+    color: #ff9900;
+    border-bottom-color: #663300;
+}
+
+.npc-widget-name {
+    color: #ffcc00;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+    font-family: 'Courier New', monospace;
+}
+
+.npc-widget-status {
+    color: #ff9900;
+    font-size: 11px;
+    text-align: center;
+    margin-bottom: 10px;
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase;
+}
+
+.npc-widget-progress-container {
+    width: 100%;
+    height: 12px;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.npc-widget-progress-bar {
+    height: 100%;
+    transition: width 0.3s ease, background 0.3s ease;
+}
+
+.npc-widget-progress-bar.harvesting {
+    background: linear-gradient(90deg, #00ff00, #00cc00);
+    box-shadow: 0 0 8px #00ff00 inset;
+}
+
+.npc-widget-progress-bar.cooldown {
+    background: linear-gradient(90deg, #ff6600, #ff9900);
+    box-shadow: 0 0 8px #ff6600 inset;
+}
+
+.npc-widget-timing {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #333;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+}
+
+.timing-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 2px 0;
+}
+
+.timing-label {
+    color: #888;
+}
+
+.timing-row span:last-child {
+    color: #ff9900;
+    font-weight: bold;
 }
 
 /* Map Editor Overlay */
