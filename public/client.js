@@ -1,3 +1,4 @@
+// Build: force cache bust
 let ws = null;
 let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
@@ -8,8 +9,8 @@ let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 
 // Get protocol (ws or wss) based on current page protocol
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.hostname}:3434`;
+const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const wsUrl = wsProtocol + location.host;
 
 // Connect to WebSocket server
 function connectWebSocket() {
@@ -66,7 +67,7 @@ function handleMessage(data) {
             }
             break;
         case 'mapData':
-            initializeMap(data.rooms, data.currentRoom, data.mapId);
+            initializeMap(data.rooms, data.currentRoom, data.mapId, data.roomTypeColors);
             break;
         case 'mapUpdate':
             updateMapPosition(data.currentRoom, data.mapId);
@@ -78,6 +79,12 @@ function handleMessage(data) {
             if (data.message) {
                 addToTerminal(data.message, 'info');
             }
+            break;
+        case 'jumpMaps':
+            populateJumpMaps(data.maps);
+            break;
+        case 'jumpRooms':
+            populateJumpRooms(data.rooms);
             break;
         case 'mapEditorData':
             // Check if this is for target map selection in connect mode
@@ -928,6 +935,16 @@ function executeCommand(command) {
     const parts = raw.split(/\s+/);
     const base = parts[0].toLowerCase();
 
+    // /JUMP - God mode teleport command
+    if (base === '/jump' || base === 'jump') {
+        if (!godMode) {
+            addToTerminal('This command requires god mode.', 'error');
+            return;
+        }
+        openJumpWidget();
+        return;
+    }
+
     // HELP / ? - display available commands
     if (base === 'help' || base === '?') {
         displayHelp();
@@ -1177,6 +1194,14 @@ function updatePlayerStats(stats) {
     
     // Flags are not displayed in UI (used internally)
     
+    // Add Encumbrance display
+    if (stats.currentEncumbrance !== undefined) {
+        const maxEncumbrance = stats.maxEncumbrance?.value || 100;
+        const currentEncumbrance = stats.currentEncumbrance;
+        const encumbranceSection = createEncumbranceSection(currentEncumbrance, maxEncumbrance);
+        statsContent.appendChild(encumbranceSection);
+    }
+    
     // Scroll to bottom
     statsContent.scrollTop = statsContent.scrollHeight;
 }
@@ -1239,6 +1264,50 @@ function createResourceSection(title, current, max, resourceKey) {
     return section;
 }
 
+// Helper function to create encumbrance section with level indicator
+function createEncumbranceSection(current, max) {
+    const section = document.createElement('div');
+    section.className = 'stats-section encumbrance-section';
+    
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'stats-section-title';
+    sectionTitle.textContent = 'Encumbrance';
+    section.appendChild(sectionTitle);
+    
+    // Calculate level
+    const percent = max > 0 ? (current / max) * 100 : 0;
+    let level = 'light';
+    let levelColor = '#00ff00'; // Green
+    
+    if (percent >= 100) {
+        level = 'stuck';
+        levelColor = '#ff0000'; // Red
+    } else if (percent >= 66.6) {
+        level = 'heavy';
+        levelColor = '#ff6600'; // Orange
+    } else if (percent >= 33.3) {
+        level = 'medium';
+        levelColor = '#ffcc00'; // Yellow
+    }
+    
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'stat-item';
+    valueDiv.innerHTML = `<span class="stat-value">${current}/${max}</span> <span class="encumbrance-level" style="color: ${levelColor}">(${level})</span>`;
+    section.appendChild(valueDiv);
+    
+    // Create progress bar
+    const bar = document.createElement('div');
+    bar.className = 'encumbrance-bar';
+    const fill = document.createElement('div');
+    fill.className = 'encumbrance-fill';
+    fill.style.width = Math.min(100, percent) + '%';
+    fill.style.backgroundColor = levelColor;
+    bar.appendChild(fill);
+    section.appendChild(bar);
+    
+    return section;
+}
+
 // Map rendering variables
 let mapRooms = [];
 let currentRoomPos = { x: 0, y: 0 };
@@ -1246,13 +1315,24 @@ let currentMapId = null;
 let currentMapName = null;
 let mapCanvas = null;
 let mapCtx = null;
+let mapTooltip = null; // Tooltip element for room hover info
+let roomTypeColors = { // Default colors
+    normal: '#00ff00',
+    shop: '#0088ff',
+    factory: '#ff8800'
+};
 const MAP_SIZE = 25; // 25x25 grid
 const CELL_SIZE = 10; // Size of each cell in pixels
 
 // Initialize map
-function initializeMap(rooms, currentRoom, mapId) {
+function initializeMap(rooms, currentRoom, mapId, typeColors) {
     // Filter to only include rooms from the current map (no preview rooms)
     mapRooms = rooms.filter(room => room.mapId === mapId);
+    
+    // Update room type colors if provided
+    if (typeColors) {
+        roomTypeColors = { ...roomTypeColors, ...typeColors };
+    }
     
     currentRoomPos = { x: currentRoom.x, y: currentRoom.y };
     currentMapId = mapId;
@@ -1274,6 +1354,30 @@ function initializeMap(rooms, currentRoom, mapId) {
         mapCanvas.height = viewport.clientHeight;
     }
     
+    // Create tooltip element if it doesn't exist
+    if (!mapTooltip) {
+        mapTooltip = document.createElement('div');
+        mapTooltip.id = 'mapTooltip';
+        mapTooltip.style.cssText = `
+            position: absolute;
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 6px 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            white-space: nowrap;
+        `;
+        viewport.style.position = 'relative'; // Make viewport positioned for tooltip
+        viewport.appendChild(mapTooltip);
+    }
+    
+    // Add mouse event listeners for hover tooltips
+    setupMapTooltips();
+    
     renderMap();
 }
 
@@ -1291,6 +1395,112 @@ function updateMapPosition(newRoom, mapId) {
         if (mapCanvas && mapCtx) {
             renderMap();
         }
+    }
+}
+
+// Setup map tooltip functionality
+function setupMapTooltips() {
+    if (!mapCanvas) return;
+    
+    let hoveredRoom = null;
+    
+    mapCanvas.addEventListener('mousemove', (e) => {
+        const rect = mapCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Find which room is under the mouse
+        const room = getRoomAtScreenPosition(x, y);
+        
+        if (room && room !== hoveredRoom) {
+            hoveredRoom = room;
+            showMapTooltip(room, e.clientX, e.clientY);
+        } else if (!room && hoveredRoom) {
+            hoveredRoom = null;
+            hideMapTooltip();
+        } else if (room && hoveredRoom) {
+            // Update tooltip position as mouse moves
+            updateMapTooltipPosition(e.clientX, e.clientY);
+        }
+    });
+    
+    mapCanvas.addEventListener('mouseleave', () => {
+        hoveredRoom = null;
+        hideMapTooltip();
+    });
+}
+
+// Get room at screen coordinates
+function getRoomAtScreenPosition(screenX, screenY) {
+    if (!mapCanvas || mapRooms.length === 0) return null;
+    
+    const MAP_SIZE = 25;
+    const CELL_SIZE = 10;
+    
+    // Calculate visible range
+    const centerX = currentRoomPos.x;
+    const centerY = currentRoomPos.y;
+    const halfSize = Math.floor(MAP_SIZE / 2);
+    const minX = centerX - halfSize;
+    const maxX = centerX + halfSize;
+    const minY = centerY - halfSize;
+    const maxY = centerY + halfSize;
+    
+    // Calculate offset for centering
+    const offsetX = (mapCanvas.width - MAP_SIZE * CELL_SIZE) / 2;
+    const offsetY = (mapCanvas.height - MAP_SIZE * CELL_SIZE) / 2;
+    
+    // Convert screen coordinates to map coordinates
+    const mapX = minX + Math.floor((screenX - offsetX) / CELL_SIZE);
+    const mapY = maxY - Math.floor((screenY - offsetY) / CELL_SIZE); // Flip Y
+    
+    // Find room at these coordinates
+    return mapRooms.find(room => 
+        room.mapId === currentMapId && 
+        room.x === mapX && 
+        room.y === mapY
+    ) || null;
+}
+
+// Show map tooltip
+function showMapTooltip(room, mouseX, mouseY) {
+    if (!mapTooltip) return;
+    
+    mapTooltip.innerHTML = `<strong>${room.name || 'Room'}</strong><br>(${room.x}, ${room.y})`;
+    mapTooltip.style.display = 'block';
+    updateMapTooltipPosition(mouseX, mouseY);
+}
+
+// Update tooltip position
+function updateMapTooltipPosition(mouseX, mouseY) {
+    if (!mapTooltip) return;
+    
+    const offset = 15; // Offset from cursor
+    const viewport = document.querySelector('.map-viewport');
+    if (!viewport) return;
+    
+    const viewportRect = viewport.getBoundingClientRect();
+    const tooltipX = mouseX - viewportRect.left + offset;
+    const tooltipY = mouseY - viewportRect.top + offset;
+    
+    mapTooltip.style.left = tooltipX + 'px';
+    mapTooltip.style.top = tooltipY + 'px';
+    
+    // Adjust if tooltip would go off screen
+    mapTooltip.style.display = 'block'; // Temporarily show to get dimensions
+    const tooltipRect = mapTooltip.getBoundingClientRect();
+    if (tooltipRect.right > viewportRect.right) {
+        mapTooltip.style.left = (mouseX - viewportRect.left - tooltipRect.width - offset) + 'px';
+    }
+    if (tooltipRect.bottom > viewportRect.bottom) {
+        mapTooltip.style.top = (mouseY - viewportRect.top - tooltipRect.height - offset) + 'px';
+    }
+}
+
+// Hide map tooltip
+function hideMapTooltip() {
+    if (mapTooltip) {
+        mapTooltip.style.display = 'none';
     }
 }
 
@@ -1386,11 +1596,13 @@ function renderMap() {
             
             // Draw room square
             if (isCurrentRoom) {
-                mapCtx.fillStyle = '#00ff00'; // Bright green for current room
+                mapCtx.fillStyle = '#00ff00'; // Bright green for current room (always highlighted)
             } else if (hasConnection) {
                 mapCtx.fillStyle = '#ffffff'; // White for rooms with connections
             } else {
-                mapCtx.fillStyle = '#666'; // Grey for other rooms
+                // Use room type color
+                const roomType = room.roomType || room.room_type || 'normal';
+                mapCtx.fillStyle = roomTypeColors[roomType] || roomTypeColors.normal || '#666';
             }
             mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
             
@@ -1838,6 +2050,12 @@ function updateGodModeUI(hasGodMode) {
     if (itemsBtn) {
         itemsBtn.disabled = !hasGodMode;
     }
+    
+    // Enable Player editor button when in god mode
+    const playerBtn = document.querySelector('.god-mode-btn[data-action="player"]');
+    if (playerBtn) {
+        playerBtn.disabled = !hasGodMode;
+    }
 }
 
 // ============================================================
@@ -1978,6 +2196,212 @@ function initWidgetToggleBar() {
     });
 }
 
+// ============================================================
+// JUMP WIDGET (God Mode Teleport)
+// ============================================================
+let jumpWidgetMaps = [];
+let jumpWidgetRooms = [];
+let jumpWidgetCanvas = null;
+let jumpWidgetCtx = null;
+let jumpWidgetSelectedMap = null;
+const JUMP_CELL_SIZE = 15;
+
+function openJumpWidget() {
+    const widget = document.getElementById('jumpWidget');
+    if (!widget) return;
+    
+    widget.classList.remove('hidden');
+    
+    // Initialize canvas
+    jumpWidgetCanvas = document.getElementById('jumpMapCanvas');
+    jumpWidgetCtx = jumpWidgetCanvas.getContext('2d');
+    
+    // Request map list from server
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getJumpMaps' }));
+    }
+    
+    // Setup event listeners
+    const closeBtn = document.getElementById('closeJumpWidget');
+    closeBtn.onclick = closeJumpWidget;
+    
+    const mapSelector = document.getElementById('jumpMapSelector');
+    mapSelector.onchange = onJumpMapSelected;
+    
+    // Canvas click handler
+    jumpWidgetCanvas.onclick = onJumpCanvasClick;
+    jumpWidgetCanvas.onmousemove = onJumpCanvasHover;
+}
+
+function closeJumpWidget() {
+    const widget = document.getElementById('jumpWidget');
+    if (widget) {
+        widget.classList.add('hidden');
+    }
+    jumpWidgetMaps = [];
+    jumpWidgetRooms = [];
+    jumpWidgetSelectedMap = null;
+}
+
+function populateJumpMaps(maps) {
+    jumpWidgetMaps = maps;
+    const selector = document.getElementById('jumpMapSelector');
+    if (!selector) return;
+    
+    selector.innerHTML = '<option value="">Select a map...</option>';
+    maps.forEach(map => {
+        const option = document.createElement('option');
+        option.value = map.id;
+        option.textContent = map.name;
+        selector.appendChild(option);
+    });
+}
+
+function onJumpMapSelected(e) {
+    const mapId = parseInt(e.target.value);
+    if (!mapId) {
+        jumpWidgetRooms = [];
+        jumpWidgetSelectedMap = null;
+        clearJumpCanvas();
+        return;
+    }
+    
+    jumpWidgetSelectedMap = mapId;
+    
+    // Request rooms for this map
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getJumpRooms', mapId }));
+    }
+}
+
+function populateJumpRooms(rooms) {
+    jumpWidgetRooms = rooms;
+    renderJumpMap();
+}
+
+function clearJumpCanvas() {
+    if (!jumpWidgetCtx) return;
+    jumpWidgetCtx.fillStyle = '#050505';
+    jumpWidgetCtx.fillRect(0, 0, jumpWidgetCanvas.width, jumpWidgetCanvas.height);
+}
+
+function renderJumpMap() {
+    if (!jumpWidgetCtx || jumpWidgetRooms.length === 0) {
+        clearJumpCanvas();
+        return;
+    }
+    
+    // Calculate bounds
+    const minX = Math.min(...jumpWidgetRooms.map(r => r.x));
+    const maxX = Math.max(...jumpWidgetRooms.map(r => r.x));
+    const minY = Math.min(...jumpWidgetRooms.map(r => r.y));
+    const maxY = Math.max(...jumpWidgetRooms.map(r => r.y));
+    
+    const gridWidth = maxX - minX + 1;
+    const gridHeight = maxY - minY + 1;
+    
+    // Size canvas to fit
+    const canvasWidth = Math.max(gridWidth * JUMP_CELL_SIZE + 40, 300);
+    const canvasHeight = Math.max(gridHeight * JUMP_CELL_SIZE + 40, 300);
+    
+    jumpWidgetCanvas.width = canvasWidth;
+    jumpWidgetCanvas.height = canvasHeight;
+    
+    // Clear canvas
+    jumpWidgetCtx.fillStyle = '#050505';
+    jumpWidgetCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Calculate offset to center the map
+    const offsetX = Math.floor((canvasWidth - gridWidth * JUMP_CELL_SIZE) / 2);
+    const offsetY = Math.floor((canvasHeight - gridHeight * JUMP_CELL_SIZE) / 2);
+    
+    // Store rendering info for click detection
+    jumpWidgetCanvas.dataset.minX = minX;
+    jumpWidgetCanvas.dataset.maxY = maxY;
+    jumpWidgetCanvas.dataset.offsetX = offsetX;
+    jumpWidgetCanvas.dataset.offsetY = offsetY;
+    
+    // Draw rooms
+    jumpWidgetRooms.forEach(room => {
+        const screenX = offsetX + (room.x - minX) * JUMP_CELL_SIZE;
+        const screenY = offsetY + (maxY - room.y) * JUMP_CELL_SIZE;
+        
+        // Check if current player is in this room
+        const isCurrentRoom = room.x === currentRoomPos.x && 
+                              room.y === currentRoomPos.y &&
+                              jumpWidgetSelectedMap === currentMapId;
+        
+        // Room fill color
+        if (isCurrentRoom) {
+            jumpWidgetCtx.fillStyle = '#00ff00';
+        } else if (room.connected_map_id) {
+            jumpWidgetCtx.fillStyle = '#ffffff';
+        } else {
+            jumpWidgetCtx.fillStyle = '#666';
+        }
+        
+        jumpWidgetCtx.fillRect(screenX + 1, screenY + 1, JUMP_CELL_SIZE - 2, JUMP_CELL_SIZE - 2);
+        
+        // Border
+        jumpWidgetCtx.strokeStyle = isCurrentRoom ? '#ffff00' : '#333';
+        jumpWidgetCtx.lineWidth = isCurrentRoom ? 2 : 1;
+        jumpWidgetCtx.strokeRect(screenX + 1, screenY + 1, JUMP_CELL_SIZE - 2, JUMP_CELL_SIZE - 2);
+    });
+}
+
+function getJumpRoomAtPosition(canvasX, canvasY) {
+    if (!jumpWidgetCanvas || jumpWidgetRooms.length === 0) return null;
+    
+    const minX = parseInt(jumpWidgetCanvas.dataset.minX);
+    const maxY = parseInt(jumpWidgetCanvas.dataset.maxY);
+    const offsetX = parseInt(jumpWidgetCanvas.dataset.offsetX);
+    const offsetY = parseInt(jumpWidgetCanvas.dataset.offsetY);
+    
+    // Convert canvas coords to grid coords
+    const gridX = Math.floor((canvasX - offsetX) / JUMP_CELL_SIZE) + minX;
+    const gridY = maxY - Math.floor((canvasY - offsetY) / JUMP_CELL_SIZE);
+    
+    // Find room at these coordinates
+    return jumpWidgetRooms.find(r => r.x === gridX && r.y === gridY);
+}
+
+function onJumpCanvasHover(e) {
+    const rect = jumpWidgetCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const room = getJumpRoomAtPosition(x, y);
+    const infoEl = document.getElementById('jumpHoverInfo');
+    
+    if (room) {
+        infoEl.innerHTML = `<span class="room-name">${room.name}</span> <span class="room-coords">(${room.x}, ${room.y})</span> - Click to teleport`;
+        jumpWidgetCanvas.style.cursor = 'pointer';
+    } else {
+        infoEl.textContent = 'Click a room to teleport';
+        jumpWidgetCanvas.style.cursor = 'crosshair';
+    }
+}
+
+function onJumpCanvasClick(e) {
+    const rect = jumpWidgetCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const room = getJumpRoomAtPosition(x, y);
+    
+    if (room) {
+        // Teleport to this room
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ 
+                type: 'jumpToRoom', 
+                roomId: room.id 
+            }));
+            addToTerminal(`Jumping to ${room.name} (${room.x}, ${room.y})...`, 'system');
+            closeJumpWidget();
+        }
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     // Hide player selection if we're on game.html (game view is always visible there)
@@ -2004,6 +2428,9 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (action === 'items') {
                 // Navigate to Item editor route (session-based, no URL params needed)
                 window.location.href = '/items';
+            } else if (action === 'player') {
+                // Navigate to Player editor route (session-based, no URL params needed)
+                window.location.href = '/player';
             }
             // Other actions (spells, craft) will be implemented later
         });
@@ -2170,23 +2597,54 @@ document.addEventListener('DOMContentLoaded', () => {
             const isGameViewVisible = gameView && !gameView.classList.contains('hidden');
             const isTypingInInput = document.activeElement === commandInput;
             
-            // More permissive keypad detection: if not typing and it's a number 1-9, treat as keypad
-            // This allows keypad to work even if detection isn't perfect
-            if (isGameViewVisible && !isTypingInInput && e.key >= '1' && e.key <= '9') {
+            if (isGameViewVisible) {
                 // Double-check: make sure we're not in any input field
                 const activeTag = document.activeElement.tagName.toLowerCase();
                 const isInInput = activeTag === 'input' || activeTag === 'textarea';
                 
-                // Check for keypad: e.location === 3 (keypad) OR e.code starts with 'Numpad'
-                // But also allow if we're not in an input field (more permissive)
-                const isKeypad = (e.location === 3) || 
-                                (e.code && e.code.startsWith('Numpad')) ||
-                                !isInInput; // If not in input, allow number keys as keypad
+                // Special case: If focused on command input but numpad is pressed, 
+                // blur input and navigate instead
+                if (isTypingInInput && e.key >= '1' && e.key <= '9') {
+                    const isKeypad = (e.location === 3) || 
+                                    (e.code && e.code.startsWith('Numpad'));
+                    if (isKeypad) {
+                        e.preventDefault();
+                        commandInput.blur(); // Switch focus away from command input
+                        handleKeypadMovement(e.key);
+                        return;
+                    }
+                }
                 
-                if (isKeypad && !isInInput) {
-                    // Keypad numbers for player movement
-                    e.preventDefault();
-                    handleKeypadMovement(e.key);
+                if (!isInInput) {
+                    // Check if it's a number key (1-9) for keypad navigation
+                    if (e.key >= '1' && e.key <= '9') {
+                        // Check for keypad: e.location === 3 (keypad) OR e.code starts with 'Numpad'
+                        const isKeypad = (e.location === 3) || 
+                                        (e.code && e.code.startsWith('Numpad'));
+                        
+                        if (isKeypad) {
+                            // Keypad numbers for player movement
+                            e.preventDefault();
+                            handleKeypadMovement(e.key);
+                            return; // Don't process further
+                        }
+                        // If it's a regular number key (not keypad), focus command input
+                        // This allows typing numbers in commands
+                        e.preventDefault();
+                        commandInput.focus();
+                        commandInput.value = commandInput.value + e.key;
+                        commandInput.setSelectionRange(commandInput.value.length, commandInput.value.length);
+                        return; // Don't process further
+                    } 
+                    // Check if it's a printable character (letters, space, etc.) - focus command input
+                    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                        // Printable character - focus command input and add it
+                        e.preventDefault();
+                        commandInput.focus();
+                        commandInput.value = commandInput.value + e.key;
+                        // Position cursor at end
+                        commandInput.setSelectionRange(commandInput.value.length, commandInput.value.length);
+                    }
                 }
             }
         }

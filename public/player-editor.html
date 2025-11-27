@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player Editor - The Game</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Player Editor specific overrides */
+        #playerEditor .map-editor-content {
+            display: flex;
+            gap: 15px;
+        }
+        #playerEditor .player-list-panel {
+            width: 180px;
+            flex-shrink: 0;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            padding: 10px;
+        }
+        #playerEditor .player-list-title {
+            color: #ffff00;
+            font-size: 12px;
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+        }
+        #playerEditor .player-detail-panel {
+            flex: 1;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            padding: 15px;
+            min-height: 300px;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+        }
+        #playerEditor .player-list-item {
+            padding: 8px 10px;
+            margin-bottom: 4px;
+            background: #111;
+            border: 1px solid #222;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #playerEditor .player-list-item:hover {
+            border-color: #00ff00;
+        }
+        #playerEditor .player-list-item.selected {
+            background: #002200;
+            border-color: #00ff00;
+        }
+        #playerEditor .player-list-name {
+            color: #00ff00;
+            font-size: 12px;
+        }
+        #playerEditor .player-list-badge {
+            color: #ffff00;
+            font-size: 10px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Player Editor -->
+    <div id="playerEditor" class="map-editor-overlay" style="display: block;">
+        <div class="map-editor-container">
+            <div class="map-editor-header">
+                <h2>Player Editor</h2>
+                <button id="closePlayerEditor" class="close-editor-btn">Close</button>
+            </div>
+            <div class="map-editor-toolbar">
+                <select id="playerSelector" class="map-selector">
+                    <option value="">Select a player...</option>
+                </select>
+            </div>
+            <div class="map-editor-content">
+                <!-- Player List (narrow left side) -->
+                <div class="player-list-panel">
+                    <h3 class="player-list-title">Players</h3>
+                    <div id="playerList"></div>
+                </div>
+                <!-- Player Details (wide right side) -->
+                <div class="player-detail-panel">
+                    <div id="playerPanelContent">
+                        <p style="color: #666; font-size: 12px;">Select a player to edit their stats.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="player-editor.js"></script>
+</body>
+</html>
+
+
+

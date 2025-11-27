@@ -513,6 +513,41 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 - `{ type: 'message', message: 'You pick up item_name.' }` - Action feedback
 - Room updates (`roomUpdate`, `moved`) now include `roomItems` array
 
+## Room Type System
+
+### Database Structure
+- **Table**: `room_type_colors`
+  - `room_type`: TEXT PRIMARY KEY - Room type identifier (normal, shop, factory, etc.)
+  - `color`: TEXT - Hex color code for the room type (e.g., '#00ff00')
+- **Rooms Table**: `room_type` column (TEXT, default 'normal') - Stores the type classification for each room
+
+### Supported Room Types
+- **normal**: Default room type (default color: #00ff00 - green)
+- **shop**: Shop/merchant rooms (default color: #0088ff - blue)
+- **factory**: Factory/industrial rooms (default color: #ff8800 - orange)
+
+### Color Coding
+- Each room type has an assigned color that appears on the map
+- Colors are customizable via the Map Editor's "Room Type Colors" dialog
+- Colors are displayed in both the Map Editor and the Game UI map widget
+- Room squares on the map use their assigned room type color as the fill color
+- Borders are automatically darkened versions of the fill color for contrast
+
+### Room Type Color Management (God Mode)
+- **Access**: "Room Type Colors" button in Map Editor toolbar
+- **Dialog**: Shows all room types with color picker dropdowns
+- **Color Options**: Same color palette as NPC editor (Lime, Cyan, Magenta, Yellow, Orange, Red, Periwinkle, White, Gray, Teal)
+- **Real-time Updates**: Color changes are saved immediately and broadcast to all connected map editors
+- **WebSocket Messages**:
+  - Client → Server: `{ type: 'getAllRoomTypeColors' }` - Request all room type colors
+  - Client → Server: `{ type: 'setRoomTypeColor', roomType: 'factory', color: '#ff8800' }` - Set color for room type
+  - Server → Client: `{ type: 'roomTypeColors', colors: { normal: '#00ff00', shop: '#0088ff', factory: '#ff8800' } }` - Color updates
+
+### Map Visualization
+- **Map Editor**: Rooms rendered with their type-specific colors
+- **Game UI Map Widget**: Rooms displayed with type-specific colors (current room always highlighted in green with yellow border)
+- **Map Data**: Room type colors are sent with map data messages for client-side rendering
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database

@@ -3,8 +3,8 @@
 
 // WebSocket connection
 let ws = null;
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.hostname}:3434`;
+const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const wsUrl = wsProtocol + location.host;
 
 // Item Editor State
 let allItems = [];
@@ -199,6 +199,14 @@ function showItemForm(item = null) {
                 </label>
             </div>
             
+            <div class="item-form-group">
+                <label for="itemEncumbrance">Encumbrance (weight)</label>
+                <input type="number" id="itemEncumbrance" class="item-form-input" 
+                       value="${item ? (item.encumbrance || 1) : 1}" 
+                       min="0" step="1"
+                       placeholder="Enter item weight">
+            </div>
+            
             <div class="item-form-actions">
                 <button id="saveItemBtn" class="editor-btn item-save-btn">${isNew ? 'Create Item' : 'Save Item'}</button>
             </div>
@@ -218,6 +226,7 @@ function saveItem(itemId) {
     const description = document.getElementById('itemDescription').value.trim();
     const active = parseInt(document.getElementById('itemActive').value);
     const poofable = document.getElementById('itemPoofable').checked;
+    const encumbrance = parseInt(document.getElementById('itemEncumbrance').value) || 1;
     
     if (!name) {
         alert('Item name is required');
@@ -229,7 +238,8 @@ function saveItem(itemId) {
         item_type: itemType,
         description,
         active,
-        poofable
+        poofable,
+        encumbrance
     };
     
     if (itemId) {

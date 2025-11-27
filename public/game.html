@@ -26,6 +26,7 @@
                         <button class="god-mode-btn" data-action="map">Map</button>
                         <button class="god-mode-btn" data-action="npc" disabled>NPC</button>
                         <button class="god-mode-btn" data-action="items" disabled>Items</button>
+                        <button class="god-mode-btn" data-action="player" disabled>Player</button>
                         <button class="god-mode-btn" data-action="spells" disabled>Spells</button>
                         <button class="god-mode-btn" data-action="craft" disabled>Craft</button>
                     </div>
@@ -122,6 +123,27 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Jump Widget (God Mode only) -->
+    <div id="jumpWidget" class="jump-widget-overlay hidden">
+        <div class="jump-widget-container">
+            <div class="jump-widget-header">
+                <h3>Jump to Location</h3>
+                <button id="closeJumpWidget" class="jump-widget-close">×</button>
+            </div>
+            <div class="jump-widget-toolbar">
+                <select id="jumpMapSelector" class="jump-map-selector">
+                    <option value="">Select a map...</option>
+                </select>
+            </div>
+            <div class="jump-widget-content">
+                <canvas id="jumpMapCanvas"></canvas>
+            </div>
+            <div class="jump-widget-info">
+                <span id="jumpHoverInfo">Click a room to teleport</span>
             </div>
         </div>
     </div>

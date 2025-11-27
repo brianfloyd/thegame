@@ -378,11 +378,251 @@ body {
     margin-bottom: 15px;
 }
 
+.item-form-group.inline {
+    display: inline-block;
+    width: 48%;
+    margin-right: 2%;
+    vertical-align: top;
+}
+
 .item-form-group label {
     display: block;
     color: #00ffff;
     margin-bottom: 5px;
     font-size: 12px;
+}
+
+.item-form-input.small {
+    width: 80px;
+}
+
+/* Player Editor Compact Layout */
+.player-editor-form {
+    padding: 10px;
+}
+
+.player-editor-title {
+    color: #00ff00;
+    font-size: 16px;
+    margin: 0 0 15px 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #333;
+}
+
+.player-section-label {
+    color: #ffff00;
+    font-size: 11px;
+    text-transform: uppercase;
+    margin: 10px 0 5px 0;
+    letter-spacing: 1px;
+}
+
+.player-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.player-field {
+    flex: 1;
+    min-width: 0;
+}
+
+.player-field label {
+    display: block;
+    color: #00ffff;
+    font-size: 10px;
+    margin-bottom: 2px;
+}
+
+.player-field input {
+    width: 100%;
+    padding: 4px 6px;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.player-field input:focus {
+    outline: none;
+    border-color: #00ff00;
+}
+
+.player-field input.readonly-field {
+    background: #1a1a1a;
+    color: #ffcc00;
+    cursor: not-allowed;
+    border-color: #444;
+}
+
+.player-flags-row {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid #333;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.player-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #00ffff;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.player-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.player-save-btn {
+    padding: 8px 20px;
+    background: #003300;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    cursor: pointer;
+}
+
+.player-save-btn:hover {
+    background: #004400;
+}
+
+/* Player Editor Two-Column Layout */
+.player-columns {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.player-stats-column {
+    flex: 1;
+    min-width: 400px;
+}
+
+.player-inventory-column {
+    flex: 0 0 280px;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    padding: 10px;
+    border-radius: 4px;
+    max-height: 400px;
+    display: flex;
+    flex-direction: column;
+}
+
+.encumbrance-display {
+    font-size: 12px;
+    margin-left: 8px;
+}
+
+.inventory-add-row {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.inventory-select {
+    flex: 1;
+    padding: 4px;
+    background: #111;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+}
+
+.inventory-qty {
+    width: 50px;
+    padding: 4px;
+    background: #111;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    text-align: center;
+}
+
+.inventory-add-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+}
+
+.inventory-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #222;
+    background: #050505;
+    padding: 5px;
+    min-height: 100px;
+}
+
+.inventory-empty {
+    color: #666;
+    font-size: 11px;
+    text-align: center;
+    padding: 20px;
+}
+
+.inventory-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 2px;
+}
+
+.inventory-item:hover {
+    border-color: #00ff00;
+}
+
+.inventory-item-name {
+    color: #00ff00;
+    font-size: 11px;
+    flex: 1;
+}
+
+.item-enc {
+    color: #888;
+    font-size: 10px;
+}
+
+.inventory-item-qty {
+    color: #ffff00;
+    font-size: 11px;
+    margin-right: 10px;
+}
+
+.item-enc-total {
+    color: #ff6600;
+    font-size: 10px;
+}
+
+.inventory-remove-btn {
+    background: #440000;
+    border: 1px solid #880000;
+    color: #ff6666;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+}
+
+.inventory-remove-btn:hover {
+    background: #660000;
+    border-color: #ff0000;
 }
 
 .item-form-input,
@@ -791,6 +1031,33 @@ body {
     height: 100%;
     background: #0000ff;
     transition: width 0.3s;
+}
+
+/* Encumbrance Bar */
+.encumbrance-bar {
+    width: 100%;
+    height: 8px;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    border-radius: 2px;
+    margin-top: 2px;
+    overflow: hidden;
+}
+
+.encumbrance-fill {
+    height: 100%;
+    transition: width 0.3s, background-color 0.3s;
+}
+
+.encumbrance-level {
+    font-size: 0.8em;
+    font-weight: bold;
+}
+
+.encumbrance-section {
+    border-top: 1px solid #333;
+    padding-top: 8px;
+    margin-top: 8px;
 }
 
 /* Compass Widget Styles */
@@ -1514,4 +1781,117 @@ body {
         width: 100%;
         height: 50vh;
     }
+}
+
+/* Jump Widget (God Mode) */
+.jump-widget-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.jump-widget-overlay.hidden {
+    display: none;
+}
+
+.jump-widget-container {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+}
+
+.jump-widget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    border-bottom: 1px solid #333;
+    background: #111;
+}
+
+.jump-widget-header h3 {
+    color: #00ff00;
+    font-size: 16px;
+    margin: 0;
+}
+
+.jump-widget-close {
+    background: none;
+    border: 1px solid #ff0000;
+    color: #ff0000;
+    font-size: 20px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.jump-widget-close:hover {
+    background: #330000;
+}
+
+.jump-widget-toolbar {
+    padding: 10px 15px;
+    border-bottom: 1px solid #333;
+    background: #0d0d0d;
+}
+
+.jump-map-selector {
+    width: 100%;
+    padding: 8px;
+    background: #111;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+}
+
+.jump-map-selector:focus {
+    outline: none;
+    border-color: #00ff00;
+}
+
+.jump-widget-content {
+    flex: 1;
+    padding: 15px;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+}
+
+#jumpMapCanvas {
+    background: #050505;
+    border: 1px solid #222;
+    cursor: crosshair;
+}
+
+.jump-widget-info {
+    padding: 10px 15px;
+    border-top: 1px solid #333;
+    background: #0d0d0d;
+    color: #888;
+    font-size: 12px;
+    text-align: center;
+}
+
+.jump-widget-info .room-name {
+    color: #00ffff;
+}
+
+.jump-widget-info .room-coords {
+    color: #ffff00;
 }

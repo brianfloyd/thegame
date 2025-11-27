@@ -974,6 +974,205 @@ Any other command or room movement ends the harvest session and starts cooldown.
 Required items come from the NPC's `input_items` field in `scriptable_npcs` table.
 This is a data relationship, not hardcoded - items can be changed in NPC Editor.
 
+## Recent Updates (Latest Session)
+
+### Encumbrance System
+A complete player encumbrance system that limits how much players can carry.
+
+#### Database Changes
+- **`items.encumbrance`**: New column storing item weight (INTEGER, default 1)
+  - Pulse Resin: 2 encumbrance
+  - Harvester Rune: 5 encumbrance
+- **`players.resource_max_encumbrance`**: Max carry capacity (INTEGER, default 100)
+
+#### Encumbrance Mechanics
+- **Current Encumbrance**: Calculated from player inventory (sum of item weight × quantity)
+- **Encumbrance Tiers**:
+  - **Light** (0-33.3%): Normal movement
+  - **Medium** (33.4-66.6%): 700ms movement delay
+  - **Heavy** (66.7-99%): 1200ms movement delay
+  - **Stuck** (100%): Cannot move, must drop items
+
+#### Take Command Updates
+- Enforces encumbrance limits when picking up items
+- `take all` only takes as many as player can carry
+- Shows encumbrance in feedback: "You pick up 5 Pulse Resin. (10/100)"
+- Warns when encumbrance limits quantity taken
+
+#### Player Stats Widget
+- Displays encumbrance as "X/100 (level)" with color-coded bar
+- Colors: Green (light), Yellow (medium), Orange (heavy), Red (stuck)
+- Updates in real-time when items are picked up/dropped
+
+### Item Editor
+Full CRUD editor for item definitions (God Mode only).
+
+#### Features
+- Create, edit, and view all item definitions
+- Fields: Name, Type, Description, Active, Poofable, **Encumbrance**
+- Item types: Sundries, Weapon, Armor, Consumable, Material, Quest
+- Poofable items disappear when player leaves room
+
+#### Route
+- **`/items`**: Item Editor (requires god mode)
+
+### Player Editor
+Comprehensive player stat editor with inventory management (God Mode only).
+
+#### Features
+- **Stats Section**: Edit all player attributes, abilities, resources
+- **Current Encumbrance**: Read-only field showing calculated encumbrance from inventory
+- **Max Encumbrance**: Editable max carry capacity
+- **God Mode Flag**: Toggle admin privileges
+- **Inventory Management**:
+  - View player's inventory with item weights
+  - Add items with quantity (enforces encumbrance limits)
+  - Remove items from inventory
+  - Shows encumbrance per item `(5)` and total `[25]`
+
+#### Route
+- **`/player`**: Player Editor (requires god mode)
+
+### Jump Command (God Mode Teleport)
+Instant teleport system for god mode players.
+
+#### Command
+- `/jump` or `jump`: Opens the Jump Widget
+
+#### Jump Widget Features
+- **Map Selector**: Dropdown of all available maps
+- **Visual Map**: Canvas rendering of selected map's rooms
+- **Room Info**: Hover to see room name and coordinates
+- **Click to Teleport**: Click any room to instantly teleport
+- Current room highlighted in green with yellow border
+- Map connection rooms shown in white
+
+#### Server Handlers
+- `getJumpMaps`: Returns all available maps
+- `getJumpRooms`: Returns all rooms for selected map
+- `jumpToRoom`: Teleports player (handles harvest interruption, notifications)
+
+### Widget System Enhancements
+
+#### Widget Toggle Bar
+- Icons at top of widget panel to toggle widgets on/off
+- Visual indication: highlighted = active, dimmed = inactive
+- Max 4 widgets visible in 2x2 grid
+- 5th widget replaces bottom-right slot
+
+#### NPC Widget
+- **Auto-shows** during harvest or cooldown
+- **Auto-hides** when cooldown complete
+- Displays:
+  - NPC name
+  - Status (Harvesting/Cooling Down/Ready)
+  - Progress bar (drains during harvest, fills during cooldown)
+  - Timing info: Pulse time, Harvest time, Cooldown time
+
+#### Room Items Display
+- Fixed bar above command input showing items on ground
+- Updates dynamically without scrolling terminal
+- Format: "On the ground: Pulse Resin (5), Harvester Rune (1)"
+
+### Harvest System Updates
+
+#### Harvest Session Lifecycle
+```
+IDLE → harvest command → HARVESTING (produces items)
+HARVESTING → unsafe command/move → COOLDOWN
+COOLDOWN → time expires → IDLE (ready)
+```
+
+#### Features
+- Required items check (needs Harvester Rune)
+- Cooldown prevents re-harvesting same NPC
+- "This creature is not currently capable of harvest" message during cooldown
+- Progress bars in NPC widget
+- Item production only during active harvest
+
+### QoL Improvements
+
+#### Numpad Navigation Enhancement
+- If focused on command input and numpad pressed, blurs input and navigates
+- Allows seamless switching between typing and movement
+- Works bidirectionally: regular keys → focus input, numpad → navigate
+
+#### Database Startup Cleanup
+- Silenced repetitive startup messages
+- Migration messages only show when actually migrating
+- Old columns dropped after migration to prevent re-running
+
+#### God Mode Column Fix
+- Fixed `god_mode` → `flag_god_mode` references throughout server.js
+- Ensures god mode checks work correctly for all features
+
+### Project Structure Update
+```
+thegame/
+├── package.json
+├── server.js
+├── database.js
+├── npcLogic.js
+├── public/
+│   ├── index.html (landing/character selection)
+│   ├── game.html (main game UI with widgets)
+│   ├── map-editor.html
+│   ├── npc-editor.html
+│   ├── item-editor.html (NEW)
+│   ├── player-editor.html (NEW)
+│   ├── style.css
+│   ├── client.js
+│   ├── map-editor.js
+│   ├── npc-editor.js
+│   ├── item-editor.js (NEW)
+│   └── player-editor.js (NEW)
+├── docs/
+│   ├── claude.md
+│   └── requirements.md
+└── game.db
+```
+
+### New Database Functions
+```javascript
+// Encumbrance
+getPlayerCurrentEncumbrance(playerId)  // Calculate from inventory
+getItemEncumbrance(itemName)           // Get item weight
+
+// Player management
+getAllPlayers()                        // List all players
+getPlayerById(id)                      // Get player by ID
+updatePlayer(player)                   // Update player stats
+
+// Items
+createItem(item)                       // Now includes encumbrance
+updateItem(item)                       // Now includes encumbrance
+```
+
+### New WebSocket Messages
+```javascript
+// Item Editor
+{ type: 'getAllItems' }
+{ type: 'itemList', items: [...] }
+{ type: 'createItem', item: {...} }
+{ type: 'updateItem', item: {...} }
+
+// Player Editor
+{ type: 'getAllPlayers' }
+{ type: 'playerList', players: [...] }
+{ type: 'updatePlayer', player: {...} }
+{ type: 'getPlayerInventory', playerId }
+{ type: 'playerInventory', inventory: [...], currentEncumbrance }
+{ type: 'addPlayerInventoryItem', playerId, itemName, quantity }
+{ type: 'removePlayerInventoryItem', playerId, itemName, quantity }
+
+// Jump Widget
+{ type: 'getJumpMaps' }
+{ type: 'jumpMaps', maps: [...] }
+{ type: 'getJumpRooms', mapId }
+{ type: 'jumpRooms', rooms: [...] }
+{ type: 'jumpToRoom', roomId }
+```
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database
@@ -992,4 +1191,7 @@ This is a data relationship, not hardcoded - items can be changed in NPC Editor.
 - NPC placement in rooms
 - Item placement in rooms
 - Room deletion functionality
+- Encumbrance buffs from items/abilities
+- Weight reduction equipment
+- Merchant NPCs for buying/selling
 

@@ -1,7 +1,18 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, 'game.db'));
+// Database path - configurable via environment variable for cloud deployments
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'game.db');
+const db = new Database(DB_PATH);
+
+// Schema migrations tracking table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
 // Create maps table
 db.exec(`
@@ -145,24 +156,26 @@ const seedItems = [
   {
     name: 'Pulse Resin',
     description: 'A thick, amber-colored resin harvested from Pulsewood trees. It pulses faintly with bioluminescent energy and is commonly used in alchemical preparations.',
-    item_type: 'sundries'
+    item_type: 'sundries',
+    poofable: 1,
+    encumbrance: 2
   },
   {
     name: 'Harvester Rune',
     description: 'A small stone etched with glowing symbols. When held near harvestable creatures, it enhances the yield and quality of gathered materials.',
-    item_type: 'sundries'
+    item_type: 'sundries',
+    poofable: 0,
+    encumbrance: 5
   }
 ];
 
 const insertItemStmt = db.prepare(`
-  INSERT OR IGNORE INTO items (name, description, item_type, poofable, created_at)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT OR IGNORE INTO items (name, description, item_type, poofable, encumbrance, created_at)
+  VALUES (?, ?, ?, ?, ?, ?)
 `);
 
 seedItems.forEach(item => {
-  // Set Pulse Resin as poofable (1), Harvester Rune as permanent (0)
-  const poofable = item.name === 'Pulse Resin' ? 1 : 0;
-  insertItemStmt.run(item.name, item.description, item.item_type, poofable, Date.now());
+  insertItemStmt.run(item.name, item.description, item.item_type, item.poofable, item.encumbrance, Date.now());
 });
 
 // Create room_items table (items on the ground in rooms, shared among players)
@@ -239,6 +252,7 @@ addColumnIfNotExists('players', 'resource_max_hit_points', 50);
 addColumnIfNotExists('players', 'resource_mana', 0);
 addColumnIfNotExists('players', 'resource_max_mana', 0);
 addColumnIfNotExists('players', 'flag_god_mode', 0);
+addColumnIfNotExists('players', 'resource_max_encumbrance', 100); // Max carry weight
 
 // Migration: add display_color to scriptable_npcs if missing
 addColumnIfNotExists('scriptable_npcs', 'display_color', "'#00ff00'", 'TEXT');
@@ -252,6 +266,7 @@ addColumnIfNotExists('scriptable_npcs', 'cooldown_time', 120000, 'INTEGER'); // 
 // Migration: add poofable column to items table
 // poofable: if true, item disappears when player leaves room or disconnects (if not in inventory)
 addColumnIfNotExists('items', 'poofable', 0, 'INTEGER'); // Default 0 (false) - permanent items
+addColumnIfNotExists('items', 'encumbrance', 1, 'INTEGER'); // Default 1 - item weight
 
 // Migrate existing rooms table to include map_id and connection fields
 addColumnIfNotExists('rooms', 'map_id', 1);
@@ -260,6 +275,25 @@ addColumnIfNotExists('rooms', 'connected_room_x', null);
 addColumnIfNotExists('rooms', 'connected_room_y', null);
 addColumnIfNotExists('rooms', 'connection_direction', null, 'TEXT');
 addColumnIfNotExists('rooms', 'room_type', 'normal', 'TEXT');
+
+// Create room_type_colors table for storing colors for each room type
+db.exec(`
+  CREATE TABLE IF NOT EXISTS room_type_colors (
+    room_type TEXT PRIMARY KEY,
+    color TEXT NOT NULL DEFAULT '#00ff00'
+  )
+`);
+
+// Insert default colors for room types
+const insertRoomTypeColor = db.prepare(`
+  INSERT OR IGNORE INTO room_type_colors (room_type, color)
+  VALUES (?, ?)
+`);
+
+insertRoomTypeColor.run('normal', '#00ff00'); // Green
+insertRoomTypeColor.run('shop', '#0088ff'); // Blue (using shop as user requested, mapping from merchant)
+insertRoomTypeColor.run('merchant', '#0088ff'); // Blue (keeping merchant for backward compatibility)
+insertRoomTypeColor.run('factory', '#ff8800'); // Orange
 
 // Migration: Clean up unwanted rooms (district rooms, etc.)
 function cleanupRooms() {
@@ -302,7 +336,7 @@ function cleanupRooms() {
   
   deleteInvalidRooms.run(newhaven.id, -MAP_HALF, MAP_HALF - 1, -MAP_HALF, MAP_HALF - 1);
   
-  console.log('Cleaned up invalid rooms');
+  // Silently clean up invalid rooms on startup
 }
 
 // Insert maps if they don't exist
@@ -555,7 +589,7 @@ if (northernTerritoryMap) {
         northernTerritoryMap.id,
         null, null, null, null
       );
-      console.log('Created North Street 6 intersection room');
+      // Created North Street 6 intersection room
     } catch (err) {
       // Room might already exist, that's fine
       if (!err.message.includes('UNIQUE constraint')) {
@@ -563,16 +597,37 @@ if (northernTerritoryMap) {
       }
     }
   } else {
-    console.log('Updated North Street 6 to ensure proper connection');
+    // Updated North Street 6 connection
   }
 }
 
 // Run cleanup after creating rooms (so town square exists)
 cleanupRooms();
 
-// Get town square room ID
+// Get town square room ID (or first room as fallback)
 const getTownSquare = db.prepare('SELECT id FROM rooms WHERE name = ?');
-const townSquare = getTownSquare.get('town square');
+let townSquare = getTownSquare.get('town square');
+
+// Fallback: if no town square, get any room (first room in database)
+if (!townSquare) {
+  const getFirstRoom = db.prepare('SELECT id FROM rooms LIMIT 1');
+  townSquare = getFirstRoom.get();
+}
+
+// If still no room exists, create a default spawn room
+if (!townSquare) {
+  console.log('No rooms found, creating default spawn room...');
+  const defaultMap = db.prepare('SELECT id FROM maps LIMIT 1').get();
+  if (defaultMap) {
+    db.prepare(`INSERT INTO rooms (name, description, x, y, map_id, room_type) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      'Spawn Point', 'A default starting location.', 0, 0, defaultMap.id, 'normal'
+    );
+    townSquare = db.prepare('SELECT id FROM rooms WHERE name = ?').get('Spawn Point');
+  }
+}
+
+// Final fallback - use room ID 1 if all else fails
+const defaultRoomId = townSquare ? townSquare.id : 1;
 
 // Insert initial players if they don't exist (using prefixed column names)
 const insertPlayer = db.prepare(`
@@ -615,14 +670,14 @@ const setPlayerStats = db.prepare(`
 `);
 
 // Fliz: 50/50 HP, 0 Mana (not a caster), god mode enabled
-insertPlayer.run('Fliz', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0);
+insertPlayer.run('Fliz', defaultRoomId, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0, 'Fliz');
 // Set Fliz's flag_god_mode to 1
 const setGodMode = db.prepare('UPDATE players SET flag_god_mode = ? WHERE name = ?');
 setGodMode.run(1, 'Fliz');
 
 // Hebron: 50/50 HP, 10/10 Mana
-insertPlayer.run('Hebron', townSquare.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
+insertPlayer.run('Hebron', defaultRoomId, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10);
 setPlayerStats.run(10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 'Hebron');
 
 // Scriptable NPC editor helpers (NPCs are now created/edited via NPC Editor UI)
@@ -827,9 +882,9 @@ if (newhaven && northernTerritory) {
       9,
       'S'
     );
-    console.log('Created connection room: Northern Territory (0,-5)');
+    // Created connection room: Northern Territory (0,-5)
   } else {
-    console.log('Updated connection room: Northern Territory (0,-5)');
+    // Updated connection room: Northern Territory (0,-5)
   }
   
   // Ensure north street 6 exists at (0, 4) in Northern Territory
@@ -850,7 +905,7 @@ if (newhaven && northernTerritory) {
         northernTerritory.id,
         null, null, null, null
       );
-      console.log('Created North Street 6 intersection room');
+      // Created North Street 6 intersection room
     } catch (err) {
       // If it already exists with a different name, update it
       db.prepare(`
@@ -862,7 +917,7 @@ if (newhaven && northernTerritory) {
         'You stand on North Street in the Northern Territory. The street runs east to west along the northern boundary. Center Street continues south from here, connecting to the rest of the settlement. The wild lands stretch endlessly to the north.',
         northernTerritory.id, 0, 4
       );
-      console.log('Updated existing room to North Street 6');
+      // Updated existing room to North Street 6
     }
   }
   
@@ -884,7 +939,7 @@ if (newhaven && northernTerritory) {
     0,                     // x = 0
     9                      // y = 9 (north street 11)
   );
-  console.log('Map connection established: Newhaven (0,9) <-> Northern Territory (0,-5)');
+  // Map connection: Newhaven (0,9) <-> Northern Territory (0,-5)
 }
 
 // Also set up the reverse connection from Northern Territory back to Newhaven
@@ -906,7 +961,7 @@ if (newhaven && northernTerritory) {
     0,                     // x = 0
     -5                     // y = -5 (south street 6)
   );
-  console.log('Reverse map connection established: Northern Territory (0,-5) <-> Newhaven (0,9)');
+  // Reverse map connection: Northern Territory (0,-5) <-> Newhaven (0,9)
 }
 
 // Database query functions
@@ -916,6 +971,7 @@ const getRoomsByMap = db.prepare('SELECT * FROM rooms WHERE map_id = ?');
 const getRoomByName = db.prepare('SELECT * FROM rooms WHERE LOWER(name) = LOWER(?)');
 // Migration: Copy data from old columns to new prefixed columns
 // This handles the transition from old column names to prefix-based naming
+// After migration, old columns are dropped so this only runs once
 function migrateColumnsToPrefixes() {
   const columnMigrations = [
     // Stats (attributes)
@@ -942,24 +998,40 @@ function migrateColumnsToPrefixes() {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(players)").all();
     const existingColumns = tableInfo.map(col => col.name);
-    const needsMigration = columnMigrations.some(m => existingColumns.includes(m.old) && existingColumns.includes(m.new));
+    const oldColumnsToRemove = columnMigrations.filter(m => existingColumns.includes(m.old)).map(m => m.old);
 
-    if (needsMigration) {
-      console.log('Migrating player data from old columns to prefixed columns...');
+    if (oldColumnsToRemove.length > 0) {
+      console.log('One-time migration: copying data from old columns to prefixed columns...');
       
       // Copy data from old columns to new columns if both exist
       columnMigrations.forEach(migration => {
         if (existingColumns.includes(migration.old) && existingColumns.includes(migration.new)) {
           try {
             db.exec(`UPDATE players SET ${migration.new} = ${migration.old} WHERE ${migration.new} IS NULL OR ${migration.new} = 0`);
-            console.log(`Migrated data: ${migration.old} -> ${migration.new}`);
           } catch (err) {
-            console.error(`Error migrating data for ${migration.old}:`, err.message);
+            // Ignore errors - column might not have data
           }
         }
       });
       
-      console.log('Data migration complete.');
+      // SQLite doesn't support DROP COLUMN directly in older versions,
+      // so we recreate the table without old columns
+      try {
+        // Get current columns (excluding old ones)
+        const keepColumns = existingColumns.filter(col => !oldColumnsToRemove.includes(col));
+        const columnList = keepColumns.join(', ');
+        
+        db.exec(`
+          BEGIN TRANSACTION;
+          CREATE TABLE players_new AS SELECT ${columnList} FROM players;
+          DROP TABLE players;
+          ALTER TABLE players_new RENAME TO players;
+          COMMIT;
+        `);
+        console.log('Migration complete - old columns removed.');
+      } catch (err) {
+        console.error('Error removing old columns (non-critical):', err.message);
+      }
     }
   } catch (err) {
     console.error('Error during column migration:', err.message);
@@ -1118,6 +1190,8 @@ function getPlayerStats(player) {
 const getPlayersInRoom = db.prepare('SELECT name FROM players WHERE current_room_id = ?');
 const updatePlayerRoom = db.prepare('UPDATE players SET current_room_id = ? WHERE name = ?');
 const getPlayerByName = db.prepare('SELECT * FROM players WHERE name = ?');
+const getAllPlayersStmt = db.prepare('SELECT * FROM players');
+const getPlayerByIdStmt = db.prepare('SELECT * FROM players WHERE id = ?');
 const getAllRooms = db.prepare('SELECT * FROM rooms');
 
 // New query functions for map editor
@@ -1353,12 +1427,12 @@ const getItemByNameStmt = db.prepare(`
 `);
 
 const createItemStmt = db.prepare(`
-  INSERT INTO items (name, description, item_type, active, poofable, created_at)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO items (name, description, item_type, active, poofable, encumbrance, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateItemStmt = db.prepare(`
-  UPDATE items SET name = ?, description = ?, item_type = ?, active = ?, poofable = ?
+  UPDATE items SET name = ?, description = ?, item_type = ?, active = ?, poofable = ?, encumbrance = ?
   WHERE id = ?
 `);
 
@@ -1381,6 +1455,7 @@ function createItem(item) {
     item.item_type || 'sundries',
     item.active !== undefined ? item.active : 1,
     item.poofable !== undefined ? (item.poofable ? 1 : 0) : 0,
+    item.encumbrance !== undefined ? item.encumbrance : 1,
     Date.now()
   );
   return getItemById(result.lastInsertRowid);
@@ -1393,9 +1468,32 @@ function updateItem(item) {
     item.item_type || 'sundries',
     item.active !== undefined ? item.active : 1,
     item.poofable !== undefined ? (item.poofable ? 1 : 0) : 0,
+    item.encumbrance !== undefined ? item.encumbrance : 1,
     item.id
   );
   return getItemById(item.id);
+}
+
+// ============================================================
+// Room Type Colors functions
+// ============================================================
+
+const getRoomTypeColorStmt = db.prepare('SELECT color FROM room_type_colors WHERE room_type = ?');
+const getAllRoomTypeColorsStmt = db.prepare('SELECT * FROM room_type_colors ORDER BY room_type');
+const setRoomTypeColorStmt = db.prepare('INSERT OR REPLACE INTO room_type_colors (room_type, color) VALUES (?, ?)');
+
+function getRoomTypeColor(roomType) {
+  const result = getRoomTypeColorStmt.get(roomType || 'normal');
+  return result ? result.color : '#00ff00'; // Default to green if not found
+}
+
+function getAllRoomTypeColors() {
+  return getAllRoomTypeColorsStmt.all();
+}
+
+function setRoomTypeColor(roomType, color) {
+  setRoomTypeColorStmt.run(roomType, color);
+  return getRoomTypeColor(roomType);
 }
 
 // ============================================================
@@ -1559,6 +1657,67 @@ function removePlayerItem(playerId, itemName, quantity = 1) {
   return true;
 }
 
+// Calculate player's current encumbrance from inventory
+const getPlayerEncumbranceStmt = db.prepare(`
+  SELECT COALESCE(SUM(pi.quantity * COALESCE(i.encumbrance, 1)), 0) as total_encumbrance
+  FROM player_items pi
+  LEFT JOIN items i ON LOWER(REPLACE(pi.item_name, '_', ' ')) = LOWER(REPLACE(i.name, '_', ' '))
+  WHERE pi.player_id = ?
+`);
+
+function getPlayerCurrentEncumbrance(playerId) {
+  const result = getPlayerEncumbranceStmt.get(playerId);
+  return result ? result.total_encumbrance : 0;
+}
+
+// Get item encumbrance by name
+function getItemEncumbrance(itemName) {
+  const item = getItemByNameStmt.get(itemName);
+  return item ? (item.encumbrance || 1) : 1;
+}
+
+// Get all players
+function getAllPlayers() {
+  return getAllPlayersStmt.all();
+}
+
+// Get player by ID
+function getPlayerById(id) {
+  return getPlayerByIdStmt.get(id);
+}
+
+// Update player stats
+function updatePlayer(player) {
+  // Build dynamic update statement based on player object
+  const fields = [];
+  const values = [];
+  
+  // Only update fields that are provided
+  const allowedFields = [
+    'stat_brute_strength', 'stat_life_force', 'stat_cunning', 'stat_intelligence', 'stat_wisdom',
+    'ability_crafting', 'ability_lockpicking', 'ability_stealth', 'ability_dodge', 'ability_critical_hit',
+    'resource_hit_points', 'resource_max_hit_points', 'resource_mana', 'resource_max_mana',
+    'resource_max_encumbrance', 'flag_god_mode', 'current_room_id'
+  ];
+  
+  for (const field of allowedFields) {
+    if (player[field] !== undefined) {
+      fields.push(`${field} = ?`);
+      values.push(player[field]);
+    }
+  }
+  
+  if (fields.length === 0) {
+    return getPlayerById(player.id);
+  }
+  
+  values.push(player.id);
+  const sql = `UPDATE players SET ${fields.join(', ')} WHERE id = ?`;
+  db.prepare(sql).run(...values);
+  
+  return getPlayerById(player.id);
+}
+
 module.exports = {
   db,
   getRoomById: (id) => getRoomById.get(id),
@@ -1568,6 +1727,9 @@ module.exports = {
   getPlayersInRoom: (roomId) => getPlayersInRoom.all(roomId).map(row => row.name),
   updatePlayerRoom: (roomId, playerName) => updatePlayerRoom.run(roomId, playerName),
   getPlayerByName: (name) => getPlayerByName.get(name),
+  getPlayerById,
+  getAllPlayers,
+  updatePlayer,
   getAllRooms: () => getAllRooms.all(),
   getMapByName: (name) => getMapByNameStmt.get(name),
   getMapById: (id) => getMapByIdStmt.get(id),
@@ -1604,12 +1766,18 @@ module.exports = {
   getPlayerItems,
   addPlayerItem,
   removePlayerItem,
+  getPlayerCurrentEncumbrance,
+  getItemEncumbrance,
   // Items (master definitions)
   getAllItems,
   getItemById,
   getItemByName,
   createItem,
-  updateItem
+  updateItem,
+  // Room type colors
+  getRoomTypeColor,
+  getAllRoomTypeColors,
+  setRoomTypeColor
 };
 
 // Run migration after all columns are added
@@ -1665,6 +1833,20 @@ function ensurePulseResinIsPoofable() {
 }
 
 ensurePulseResinIsPoofable();
+
+// Ensure items have correct encumbrance values
+function ensureItemEncumbrance() {
+  try {
+    // Update Pulse Resin encumbrance to 2
+    db.prepare('UPDATE items SET encumbrance = 2 WHERE LOWER(name) = LOWER(?)').run('Pulse Resin');
+    // Update Harvester Rune encumbrance to 5
+    db.prepare('UPDATE items SET encumbrance = 5 WHERE LOWER(name) = LOWER(?)').run('Harvester Rune');
+  } catch (err) {
+    console.error('Error ensuring item encumbrance:', err);
+  }
+}
+
+ensureItemEncumbrance();
 
 // Fix NPC output_items to use canonical item names (e.g., "Pulse Resin" instead of "pulse_resin")
 function normalizeNpcOutputItems() {

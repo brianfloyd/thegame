@@ -3,8 +3,8 @@
 
 // WebSocket connection
 let ws = null;
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.hostname}:3434`;
+const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const wsUrl = wsProtocol + location.host;
 
 // NPC Editor Variables
 let npcEditor = null;

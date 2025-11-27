@@ -20,6 +20,7 @@
                 </select>
                 <button id="createNewMapBtn" class="editor-btn">Create New Map</button>
                 <button id="connectMapsBtn" class="editor-btn">Connect Maps</button>
+                <button id="roomTypeColorsBtn" class="editor-btn">Room Type Colors</button>
             </div>
             <div class="map-editor-content">
                 <div class="map-editor-grid-container">
@@ -47,6 +48,20 @@
             <div class="dialog-buttons">
                 <button id="createMapConfirm" class="dialog-btn">Create</button>
                 <button id="createMapCancel" class="dialog-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Room Type Colors Dialog -->
+    <div id="roomTypeColorsDialog" class="dialog-overlay hidden">
+        <div class="dialog" style="max-width: 500px;">
+            <h3>Room Type Colors</h3>
+            <div class="dialog-content" id="roomTypeColorsContent">
+                <p style="color: #888; font-size: 0.9em; margin-bottom: 15px;">Set colors for each room type. These colors will appear on the map in both the editor and game UI.</p>
+                <!-- Room type color pickers will be added here dynamically -->
+            </div>
+            <div class="dialog-buttons">
+                <button id="roomTypeColorsClose" class="dialog-btn">Close</button>
             </div>
         </div>
     </div>

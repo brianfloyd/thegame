@@ -5,7 +5,18 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 // uuid no longer needed - using express-session's sessionID
-const db = require('./database');
+
+// Database initialization with error handling
+let db;
+try {
+  db = require('./database');
+  console.log('Database initialized successfully');
+} catch (err) {
+  console.error('FATAL: Database initialization failed:', err.message);
+  console.error(err.stack);
+  process.exit(1);
+}
+
 const npcLogic = require('./npcLogic');
 
 const app = express();
@@ -55,6 +66,11 @@ app.use(sessionMiddleware);
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint for Railway/cloud deployments
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Session validation middleware
 function validateSession(req, res, next) {
   const sessionId = req.sessionID;
@@ -102,7 +118,7 @@ function checkGodMode(req, res, next) {
     return res.status(401).send('Session required. Please select a character first.');
   }
   
-  if (req.player.god_mode !== 1) {
+  if (req.player.flag_god_mode !== 1) {
     return res.status(403).send('God mode required. You do not have access to this page.');
   }
   
@@ -231,6 +247,11 @@ app.get('/items', validateSession, checkGodMode, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'item-editor.html'));
 });
 
+// Player Editor route (God Mode only)
+app.get('/player', validateSession, checkGodMode, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'player-editor.html'));
+});
+
 // Track connected players: sessionId -> { ws, roomId, playerName, playerId }
 const connectedPlayers = new Map();
 
@@ -299,6 +320,28 @@ function getConnectedPlayersInRoom(roomId) {
 
 // Helper function to send room update to a player by sessionId
 // showFullInfo: true to force full room display (for look command, entering room)
+// Send updated player stats to a specific player
+function sendPlayerStats(sessionId) {
+  const playerData = connectedPlayers.get(sessionId);
+  if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  
+  const player = db.getPlayerByName(playerData.playerName);
+  if (!player) return;
+  
+  const playerStats = db.getPlayerStats(player);
+  if (playerStats) {
+    playerStats.playerName = player.name;
+    playerStats.currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+  }
+  
+  playerData.ws.send(JSON.stringify({
+    type: 'playerStats',
+    stats: playerStats || {}
+  }));
+}
+
 function sendRoomUpdate(sessionId, room, showFullInfo = false) {
   const playerData = connectedPlayers.get(sessionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
@@ -472,6 +515,8 @@ wss.on('connection', (ws, req) => {
         const playerStats = db.getPlayerStats(player);
         if (playerStats) {
           playerStats.playerName = player.name; // Include player name for client
+          // Add current encumbrance
+          playerStats.currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
         }
         ws.send(JSON.stringify({
           type: 'playerStats',
@@ -486,12 +531,21 @@ wss.on('connection', (ws, req) => {
           x: r.x,
           y: r.y,
           mapId: r.map_id,
+          roomType: r.room_type || 'normal',
           connected_map_id: r.connected_map_id || null // Include connection info for white highlighting
         }));
+        
+        // Get room type colors
+        const roomTypeColors = db.getAllRoomTypeColors();
+        const colorMap = {};
+        roomTypeColors.forEach(rtc => {
+          colorMap[rtc.room_type] = rtc.color;
+        });
         
         ws.send(JSON.stringify({
           type: 'mapData',
           rooms: allRooms,
+          roomTypeColors: colorMap,
           currentRoom: {
             x: room.x,
             y: room.y
@@ -557,6 +611,49 @@ wss.on('connection', (ws, req) => {
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
+        }
+
+        // Check encumbrance level and apply movement restrictions
+        const currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+        const maxEncumbrance = player.resource_max_encumbrance || 100;
+        const encumbrancePercent = (currentEncumbrance / maxEncumbrance) * 100;
+        
+        // Stuck - can't move at all
+        if (encumbrancePercent >= 100) {
+          ws.send(JSON.stringify({ 
+            type: 'message', 
+            message: "You are too heavy to move. Drop items to lower your encumbrance." 
+          }));
+          return;
+        }
+        
+        // Check if player has a movement cooldown in progress
+        const playerData = connectedPlayers.get(sessionId);
+        const now = Date.now();
+        
+        if (playerData.nextMoveTime && now < playerData.nextMoveTime) {
+          const remainingMs = playerData.nextMoveTime - now;
+          ws.send(JSON.stringify({ 
+            type: 'message', 
+            message: `You're moving slowly due to your load... (${(remainingMs / 1000).toFixed(1)}s)` 
+          }));
+          return;
+        }
+        
+        // Determine movement delay based on encumbrance level
+        let moveDelay = 0;
+        let encumbranceLevel = 'light';
+        if (encumbrancePercent >= 66.6) {
+          moveDelay = 1200; // Heavy: 1.2s delay
+          encumbranceLevel = 'heavy';
+        } else if (encumbrancePercent >= 33.3) {
+          moveDelay = 700; // Medium: 0.7s delay
+          encumbranceLevel = 'medium';
+        }
+        
+        // Set next move time for this player
+        if (moveDelay > 0) {
+          playerData.nextMoveTime = now + moveDelay;
         }
 
         const currentRoom = db.getRoomById(player.current_room_id);
@@ -636,7 +733,6 @@ wss.on('connection', (ws, req) => {
 
         // Update player's room
         db.updatePlayerRoom(targetRoom.id, playerName);
-        const playerData = connectedPlayers.get(sessionId);
         const oldRoomId = playerData.roomId;
         playerData.roomId = targetRoom.id;
 
@@ -722,12 +818,21 @@ wss.on('connection', (ws, req) => {
               x: r.x,
               y: r.y,
               mapId: r.map_id,
+              roomType: r.room_type || 'normal',
               connected_map_id: r.connected_map_id || null // Include connection info for white highlighting
             }));
+            
+            // Get room type colors
+            const roomTypeColors = db.getAllRoomTypeColors();
+            const colorMap = {};
+            roomTypeColors.forEach(rtc => {
+              colorMap[rtc.room_type] = rtc.color;
+            });
             
             playerData.ws.send(JSON.stringify({
               type: 'mapData',
               rooms: allRooms,
+              roomTypeColors: colorMap,
               currentRoom: {
                 x: targetRoom.x,
                 y: targetRoom.y
@@ -772,7 +877,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -785,6 +890,12 @@ wss.on('connection', (ws, req) => {
         }
 
         const rooms = db.getRoomsByMap(mapId);
+        const roomTypeColors = db.getAllRoomTypeColors();
+        const colorMap = {};
+        roomTypeColors.forEach(rtc => {
+          colorMap[rtc.room_type] = rtc.color;
+        });
+        
         ws.send(JSON.stringify({
           type: 'mapEditorData',
           rooms: rooms.map(r => ({
@@ -800,6 +911,7 @@ wss.on('connection', (ws, req) => {
             connected_room_y: r.connected_room_y,
             connection_direction: r.connection_direction
           })),
+          roomTypeColors: colorMap,
           mapId: map.id,
           mapName: map.name
         }));
@@ -819,7 +931,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -856,7 +968,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -958,7 +1070,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1004,7 +1116,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1030,7 +1142,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1117,6 +1229,89 @@ wss.on('connection', (ws, req) => {
         }));
       }
 
+      // Room Type Colors Handlers (God Mode)
+      else if (data.type === 'getAllRoomTypeColors') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const roomTypeColors = db.getAllRoomTypeColors();
+        const colorMap = {};
+        roomTypeColors.forEach(rtc => {
+          colorMap[rtc.room_type] = rtc.color;
+        });
+        ws.send(JSON.stringify({ type: 'roomTypeColors', colors: colorMap }));
+      }
+
+      else if (data.type === 'setRoomTypeColor') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomType, color } = data;
+        if (!roomType || !color) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room type and color required' }));
+          return;
+        }
+
+        try {
+          db.setRoomTypeColor(roomType, color);
+          ws.send(JSON.stringify({
+            type: 'roomTypeColorUpdated',
+            roomType,
+            color
+          }));
+          
+          // Broadcast to all connected map editors to refresh colors
+          connectedPlayers.forEach((playerData) => {
+            if (playerData.ws.readyState === WebSocket.OPEN) {
+              const otherPlayer = db.getPlayerByName(playerData.playerName);
+              if (otherPlayer && otherPlayer.god_mode === 1) {
+                const roomTypeColors = db.getAllRoomTypeColors();
+                const colorMap = {};
+                roomTypeColors.forEach(rtc => {
+                  colorMap[rtc.room_type] = rtc.color;
+                });
+                playerData.ws.send(JSON.stringify({
+                  type: 'roomTypeColors',
+                  colors: colorMap
+                }));
+              }
+            }
+          });
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to set room type color: ' + err.message }));
+        }
+      }
+
       // NPC Editor Handlers (God Mode)
       else if (data.type === 'getAllNPCs') {
         let currentPlayerName = null;
@@ -1132,7 +1327,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1158,7 +1353,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1200,7 +1395,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1242,7 +1437,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1275,7 +1470,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1308,7 +1503,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1347,7 +1542,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1389,7 +1584,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1412,7 +1607,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1445,7 +1640,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1465,6 +1660,362 @@ wss.on('connection', (ws, req) => {
       }
 
       // ============================================================
+      // Player Editor Handlers (God Mode)
+      // ============================================================
+      else if (data.type === 'getAllPlayers') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const players = db.getAllPlayers();
+        ws.send(JSON.stringify({ type: 'playerList', players }));
+      }
+
+      else if (data.type === 'updatePlayer') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { player } = data;
+        if (!player || !player.id) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player id required' }));
+          return;
+        }
+
+        try {
+          const updatedPlayer = db.updatePlayer(player);
+          ws.send(JSON.stringify({ type: 'playerUpdated', player: updatedPlayer }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Failed to update player: ' + err.message }));
+        }
+      }
+
+      // Get player inventory (God Mode)
+      else if (data.type === 'getPlayerInventory') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { playerId } = data;
+        const inventory = db.getPlayerItems(playerId);
+        const currentEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        
+        ws.send(JSON.stringify({ 
+          type: 'playerInventory', 
+          inventory,
+          currentEncumbrance
+        }));
+      }
+
+      // Add item to player inventory (God Mode)
+      else if (data.type === 'addPlayerInventoryItem') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { playerId, itemName, quantity } = data;
+        
+        // Check encumbrance
+        const targetPlayer = db.getPlayerById(playerId);
+        if (!targetPlayer) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+          return;
+        }
+        
+        const currentEnc = db.getPlayerCurrentEncumbrance(playerId);
+        const maxEnc = targetPlayer.resource_max_encumbrance || 100;
+        const itemEnc = db.getItemEncumbrance(itemName);
+        const totalNewEnc = itemEnc * quantity;
+        
+        if (currentEnc + totalNewEnc > maxEnc) {
+          ws.send(JSON.stringify({ type: 'error', message: `Would exceed encumbrance limit (${currentEnc + totalNewEnc}/${maxEnc})` }));
+          return;
+        }
+        
+        db.addPlayerItem(playerId, itemName, quantity);
+        
+        const inventory = db.getPlayerItems(playerId);
+        const newEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        
+        ws.send(JSON.stringify({ 
+          type: 'playerInventoryUpdated', 
+          inventory,
+          currentEncumbrance: newEncumbrance
+        }));
+        
+        // If this player is online, update their stats
+        connectedPlayers.forEach((pd, sid) => {
+          if (pd.playerId === playerId) {
+            sendPlayerStats(sid);
+          }
+        });
+      }
+
+      // Remove item from player inventory (God Mode)
+      else if (data.type === 'removePlayerInventoryItem') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { playerId, itemName, quantity } = data;
+        
+        db.removePlayerItem(playerId, itemName, quantity);
+        
+        const inventory = db.getPlayerItems(playerId);
+        const newEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        
+        ws.send(JSON.stringify({ 
+          type: 'playerInventoryUpdated', 
+          inventory,
+          currentEncumbrance: newEncumbrance
+        }));
+        
+        // If this player is online, update their stats
+        connectedPlayers.forEach((pd, sid) => {
+          if (pd.playerId === playerId) {
+            sendPlayerStats(sid);
+          }
+        });
+      }
+
+      // ============================================================
+      // Jump Widget (God Mode Teleport)
+      // ============================================================
+      else if (data.type === 'getJumpMaps') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const maps = db.getAllMaps();
+        ws.send(JSON.stringify({ type: 'jumpMaps', maps }));
+      }
+
+      else if (data.type === 'getJumpRooms') {
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData) => {
+          if (playerData.ws === ws) {
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { mapId } = data;
+        if (!mapId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Map ID required' }));
+          return;
+        }
+
+        const rooms = db.getRoomsByMap(mapId);
+        ws.send(JSON.stringify({ type: 'jumpRooms', rooms }));
+      }
+
+      else if (data.type === 'jumpToRoom') {
+        let currentSessionId = null;
+        let currentPlayerName = null;
+        connectedPlayers.forEach((playerData, sId) => {
+          if (playerData.ws === ws) {
+            currentSessionId = sId;
+            currentPlayerName = playerData.playerName;
+          }
+        });
+
+        if (!currentPlayerName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
+          return;
+        }
+
+        const player = db.getPlayerByName(currentPlayerName);
+        if (!player || player.flag_god_mode !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+          return;
+        }
+
+        const { roomId } = data;
+        if (!roomId) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+          return;
+        }
+
+        const targetRoom = db.getRoomById(roomId);
+        if (!targetRoom) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+          return;
+        }
+
+        // Update player's room in database
+        db.updatePlayerRoom(targetRoom.id, currentPlayerName);
+        
+        // Update connected player data
+        const playerData = connectedPlayers.get(currentSessionId);
+        const oldRoomId = playerData.roomId;
+        playerData.roomId = targetRoom.id;
+
+        // End any active harvest session
+        if (playerData.playerId) {
+          const activeSession = findPlayerHarvestSession(playerData.playerId);
+          if (activeSession) {
+            endHarvestSession(activeSession.roomNpcId, true);
+          }
+        }
+
+        // Remove poofable items from old room
+        db.removePoofableItemsFromRoom(oldRoomId);
+
+        // Notify players in old room
+        broadcastToRoom(oldRoomId, {
+          type: 'playerLeft',
+          playerName: currentPlayerName
+        }, currentSessionId);
+
+        // Get new room data
+        const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== currentPlayerName);
+        const exits = getExits(targetRoom);
+        const map = db.getMapById(targetRoom.map_id);
+        const npcsInNewRoom = db.getNPCsInRoom(targetRoom.id).map(npc => ({
+          id: npc.id,
+          name: npc.name,
+          description: npc.description,
+          state: npc.state,
+          color: npc.color
+        }));
+        const roomItems = db.getRoomItems(targetRoom.id);
+
+        // Send moved message to player
+        ws.send(JSON.stringify({
+          type: 'moved',
+          room: targetRoom,
+          players: playersInNewRoom,
+          exits: exits,
+          npcs: npcsInNewRoom,
+          roomItems: roomItems,
+          mapName: map ? map.name : '',
+          showFullInfo: true
+        }));
+
+        // Send map update
+        const mapRooms = db.getRoomsByMap(targetRoom.map_id);
+        ws.send(JSON.stringify({
+          type: 'mapData',
+          rooms: mapRooms.map(r => ({
+            id: r.id,
+            name: r.name,
+            x: r.x,
+            y: r.y,
+            mapId: r.map_id,
+            roomType: r.room_type,
+            connected_map_id: r.connected_map_id
+          })),
+          currentRoom: { x: targetRoom.x, y: targetRoom.y },
+          mapId: targetRoom.map_id
+        }));
+
+        // Notify players in new room
+        broadcastToRoom(targetRoom.id, {
+          type: 'playerJoined',
+          playerName: currentPlayerName
+        }, currentSessionId);
+
+        ws.send(JSON.stringify({ 
+          type: 'message', 
+          message: `Teleported to ${targetRoom.name}` 
+        }));
+      }
+
+      // ============================================================
       // Room Item Placement Handlers (God Mode - for Map Editor)
       // ============================================================
       else if (data.type === 'getRoomItemsForEditor') {
@@ -1481,7 +2032,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1516,7 +2067,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1555,7 +2106,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1594,7 +2145,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -1736,10 +2287,27 @@ wss.on('connection', (ws, req) => {
           const item = matches[0];
           const availableQuantity = item.quantity;
           
+          // Calculate encumbrance limits
+          const currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+          const maxEncumbrance = player.resource_max_encumbrance || 100;
+          const remainingCapacity = maxEncumbrance - currentEncumbrance;
+          const itemEncumbrance = db.getItemEncumbrance(item.item_name);
+          
+          // How many can fit in remaining capacity?
+          const maxCanCarry = Math.floor(remainingCapacity / itemEncumbrance);
+          
+          if (maxCanCarry <= 0) {
+            ws.send(JSON.stringify({ 
+              type: 'message', 
+              message: `You can't carry any more. You're at ${currentEncumbrance}/${maxEncumbrance} encumbrance.` 
+            }));
+            return;
+          }
+          
           // Determine how many to take
           let quantityToTake;
           if (isAll) {
-            quantityToTake = availableQuantity;
+            quantityToTake = Math.min(availableQuantity, maxCanCarry);
           } else {
             quantityToTake = parseInt(requestedQuantity, 10);
             if (isNaN(quantityToTake) || quantityToTake < 1) {
@@ -1754,6 +2322,11 @@ wss.on('connection', (ws, req) => {
               }));
               return;
             }
+            
+            // Limit by encumbrance if needed
+            if (quantityToTake > maxCanCarry) {
+              quantityToTake = maxCanCarry;
+            }
           }
           
           // Remove from room and add to player inventory
@@ -1762,15 +2335,27 @@ wss.on('connection', (ws, req) => {
           
           // Send feedback message
           let message;
+          const newEncumbrance = currentEncumbrance + (quantityToTake * itemEncumbrance);
           if (quantityToTake === 1) {
-            message = `You pick up ${item.item_name}.`;
+            message = `You pick up ${item.item_name}. (${newEncumbrance}/${maxEncumbrance})`;
           } else {
-            message = `You pick up ${quantityToTake} ${item.item_name}.`;
+            message = `You pick up ${quantityToTake} ${item.item_name}. (${newEncumbrance}/${maxEncumbrance})`;
           }
+          
+          // Notify if encumbrance limited the pickup
+          if (isAll && maxCanCarry < availableQuantity) {
+            message += ` You can only carry ${maxCanCarry}.`;
+          } else if (!isAll && requestedQuantity > maxCanCarry) {
+            message += ` You can only carry ${maxCanCarry}.`;
+          }
+          
           ws.send(JSON.stringify({ type: 'message', message }));
           
           // Send updated room to player to refresh items on ground
           sendRoomUpdate(sessionId, currentRoom);
+          
+          // Send updated player stats (encumbrance changed)
+          sendPlayerStats(sessionId);
         }
       }
 
@@ -1848,6 +2433,9 @@ wss.on('connection', (ws, req) => {
           
           // Send updated room to player to refresh items on ground
           sendRoomUpdate(sessionId, currentRoom);
+          
+          // Send updated player stats (encumbrance changed)
+          sendPlayerStats(sessionId);
         }
       }
 
@@ -1982,7 +2570,7 @@ wss.on('connection', (ws, req) => {
         }
 
         const player = db.getPlayerByName(currentPlayerName);
-        if (!player || player.god_mode !== 1) {
+        if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
@@ -2252,9 +2840,10 @@ function startRoomUpdateTimer() {
   console.log('Room update timer started (interval: 1000ms)');
 }
 
-const PORT = 3434;
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const PORT = process.env.PORT || 3434;
+const HOST = process.env.HOST || '0.0.0.0';
+server.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
   // Start NPC cycle engine after server starts
   startNPCCycleEngine();
   // Start room update timer for progress bars

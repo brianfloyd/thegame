@@ -3,8 +3,8 @@
 
 // WebSocket connection
 let ws = null;
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.hostname}:3434`;
+const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const wsUrl = wsProtocol + location.host;
 
 // Map Editor Variables
 let mapEditor = null;
@@ -31,6 +31,12 @@ let allMapsData = [];
 let currentMapId = null; // For player's current map
 let allItemsData = []; // For item placement in rooms
 let playerCurrentRoom = null; // Player's current room coordinates for centering
+let roomTypeColors = { // Default colors
+    normal: '#00ff00',
+    shop: '#0088ff',
+    factory: '#ff8800'
+};
+let mapEditorTooltip = null; // Tooltip element for room hover info in editor
 
 // Non-blocking notification for editor errors
 function showEditorNotification(message, type = 'info') {
@@ -109,9 +115,34 @@ function handleMessage(data) {
                 connected_room_y: r.connected_room_y,
                 connection_direction: r.connection_direction
             }));
+            if (data.roomTypeColors) {
+                roomTypeColors = { ...roomTypeColors, ...data.roomTypeColors };
+            }
             currentEditorMapId = data.mapId;
             renderMapEditor();
             updateSidePanel();
+            break;
+        case 'roomTypeColors':
+            if (data.colors) {
+                roomTypeColors = { ...roomTypeColors, ...data.colors };
+                renderMapEditor(); // Re-render to update colors
+                // Update dialog if open
+                const dialog = document.getElementById('roomTypeColorsDialog');
+                if (dialog && !dialog.classList.contains('hidden')) {
+                    showRoomTypeColorsDialog(); // Refresh dialog
+                }
+            }
+            break;
+        case 'roomTypeColorUpdated':
+            // Color was updated, refresh dialog and re-render map
+            if (data.roomType && data.color) {
+                roomTypeColors[data.roomType] = data.color;
+                renderMapEditor();
+                const dialog = document.getElementById('roomTypeColorsDialog');
+                if (dialog && !dialog.classList.contains('hidden')) {
+                    showRoomTypeColorsDialog(); // Refresh dialog
+                }
+            }
             break;
         case 'allMaps':
             allMapsData = data.maps;
@@ -282,6 +313,97 @@ function showCreateMapDialog() {
 // Hide create map dialog
 function hideCreateMapDialog() {
     const dialog = document.getElementById('createMapDialog');
+    if (dialog) {
+        dialog.classList.add('hidden');
+    }
+}
+
+// Show room type colors dialog
+function showRoomTypeColorsDialog() {
+    const dialog = document.getElementById('roomTypeColorsDialog');
+    const content = document.getElementById('roomTypeColorsContent');
+    if (!dialog || !content) return;
+    
+    // Clear previous content (except description)
+    const description = content.querySelector('p');
+    content.innerHTML = '';
+    if (description) {
+        content.appendChild(description);
+    }
+    
+    // Room types to show
+    const roomTypes = [
+        { type: 'normal', label: 'Normal' },
+        { type: 'shop', label: 'Shop' },
+        { type: 'factory', label: 'Factory' }
+    ];
+    
+    // Create color picker for each room type
+    roomTypes.forEach(rt => {
+        const currentColor = roomTypeColors[rt.type] || '#00ff00';
+        const colorRow = document.createElement('div');
+        colorRow.style.cssText = 'display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 8px; background: #1a1a1a; border: 1px solid #333;';
+        
+        const label = document.createElement('label');
+        label.textContent = rt.label;
+        label.style.cssText = 'min-width: 80px; color: #00ff00;';
+        colorRow.appendChild(label);
+        
+        const colorPreview = document.createElement('div');
+        colorPreview.style.cssText = `width: 30px; height: 30px; background: ${currentColor}; border: 2px solid #00ff00; cursor: pointer;`;
+        colorRow.appendChild(colorPreview);
+        
+        const colorSelect = document.createElement('select');
+        colorSelect.id = `roomTypeColor_${rt.type}`;
+        colorSelect.style.cssText = 'flex: 1; background: #000; color: #00ff00; border: 1px solid #00ff00; padding: 4px;';
+        
+        // Same color options as NPC editor
+        const colors = [
+            { value: '#00ff00', label: 'Lime' },
+            { value: '#00ffff', label: 'Cyan' },
+            { value: '#ff00ff', label: 'Magenta' },
+            { value: '#ffff00', label: 'Yellow' },
+            { value: '#ff8800', label: 'Orange' },
+            { value: '#ff0000', label: 'Red' },
+            { value: '#8888ff', label: 'Periwinkle' },
+            { value: '#ffffff', label: 'White' },
+            { value: '#aaaaaa', label: 'Gray' },
+            { value: '#00aa88', label: 'Teal' }
+        ];
+        
+        colors.forEach(color => {
+            const option = document.createElement('option');
+            option.value = color.value;
+            option.textContent = color.label;
+            if (color.value === currentColor) {
+                option.selected = true;
+            }
+            colorSelect.appendChild(option);
+        });
+        
+        colorSelect.addEventListener('change', () => {
+            const newColor = colorSelect.value;
+            colorPreview.style.backgroundColor = newColor;
+            // Save immediately
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'setRoomTypeColor',
+                    roomType: rt.type,
+                    color: newColor
+                }));
+            }
+        });
+        
+        colorRow.appendChild(colorSelect);
+        content.appendChild(colorRow);
+    });
+    
+    dialog.classList.remove('hidden');
+}
+
+// Hide room type colors dialog
+function hideRoomTypeColorsDialog() {
+    const dialog = document.getElementById('roomTypeColorsDialog');
     if (dialog) {
         dialog.classList.add('hidden');
     }
@@ -458,6 +580,73 @@ function screenToMapCoords(screenX, screenY) {
     };
 }
 
+// Handle map editor tooltip
+function handleMapEditorTooltip(e) {
+    if (!mapEditorCanvas || !mapEditorTooltip) return;
+    
+    const rect = mapEditorCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Use existing screenToMapCoords function to get room coordinates
+    const coords = screenToMapCoords(x, y);
+    if (!coords) {
+        hideMapEditorTooltip();
+        return;
+    }
+    
+    // Find room at these coordinates
+    const room = editorMapRooms.find(r => r.x === coords.x && r.y === coords.y);
+    
+    if (room) {
+        showMapEditorTooltip(room, e.clientX, e.clientY);
+    } else {
+        hideMapEditorTooltip();
+    }
+}
+
+// Show map editor tooltip
+function showMapEditorTooltip(room, mouseX, mouseY) {
+    if (!mapEditorTooltip) return;
+    
+    mapEditorTooltip.innerHTML = `<strong>${room.name || 'Room'}</strong><br>(${room.x}, ${room.y})`;
+    mapEditorTooltip.style.display = 'block';
+    updateMapEditorTooltipPosition(mouseX, mouseY);
+}
+
+// Update map editor tooltip position
+function updateMapEditorTooltipPosition(mouseX, mouseY) {
+    if (!mapEditorTooltip) return;
+    
+    const offset = 15; // Offset from cursor
+    const container = mapEditorCanvas ? mapEditorCanvas.parentElement : null;
+    if (!container) return;
+    
+    const containerRect = container.getBoundingClientRect();
+    const tooltipX = mouseX - containerRect.left + offset;
+    const tooltipY = mouseY - containerRect.top + offset;
+    
+    mapEditorTooltip.style.left = tooltipX + 'px';
+    mapEditorTooltip.style.top = tooltipY + 'px';
+    
+    // Adjust if tooltip would go off screen
+    mapEditorTooltip.style.display = 'block'; // Temporarily show to get dimensions
+    const tooltipRect = mapEditorTooltip.getBoundingClientRect();
+    if (tooltipRect.right > containerRect.right) {
+        mapEditorTooltip.style.left = (mouseX - containerRect.left - tooltipRect.width - offset) + 'px';
+    }
+    if (tooltipRect.bottom > containerRect.bottom) {
+        mapEditorTooltip.style.top = (mouseY - containerRect.top - tooltipRect.height - offset) + 'px';
+    }
+}
+
+// Hide map editor tooltip
+function hideMapEditorTooltip() {
+    if (mapEditorTooltip) {
+        mapEditorTooltip.style.display = 'none';
+    }
+}
+
 // Render map editor (simplified version - includes essential rendering)
 function renderMapEditor() {
     if (!mapEditorCanvas || !mapEditorCtx) return;
@@ -561,7 +750,7 @@ function renderMapEditor() {
         if (screenX + scaledCellSize < 0 || screenX > canvasWidth ||
             screenY + scaledCellSize < 0 || screenY > canvasHeight) return;
         
-        let fillColor = '#00ff00';
+        let fillColor = roomTypeColors.normal || '#00ff00';
         let borderColor = '#ffff00';
         
         const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
@@ -570,23 +759,17 @@ function renderMapEditor() {
             fillColor = '#ffffff';
             borderColor = '#cccccc';
         } else {
-            const directions = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-                              { dx: 1, dy: 1 }, { dx: -1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: -1 }];
-            const isAdjoining = directions.some(dir => {
-                const checkX = room.x + dir.dx;
-                const checkY = room.y + dir.dy;
-                return roomCoords.has(`${checkX},${checkY}`);
-            });
-            
-            if (isAdjoining) {
-                fillColor = '#006600';
-                borderColor = '#004400';
-            } else if (room.name && room.name.startsWith('Room ')) {
-                fillColor = '#0088ff';
-                borderColor = '#0066cc';
-            } else if (room.roomType === 'merchant') {
-                fillColor = '#0088ff';
-                borderColor = '#0066cc';
+            // Use room type color if available
+            const roomType = room.roomType || 'normal';
+            if (roomTypeColors[roomType]) {
+                fillColor = roomTypeColors[roomType];
+                // Darken border color by reducing RGB values
+                const color = roomTypeColors[roomType];
+                const hex = color.replace('#', '');
+                const r = Math.max(0, parseInt(hex.substr(0, 2), 16) - 50);
+                const g = Math.max(0, parseInt(hex.substr(2, 2), 16) - 50);
+                const b = Math.max(0, parseInt(hex.substr(4, 2), 16) - 50);
+                borderColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
             }
         }
         
@@ -824,7 +1007,8 @@ function updateSidePanel() {
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="newRoomType" style="margin-bottom: 8px;">
                 <option value="normal">Normal</option>
-                <option value="merchant">Merchant</option>
+                <option value="shop">Shop</option>
+                <option value="factory">Factory</option>
             </select>
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <label style="margin: 0; min-width: 20px;">X:</label>
@@ -832,8 +1016,10 @@ function updateSidePanel() {
                 <label style="margin: 0; min-width: 20px; margin-left: 8px;">Y:</label>
                 <input type="number" id="newRoomY" value="${selectedRoom.y}" style="flex: 1;">
             </div>
-            <button id="createRoomConfirm">Create Room</button>
-            <button id="createRoomCancel">Cancel</button>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button id="createRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Create Room</button>
+                <button id="createRoomCancel" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Cancel</button>
+            </div>
         `;
         
         document.getElementById('createRoomConfirm').addEventListener('click', () => {
@@ -858,11 +1044,12 @@ function updateSidePanel() {
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="editRoomType" style="margin-bottom: 8px;">
                 <option value="normal" ${firstRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
-                <option value="merchant" ${firstRoom.roomType === 'merchant' ? 'selected' : ''}>Merchant</option>
+                <option value="shop" ${firstRoom.roomType === 'shop' || firstRoom.roomType === 'merchant' ? 'selected' : ''}>Shop</option>
+                <option value="factory" ${firstRoom.roomType === 'factory' ? 'selected' : ''}>Factory</option>
             </select>
             <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button id="updateRoomConfirm" style="flex: 1;">Update All Rooms</button>
-                <button id="deleteRoomsConfirm" style="flex: 1; background: #cc0000;">Delete All Rooms</button>
+                <button id="updateRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Update All Rooms</button>
+                <button id="deleteRoomsConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #cc0000; border: 2px solid #ff0000; color: #fff; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Delete All Rooms</button>
             </div>
             <button id="updateRoomCancel" style="width: 100%; margin-top: 8px;">Cancel</button>
         `;
@@ -933,7 +1120,8 @@ function updateSidePanel() {
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="editRoomType" style="margin-bottom: 8px;">
                 <option value="normal" ${selectedRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
-                <option value="merchant" ${selectedRoom.roomType === 'merchant' ? 'selected' : ''}>Merchant</option>
+                <option value="shop" ${selectedRoom.roomType === 'shop' || selectedRoom.roomType === 'merchant' ? 'selected' : ''}>Shop</option>
+                <option value="factory" ${selectedRoom.roomType === 'factory' ? 'selected' : ''}>Factory</option>
             </select>
             
             <!-- Room Items Section -->
@@ -951,10 +1139,10 @@ function updateSidePanel() {
             </div>
             
             <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button id="updateRoomConfirm" style="flex: 1;">Update Room</button>
-                <button id="deleteRoomConfirm" style="flex: 1; background: #cc0000;">Delete Room</button>
+                <button id="updateRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Update Room</button>
+                <button id="deleteRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #cc0000; border: 2px solid #ff0000; color: #fff; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Delete Room</button>
             </div>
-            <button id="updateRoomCancel" style="width: 100%; margin-top: 8px;">Cancel</button>
+            <button id="updateRoomCancel" style="width: 100%; margin-top: 8px; padding: 8px 12px; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px;">Cancel</button>
         `;
         
         document.getElementById('updateRoomConfirm').addEventListener('click', () => {
@@ -1252,6 +1440,28 @@ document.addEventListener('DOMContentLoaded', () => {
             if (container) {
                 mapEditorCanvas.width = container.clientWidth;
                 mapEditorCanvas.height = container.clientHeight;
+                
+                // Create tooltip element if it doesn't exist
+                if (!mapEditorTooltip) {
+                    mapEditorTooltip = document.createElement('div');
+                    mapEditorTooltip.id = 'mapEditorTooltip';
+                    mapEditorTooltip.style.cssText = `
+                        position: absolute;
+                        background: #1a1a1a;
+                        border: 2px solid #00ff00;
+                        color: #00ff00;
+                        padding: 6px 10px;
+                        font-family: 'Courier New', monospace;
+                        font-size: 11px;
+                        pointer-events: none;
+                        z-index: 1000;
+                        display: none;
+                        white-space: nowrap;
+                    `;
+                    container.style.position = 'relative'; // Make container positioned for tooltip
+                    container.appendChild(mapEditorTooltip);
+                }
+                
                 renderMapEditor();
             }
         });
@@ -1280,6 +1490,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     handleMapEditorDrag();
                 }
             }
+            
+            // Handle tooltip (only when not dragging)
+            if (!isDragging && e.buttons === 0) {
+                handleMapEditorTooltip(e);
+            } else {
+                hideMapEditorTooltip();
+            }
         });
         
         mapEditorCanvas.addEventListener('mouseup', (e) => {
@@ -1292,6 +1509,10 @@ document.addEventListener('DOMContentLoaded', () => {
         mapEditorCanvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             handleMapEditorZoom(e);
+        });
+        
+        mapEditorCanvas.addEventListener('mouseleave', () => {
+            hideMapEditorTooltip();
         });
     }
     
@@ -1316,6 +1537,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (connectMapsBtn) {
         connectMapsBtn.addEventListener('click', () => {
             toggleConnectMode();
+        });
+    }
+
+    // Room type colors button
+    const roomTypeColorsBtn = document.getElementById('roomTypeColorsBtn');
+    if (roomTypeColorsBtn) {
+        roomTypeColorsBtn.addEventListener('click', () => {
+            showRoomTypeColorsDialog();
+            // Request current room type colors from server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'getAllRoomTypeColors' }));
+            }
+        });
+    }
+
+    // Room type colors dialog close button
+    const roomTypeColorsClose = document.getElementById('roomTypeColorsClose');
+    if (roomTypeColorsClose) {
+        roomTypeColorsClose.addEventListener('click', () => {
+            hideRoomTypeColorsDialog();
         });
     }
 

@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "Multiplayer game server with WebSocket support",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon --ext js,json,css,html server.js"
+    "dev": "nodemon --ext js,json,css,html server.js",
+    "migrate": "node scripts/migrate.js"
   },
   "keywords": [],
   "author": "",
