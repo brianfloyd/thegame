@@ -1,89 +1,116 @@
 /**
- * Database Migration Script
+ * PostgreSQL Migration Runner
  * 
- * Applies SQL migrations from the migrations/ folder in order.
- * Tracks applied migrations in the schema_migrations table.
- * 
- * Usage: npm run migrate
+ * Runs SQL migration files from the migrations/ directory in order.
+ * Tracks applied migrations in schema_migrations table.
  */
 
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
 
-// Database path - same logic as database.js
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'game.db');
-const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
-console.log(`Database path: ${DB_PATH}`);
-console.log(`Migrations directory: ${MIGRATIONS_DIR}`);
-
-// Open database connection
-const db = new Database(DB_PATH);
-
-// Ensure schema_migrations table exists
-db.exec(`
-  CREATE TABLE IF NOT EXISTS schema_migrations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-// Get list of already applied migrations
-const getAppliedMigrations = db.prepare('SELECT name FROM schema_migrations');
-const appliedMigrations = new Set(getAppliedMigrations.all().map(row => row.name));
-
-// Read all .sql files from migrations directory
-let migrationFiles = [];
-try {
-  migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
-    .filter(file => file.endsWith('.sql'))
-    .sort(); // Sort alphabetically (001_init.sql, 002_feature.sql, etc.)
-} catch (err) {
-  if (err.code === 'ENOENT') {
-    console.log('No migrations directory found. Creating it...');
-    fs.mkdirSync(MIGRATIONS_DIR, { recursive: true });
-  } else {
-    throw err;
-  }
-}
-
-console.log(`Found ${migrationFiles.length} migration file(s)`);
-
-// Prepare insert statement for tracking applied migrations
-const insertMigration = db.prepare('INSERT INTO schema_migrations (name) VALUES (?)');
-
-// Apply each migration that hasn't been applied yet
-let appliedCount = 0;
-for (const filename of migrationFiles) {
-  if (appliedMigrations.has(filename)) {
-    console.log(`Skipping ${filename} (already applied)`);
-    continue;
-  }
-
-  const filePath = path.join(MIGRATIONS_DIR, filename);
-  const sql = fs.readFileSync(filePath, 'utf8');
-
-  console.log(`Applying migration ${filename}...`);
+async function runMigrations() {
+  const client = await pool.connect();
   
   try {
-    // Run the migration SQL
-    db.exec(sql);
+    console.log('Running PostgreSQL migrations...');
     
-    // Record that this migration was applied
-    insertMigration.run(filename);
+    // Create schema_migrations table if it doesn't exist
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
     
-    console.log(`Applied migration ${filename}`);
-    appliedCount++;
-  } catch (err) {
-    console.error(`Error applying migration ${filename}:`, err.message);
-    process.exit(1);
+    // Get list of already applied migrations
+    const appliedResult = await client.query('SELECT name FROM schema_migrations ORDER BY name');
+    const appliedMigrations = new Set(appliedResult.rows.map(row => row.name));
+    
+    // Get list of migration files
+    const migrationsDir = path.join(__dirname, '..', 'migrations');
+    
+    if (!fs.existsSync(migrationsDir)) {
+      console.log('No migrations directory found');
+      return;
+    }
+    
+    const migrationFiles = fs.readdirSync(migrationsDir)
+      .filter(file => file.endsWith('.sql'))
+      .sort(); // Sort alphabetically to ensure order
+    
+    if (migrationFiles.length === 0) {
+      console.log('No migration files found');
+      return;
+    }
+    
+    // Run each migration that hasn't been applied yet
+    let migrationsRan = 0;
+    
+    for (const file of migrationFiles) {
+      if (appliedMigrations.has(file)) {
+        console.log(`  Skipping ${file} (already applied)`);
+        continue;
+      }
+      
+      console.log(`  Applying ${file}...`);
+      
+      const filePath = path.join(migrationsDir, file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+      
+      // Run migration in a transaction
+      await client.query('BEGIN');
+      
+      try {
+        // Execute the migration SQL
+        await client.query(sql);
+        
+        // Record the migration
+        await client.query(
+          'INSERT INTO schema_migrations (name) VALUES ($1)',
+          [file]
+        );
+        
+        await client.query('COMMIT');
+        console.log(`  Applied ${file}`);
+        migrationsRan++;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`  Failed to apply ${file}: ${err.message}`);
+        throw err;
+      }
+    }
+    
+    if (migrationsRan === 0) {
+      console.log('All migrations already applied');
+    } else {
+      console.log(`Successfully applied ${migrationsRan} migration(s)`);
+    }
+    
+  } finally {
+    client.release();
   }
 }
 
-// Close database connection
-db.close();
+// Export for use as module
+module.exports = runMigrations;
 
-console.log(`\nAll migrations applied. (${appliedCount} new, ${migrationFiles.length - appliedCount} skipped)`);
-
+// Run directly if called from command line
+if (require.main === module) {
+  runMigrations()
+    .then(() => {
+      console.log('Migration complete');
+      process.exit(0);
+    })
+    .catch(err => {
+      console.error('Migration failed:', err);
+      process.exit(1);
+    });
+}

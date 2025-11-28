@@ -61,6 +61,11 @@ function handleMessage(data) {
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
+            // Set current player name and update page title
+            if (data.stats.playerName) {
+                currentPlayerName = data.stats.playerName;
+                document.title = `The Game - ${data.stats.playerName}`;
+            }
             // godMode is returned as an object with .value property from dynamic stats system
             if (data.stats.godMode !== undefined) {
                 updateGodModeUI(data.stats.godMode.value === true);

@@ -6,13 +6,31 @@ thegame/
 ├── package.json
 ├── server.js
 ├── database.js
+├── npcLogic.js
 ├── public/
 │   ├── index.html
+│   ├── game.html
+│   ├── map-editor.html
+│   ├── npc-editor.html
+│   ├── item-editor.html
+│   ├── player-editor.html
 │   ├── style.css
-│   └── client.js
+│   ├── client.js
+│   ├── map-editor.js
+│   ├── npc-editor.js
+│   ├── item-editor.js
+│   └── player-editor.js
+├── scripts/
+│   ├── migrate.js
+│   └── migrate-data.js
+├── migrations/
+│   ├── 001_schema.sql
+│   ├── 002_seed_data.sql
+│   └── 003_indexes.sql
 ├── docs/
-│   └── requirements.md
-└── game.db (SQLite database, auto-created)
+│   ├── requirements.md
+│   └── claude.md
+└── nixpacks.toml
 ```
 
 ## Implementation Steps
@@ -21,12 +39,15 @@ thegame/
 - Create `package.json` with dependencies:
   - `express` - web server
   - `ws` - WebSocket library
-  - `better-sqlite3` - SQLite database (synchronous, faster than sqlite3)
+  - `pg` - PostgreSQL database client (async)
+  - `dotenv` - Environment variable management
   - `nodemon` - Development tool for auto-restart (dev dependency)
-- Set up npm scripts for running the server (`start` and `dev`)
+- Set up npm scripts for running the server (`start`, `dev`, `migrate`)
 
 ### 2. Database Setup (`database.js`)
-- Initialize SQLite database connection
+- Initialize PostgreSQL connection pool using `pg`
+- All database functions are async (return Promises)
+- Schema defined in SQL migration files
 - Create `rooms` table with columns: `id`, `name`, `description`, `x`, `y` (coordinate-based map)
 - Create `players` table with columns:
   - Basic: `id`, `name` (unique constraint), `current_room_id` (foreign key to rooms)
@@ -188,7 +209,9 @@ thegame/
 
 ## Technical Decisions
 
-- Using `better-sqlite3` for synchronous SQLite operations (simpler, faster)
+- Using `pg` (PostgreSQL) for async database operations
+- All database functions return Promises and use `async/await`
+- Schema managed via SQL migration files in `migrations/` directory
 - WebSocket server integrated with Express HTTP server
 - Real-time updates via WebSocket broadcasts (no polling)
 - Simple JSON message protocol for WebSocket communication
@@ -203,6 +226,7 @@ thegame/
 - MajorMUD-style terminal interface for authentic retro gaming experience
 - Text command system with multiple command variations for user convenience
 - Compass widget always shows all directions (unavailable ones lowlighted) for visual consistency
+- Deployment: Railway with PostgreSQL addon (DATABASE_URL automatically provided)
 
 ## UI/UX Features
 
@@ -547,6 +571,21 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 - **Map Editor**: Rooms rendered with their type-specific colors
 - **Game UI Map Widget**: Rooms displayed with type-specific colors (current room always highlighted in green with yellow border)
 - **Map Data**: Room type colors are sent with map data messages for client-side rendering
+
+## Documentation
+
+### Player Tutorial (`docs/player-tutorial.md`)
+Comprehensive new player guide covering:
+- Game interface layout (terminal, widgets, command line)
+- Three navigation methods (command line, compass clicks, numpad)
+- Complete command reference (movement, information, items, NPC interaction)
+- Inventory system (taking, dropping, partial name matching)
+- NPC harvesting mechanics and the NPC Activity Widget
+- Map system (coordinates, multiple maps, preview rooms)
+- Multiplayer features
+- Quick reference card and glossary
+
+**Note**: This tutorial excludes god mode and sysop features - it's designed for regular players only.
 
 ## Future Enhancements (Prepared)
 

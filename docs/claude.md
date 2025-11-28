@@ -518,9 +518,11 @@ thegame/
 - **Purpose**: Allows players to see what's ahead before entering
 
 ### Database Management
-- **Automatic Cleanup**: Removes invalid rooms (not on perimeter or center street)
-- **Player Safety**: Moves players to Town Square before deleting their current room
-- **Migration**: Handles existing databases gracefully
+- **One-Time Cleanup Migration**: Removes invalid rooms (not on perimeter or center street) - runs only once as migration `001_cleanup_invalid_rooms`
+  - **Important**: This cleanup was converted to a one-time migration to prevent deletion of user-created rooms via the map editor
+  - After the first run, user-created rooms persist across server restarts
+- **Player Safety**: Moves players to Town Square before deleting their current room (during one-time cleanup)
+- **Migration System**: Uses `schema_migrations` table to track applied migrations and prevent re-running
 - **Connection Room Creation**: Automatically ensures connection rooms exist with proper connection info
 - **Room Type System**: Rooms can be classified by type (normal, merchant, etc.) with visual distinction
 - **Map Size Calculation**: Map dimensions automatically calculated from room coordinate bounds

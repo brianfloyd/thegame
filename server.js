@@ -4,18 +4,10 @@ const http = require('http');
 const path = require('path');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-// uuid no longer needed - using express-session's sessionID
+require('dotenv').config();
 
-// Database initialization with error handling
-let db;
-try {
-  db = require('./database');
-  console.log('Database initialized successfully');
-} catch (err) {
-  console.error('FATAL: Database initialization failed:', err.message);
-  console.error(err.stack);
-  process.exit(1);
-}
+// Database module (async PostgreSQL)
+const db = require('./database');
 
 const npcLogic = require('./npcLogic');
 
@@ -72,7 +64,7 @@ app.get('/health', (req, res) => {
 });
 
 // Session validation middleware
-function validateSession(req, res, next) {
+async function validateSession(req, res, next) {
   const sessionId = req.sessionID;
   
   if (!sessionId || !req.session.playerName) {
@@ -85,7 +77,7 @@ function validateSession(req, res, next) {
     return res.status(401).send('Session expired. Please select a character again.');
   }
   
-  const player = db.getPlayerByName(req.session.playerName);
+  const player = await db.getPlayerByName(req.session.playerName);
   if (!player) {
     req.session.destroy();
     return res.status(404).send('Player not found.');
@@ -96,13 +88,13 @@ function validateSession(req, res, next) {
 }
 
 // Optional session middleware (doesn't fail if no session)
-function optionalSession(req, res, next) {
+async function optionalSession(req, res, next) {
   const sessionId = req.sessionID;
   
   if (sessionId && req.session.playerName) {
     const sessionData = sessionStore.get(sessionId);
     if (sessionData && sessionData.expiresAt >= Date.now()) {
-      const player = db.getPlayerByName(req.session.playerName);
+      const player = await db.getPlayerByName(req.session.playerName);
       if (player) {
         req.player = player;
       }
@@ -129,7 +121,7 @@ function checkGodMode(req, res, next) {
 const characterSelectionAttempts = new Map(); // Map<ip, { count, resetTime }>
 
 // Character selection endpoint
-app.post('/api/select-character', (req, res) => {
+app.post('/api/select-character', async (req, res) => {
   const { playerName } = req.body;
   const clientIp = req.ip || req.connection.remoteAddress;
   
@@ -170,7 +162,7 @@ app.post('/api/select-character', (req, res) => {
   }
   
   // Validate player exists
-  const player = db.getPlayerByName(sanitizedPlayerName);
+  const player = await db.getPlayerByName(sanitizedPlayerName);
   if (!player) {
     console.log(`Security: Invalid character selection attempt for: ${sanitizedPlayerName} from ${clientIp}`);
     return res.status(404).json({ success: false, error: 'Player not found' });
@@ -252,11 +244,13 @@ app.get('/player', validateSession, checkGodMode, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'player-editor.html'));
 });
 
-// Track connected players: sessionId -> { ws, roomId, playerName, playerId }
+// Track connected players: connectionId -> { ws, roomId, playerName, playerId, sessionId }
+// Uses unique connectionId per WebSocket to support multiple characters from same browser
 const connectedPlayers = new Map();
+let nextConnectionId = 1;
 
 // Helper function to get available exits for a room
-function getExits(room) {
+async function getExits(room) {
   const exits = {
     north: false,
     south: false,
@@ -286,23 +280,23 @@ function getExits(room) {
   
   // Check for adjacent rooms in same map (only if no map connection in that direction)
   if (!exits.north) {
-    exits.north = db.getRoomByCoords(room.map_id, room.x, room.y + 1) !== undefined;
+    exits.north = (await db.getRoomByCoords(room.map_id, room.x, room.y + 1)) != null;
   }
   if (!exits.south) {
-    exits.south = db.getRoomByCoords(room.map_id, room.x, room.y - 1) !== undefined;
+    exits.south = (await db.getRoomByCoords(room.map_id, room.x, room.y - 1)) != null;
   }
   if (!exits.east) {
-    exits.east = db.getRoomByCoords(room.map_id, room.x + 1, room.y) !== undefined;
+    exits.east = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y)) != null;
   }
   if (!exits.west) {
-    exits.west = db.getRoomByCoords(room.map_id, room.x - 1, room.y) !== undefined;
+    exits.west = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y)) != null;
   }
   
   // Diagonal directions (no map connections for these yet)
-  exits.northeast = db.getRoomByCoords(room.map_id, room.x + 1, room.y + 1) !== undefined;
-  exits.northwest = db.getRoomByCoords(room.map_id, room.x - 1, room.y + 1) !== undefined;
-  exits.southeast = db.getRoomByCoords(room.map_id, room.x + 1, room.y - 1) !== undefined;
-  exits.southwest = db.getRoomByCoords(room.map_id, room.x - 1, room.y - 1) !== undefined;
+  exits.northeast = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y + 1)) != null;
+  exits.northwest = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y + 1)) != null;
+  exits.southeast = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y - 1)) != null;
+  exits.southwest = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y - 1)) != null;
   
   return exits;
 }
@@ -310,7 +304,7 @@ function getExits(room) {
 // Helper function to get connected players in a room
 function getConnectedPlayersInRoom(roomId) {
   const players = [];
-  connectedPlayers.forEach((playerData, sessionId) => {
+  connectedPlayers.forEach((playerData, connId) => {
     if (playerData.roomId === roomId && playerData.ws.readyState === WebSocket.OPEN) {
       players.push(playerData.playerName);
     }
@@ -318,22 +312,22 @@ function getConnectedPlayersInRoom(roomId) {
   return players;
 }
 
-// Helper function to send room update to a player by sessionId
+// Helper function to send room update to a player by connectionId
 // showFullInfo: true to force full room display (for look command, entering room)
 // Send updated player stats to a specific player
-function sendPlayerStats(sessionId) {
-  const playerData = connectedPlayers.get(sessionId);
+async function sendPlayerStats(connectionId) {
+  const playerData = connectedPlayers.get(connectionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
   }
   
-  const player = db.getPlayerByName(playerData.playerName);
+  const player = await db.getPlayerByName(playerData.playerName);
   if (!player) return;
   
   const playerStats = db.getPlayerStats(player);
   if (playerStats) {
     playerStats.playerName = player.name;
-    playerStats.currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+    playerStats.currentEncumbrance = await db.getPlayerCurrentEncumbrance(player.id);
   }
   
   playerData.ws.send(JSON.stringify({
@@ -342,19 +336,20 @@ function sendPlayerStats(sessionId) {
   }));
 }
 
-function sendRoomUpdate(sessionId, room, showFullInfo = false) {
-  const playerData = connectedPlayers.get(sessionId);
+async function sendRoomUpdate(connectionId, room, showFullInfo = false) {
+  const playerData = connectedPlayers.get(connectionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
   }
 
   // Only get connected players in the room, excluding the current player
   const playersInRoom = getConnectedPlayersInRoom(room.id).filter(p => p !== playerData.playerName);
-  const exits = getExits(room);
+  const exits = await getExits(room);
   
   // Get NPCs in the room with harvest progress info
   const now = Date.now();
-  const npcsInRoom = db.getNPCsInRoom(room.id).map(npc => {
+  const npcsInRoomRaw = await db.getNPCsInRoom(room.id);
+  const npcsInRoom = npcsInRoomRaw.map(npc => {
     const npcData = {
       id: npc.id,
       name: npc.name,
@@ -389,10 +384,10 @@ function sendRoomUpdate(sessionId, room, showFullInfo = false) {
   });
   
   // Get items on the ground in the room
-  const roomItems = db.getRoomItems(room.id);
+  const roomItems = await db.getRoomItems(room.id);
   
   // Get map name
-  const map = db.getMapById(room.map_id);
+  const map = await db.getMapById(room.map_id);
   const mapName = map ? map.name : '';
 
   playerData.ws.send(JSON.stringify({
@@ -414,9 +409,9 @@ function sendRoomUpdate(sessionId, room, showFullInfo = false) {
 }
 
 // Helper function to broadcast to all players in a room
-function broadcastToRoom(roomId, message, excludeSessionId = null) {
-  connectedPlayers.forEach((playerData, sessionId) => {
-    if (sessionId === excludeSessionId) return;
+function broadcastToRoom(roomId, message, excludeConnectionId = null) {
+  connectedPlayers.forEach((playerData, connId) => {
+    if (connId === excludeConnectionId) return;
     if (playerData.roomId === roomId && playerData.ws.readyState === WebSocket.OPEN) {
       playerData.ws.send(JSON.stringify(message));
     }
@@ -463,6 +458,7 @@ function getSessionFromRequest(req) {
 wss.on('connection', (ws, req) => {
   console.log('New WebSocket connection');
   
+  let connectionId = null; // Unique ID for this WebSocket connection
   let sessionId = null;
   let playerName = null;
   
@@ -473,7 +469,7 @@ wss.on('connection', (ws, req) => {
     playerName = session.sessionData.playerName;
   }
 
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message.toString());
 
@@ -484,39 +480,37 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
 
-        // Check if session is already connected (optional - could allow multiple connections)
-        if (connectedPlayers.has(sessionId)) {
-          // Disconnect old connection
-          const oldConnection = connectedPlayers.get(sessionId);
-          if (oldConnection.ws.readyState === WebSocket.OPEN) {
-            oldConnection.ws.close();
-          }
-        }
+        // Generate unique connection ID for this WebSocket
+        connectionId = `conn_${nextConnectionId++}`;
+        
+        // Store the connectionId on the ws object for cleanup on disconnect
+        ws.connectionId = connectionId;
 
-        // Store connection
-        const room = db.getRoomById(player.current_room_id);
-        connectedPlayers.set(sessionId, { 
+        // Store connection using unique connectionId (allows same player from multiple tabs)
+        const room = await db.getRoomById(player.current_room_id);
+        connectedPlayers.set(connectionId, { 
           ws, 
           roomId: room.id, 
           playerName: player.name,
-          playerId: player.id
+          playerId: player.id,
+          sessionId: sessionId
         });
 
         // Send initial room update (with full info for first display)
-        sendRoomUpdate(sessionId, room, true);
+        await sendRoomUpdate(connectionId, room, true);
 
         // Send player stats (dynamically extracted using configuration)
         const playerStats = db.getPlayerStats(player);
         if (playerStats) {
           playerStats.playerName = player.name; // Include player name for client
           // Add current encumbrance
-          playerStats.currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+          playerStats.currentEncumbrance = await db.getPlayerCurrentEncumbrance(player.id);
         }
         ws.send(JSON.stringify({
           type: 'playerStats',
@@ -524,7 +518,7 @@ wss.on('connection', (ws, req) => {
         }));
 
         // Send map data (only rooms from current map - no preview of connected maps)
-        const mapRooms = db.getRoomsByMap(room.map_id);
+        const mapRooms = await db.getRoomsByMap(room.map_id);
         const allRooms = mapRooms.map(r => ({
           id: r.id,
           name: r.name,
@@ -536,7 +530,7 @@ wss.on('connection', (ws, req) => {
         }));
         
         // Get room type colors
-        const roomTypeColors = db.getAllRoomTypeColors();
+        const roomTypeColors = await db.getAllRoomTypeColors();
         const colorMap = {};
         roomTypeColors.forEach(rtc => {
           colorMap[rtc.room_type] = rtc.color;
@@ -553,28 +547,23 @@ wss.on('connection', (ws, req) => {
           mapId: room.map_id
         }));
 
-        // Notify others in the room
+        // Notify others in the room (exclude this connection)
         broadcastToRoom(room.id, {
           type: 'playerJoined',
           playerName: playerName
-        }, sessionId);
+        }, connectionId);
 
-        console.log(`Player ${playerName} connected in room ${room.name}`);
+        console.log(`Player ${playerName} connected (${connectionId}) in room ${room.name}`);
         return;
       }
       
       // All other messages require authentication
-      if (!sessionId || !connectedPlayers.has(sessionId)) {
+      if (!connectionId || !connectedPlayers.has(connectionId)) {
         ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated. Please authenticate first.' }));
         return;
       }
       
-      const playerData = connectedPlayers.get(sessionId);
-      if (playerData.ws !== ws) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Session mismatch' }));
-        return;
-      }
-      
+      const playerData = connectedPlayers.get(connectionId);
       playerName = playerData.playerName;
 
       // ============================================================
@@ -589,9 +578,9 @@ wss.on('connection', (ws, req) => {
         const isHarvestCmd = cmdType === 'harvest';
         
         if (!isSafeCommand && !isHarvestCmd) {
-          const activeSession = findPlayerHarvestSession(playerData.playerId);
+          const activeSession = await findPlayerHarvestSession(playerData.playerId);
           if (activeSession) {
-            endHarvestSession(activeSession.roomNpcId, true);
+            await endHarvestSession(activeSession.roomNpcId, true);
             ws.send(JSON.stringify({ 
               type: 'message', 
               message: 'Your harvesting has been interrupted.' 
@@ -607,14 +596,14 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
 
         // Check encumbrance level and apply movement restrictions
-        const currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+        const currentEncumbrance = await db.getPlayerCurrentEncumbrance(player.id);
         const maxEncumbrance = player.resource_max_encumbrance || 100;
         const encumbrancePercent = (currentEncumbrance / maxEncumbrance) * 100;
         
@@ -628,11 +617,11 @@ wss.on('connection', (ws, req) => {
         }
         
         // Check if player has a movement cooldown in progress
-        const playerData = connectedPlayers.get(sessionId);
+        const playerDataMove = connectedPlayers.get(connectionId);
         const now = Date.now();
         
-        if (playerData.nextMoveTime && now < playerData.nextMoveTime) {
-          const remainingMs = playerData.nextMoveTime - now;
+        if (playerDataMove && playerDataMove.nextMoveTime && now < playerDataMove.nextMoveTime) {
+          const remainingMs = playerDataMove.nextMoveTime - now;
           ws.send(JSON.stringify({ 
             type: 'message', 
             message: `You're moving slowly due to your load... (${(remainingMs / 1000).toFixed(1)}s)` 
@@ -652,11 +641,11 @@ wss.on('connection', (ws, req) => {
         }
         
         // Set next move time for this player
-        if (moveDelay > 0) {
-          playerData.nextMoveTime = now + moveDelay;
+        if (moveDelay > 0 && playerDataMove) {
+          playerDataMove.nextMoveTime = now + moveDelay;
         }
 
-        const currentRoom = db.getRoomById(player.current_room_id);
+        const currentRoom = await db.getRoomById(player.current_room_id);
         if (!currentRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
           return;
@@ -671,7 +660,7 @@ wss.on('connection', (ws, req) => {
         if (currentRoom.connection_direction === direction && currentRoom.connected_map_id) {
           // This is a map transition
           isMapTransition = true;
-          targetRoom = db.getRoomByCoords(
+          targetRoom = await db.getRoomByCoords(
             currentRoom.connected_map_id,
             currentRoom.connected_room_x,
             currentRoom.connected_room_y
@@ -716,7 +705,7 @@ wss.on('connection', (ws, req) => {
           }
 
           // Check if target room exists in same map
-          targetRoom = db.getRoomByCoords(currentRoom.map_id, targetX, targetY);
+          targetRoom = await db.getRoomByCoords(currentRoom.map_id, targetX, targetY);
         }
         
         if (!targetRoom) {
@@ -732,15 +721,15 @@ wss.on('connection', (ws, req) => {
         }
 
         // Update player's room
-        db.updatePlayerRoom(targetRoom.id, playerName);
+        await db.updatePlayerRoom(targetRoom.id, playerName);
         const oldRoomId = playerData.roomId;
         playerData.roomId = targetRoom.id;
 
         // End any active harvest session when moving rooms
         if (playerData.playerId) {
-          const activeSession = findPlayerHarvestSession(playerData.playerId);
+          const activeSession = await findPlayerHarvestSession(playerData.playerId);
           if (activeSession) {
-            endHarvestSession(activeSession.roomNpcId, true);
+            await endHarvestSession(activeSession.roomNpcId, true);
             ws.send(JSON.stringify({ 
               type: 'message', 
               message: 'Your harvesting has been interrupted.' 
@@ -749,18 +738,18 @@ wss.on('connection', (ws, req) => {
         }
 
         // Remove poofable items from old room when player leaves
-        db.removePoofableItemsFromRoom(oldRoomId);
+        await db.removePoofableItemsFromRoom(oldRoomId);
         
         // Send room update to players still in old room to refresh items
-        const oldRoom = db.getRoomById(oldRoomId);
+        const oldRoom = await db.getRoomById(oldRoomId);
         if (oldRoom) {
-          connectedPlayers.forEach((otherPlayerData, otherSessionId) => {
+          for (const [otherSessionId, otherPlayerData] of connectedPlayers) {
             if (otherPlayerData.roomId === oldRoomId && 
                 otherPlayerData.ws.readyState === WebSocket.OPEN &&
                 otherSessionId !== sessionId) {
-              sendRoomUpdate(otherSessionId, oldRoom);
+              await sendRoomUpdate(otherSessionId, oldRoom);
             }
-          });
+          }
         }
 
         // Notify players in old room
@@ -772,14 +761,15 @@ wss.on('connection', (ws, req) => {
         // Send moved message to moving player
         // Only get connected players in the new room, excluding the current player
         const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== playerName);
-        const exits = getExits(targetRoom);
+        const exits = await getExits(targetRoom);
         
         // Get map name
-        const map = db.getMapById(targetRoom.map_id);
+        const map = await db.getMapById(targetRoom.map_id);
         const mapName = map ? map.name : '';
         
         // Get NPCs in the new room
-        const npcsInNewRoom = db.getNPCsInRoom(targetRoom.id).map(npc => ({
+        const npcsInNewRoomRaw = await db.getNPCsInRoom(targetRoom.id);
+        const npcsInNewRoom = npcsInNewRoomRaw.map(npc => ({
           id: npc.id,
           name: npc.name,
           description: npc.description,
@@ -788,7 +778,7 @@ wss.on('connection', (ws, req) => {
         }));
         
         // Get items on the ground in the new room
-        const roomItemsInNewRoom = db.getRoomItems(targetRoom.id);
+        const roomItemsInNewRoom = await db.getRoomItems(targetRoom.id);
 
         if (playerData.ws.readyState === WebSocket.OPEN) {
           playerData.ws.send(JSON.stringify({
@@ -811,7 +801,7 @@ wss.on('connection', (ws, req) => {
           // If this was a map transition, send new map data
           if (isMapTransition) {
             // Send map data (only rooms from current map - no preview of connected maps)
-            const newMapRooms = db.getRoomsByMap(targetRoom.map_id);
+            const newMapRooms = await db.getRoomsByMap(targetRoom.map_id);
             const allRooms = newMapRooms.map(r => ({
               id: r.id,
               name: r.name,
@@ -823,7 +813,7 @@ wss.on('connection', (ws, req) => {
             }));
             
             // Get room type colors
-            const roomTypeColors = db.getAllRoomTypeColors();
+            const roomTypeColors = await db.getAllRoomTypeColors();
             const colorMap = {};
             roomTypeColors.forEach(rtc => {
               colorMap[rtc.room_type] = rtc.color;
@@ -876,21 +866,21 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
         const mapId = data.mapId;
-        const map = db.getMapById(mapId);
+        const map = await db.getMapById(mapId);
         if (!map) {
           ws.send(JSON.stringify({ type: 'error', message: 'Map not found' }));
           return;
         }
 
-        const rooms = db.getRoomsByMap(mapId);
-        const roomTypeColors = db.getAllRoomTypeColors();
+        const rooms = await db.getRoomsByMap(mapId);
+        const roomTypeColors = await db.getAllRoomTypeColors();
         const colorMap = {};
         roomTypeColors.forEach(rtc => {
           colorMap[rtc.room_type] = rtc.color;
@@ -930,7 +920,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -943,7 +933,7 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const mapId = db.createMap(name, width || 100, height || 100, description || '');
+          const mapId = await db.createMap(name, width || 100, height || 100, description || '');
           ws.send(JSON.stringify({
             type: 'mapCreated',
             mapId: mapId,
@@ -967,7 +957,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -980,18 +970,18 @@ wss.on('connection', (ws, req) => {
         }
 
         // Check if room already exists at these coordinates
-        const existing = db.getRoomByCoords(mapId, x, y);
+        const existing = await db.getRoomByCoords(mapId, x, y);
         if (existing) {
           ws.send(JSON.stringify({ type: 'error', message: 'Room already exists at these coordinates' }));
           return;
         }
 
         try {
-          const roomId = db.createRoom(name, description || '', x, y, mapId, roomType || 'normal');
-          const room = db.getRoomById(roomId);
+          const roomId = await db.createRoom(name, description || '', x, y, mapId, roomType || 'normal');
+          const room = await db.getRoomById(roomId);
           
           // Update map size based on new room
-          db.updateMapSize(mapId);
+          await db.updateMapSize(mapId);
           
           ws.send(JSON.stringify({
             type: 'roomCreated',
@@ -1019,7 +1009,7 @@ wss.on('connection', (ws, req) => {
         }
         
         // Get room to check if it's connected
-        const room = db.getRoomById(roomId);
+        const room = await db.getRoomById(roomId);
         if (!room) {
           ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
           return;
@@ -1035,7 +1025,7 @@ wss.on('connection', (ws, req) => {
         }
         
         // Check if any other room connects to this room (incoming connection)
-        const allRooms = db.getAllRooms();
+        const allRooms = await db.getAllRooms();
         const connectingRoom = allRooms.find(r => 
           r.connected_map_id === room.map_id && 
           r.connected_room_x === room.x && 
@@ -1051,7 +1041,7 @@ wss.on('connection', (ws, req) => {
         }
         
         // Delete the room
-        db.db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+        await db.query('DELETE FROM rooms WHERE id = $1', [roomId]);
         
         // Notify client
         ws.send(JSON.stringify({ type: 'roomDeleted', roomId: roomId }));
@@ -1069,7 +1059,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1082,8 +1072,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.updateRoom(roomId, name, description || '', roomType || 'normal');
-          const room = db.getRoomById(roomId);
+          await db.updateRoom(roomId, name, description || '', roomType || 'normal');
+          const room = await db.getRoomById(roomId);
           
           ws.send(JSON.stringify({
             type: 'roomUpdated',
@@ -1115,13 +1105,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const maps = db.getAllMaps();
+        const maps = await db.getAllMaps();
         ws.send(JSON.stringify({
           type: 'allMaps',
           maps: maps.map(m => ({ id: m.id, name: m.name }))
@@ -1141,7 +1131,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1150,14 +1140,14 @@ wss.on('connection', (ws, req) => {
         const { sourceRoomId, sourceDirection, targetMapId, targetX, targetY } = data;
         
         // Get source room
-        const sourceRoom = db.getRoomById(sourceRoomId);
+        const sourceRoom = await db.getRoomById(sourceRoomId);
         if (!sourceRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Source room not found' }));
           return;
         }
 
         // Validate source room has available exit in requested direction
-        const exits = getExits(sourceRoom);
+        const exits = await getExits(sourceRoom);
         const directionMap = {
           'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west',
           'NE': 'northeast', 'NW': 'northwest', 'SE': 'southeast', 'SW': 'southwest'
@@ -1169,7 +1159,7 @@ wss.on('connection', (ws, req) => {
         }
 
         // Check if target room exists
-        const targetRoom = db.getRoomByCoords(targetMapId, targetX, targetY);
+        const targetRoom = await db.getRoomByCoords(targetMapId, targetX, targetY);
         if (!targetRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Target room does not exist at those coordinates' }));
           return;
@@ -1183,7 +1173,7 @@ wss.on('connection', (ws, req) => {
         const targetDirection = oppositeDir[sourceDirection];
 
         // Validate target room has available exit in opposite direction
-        const targetExits = getExits(targetRoom);
+        const targetExits = await getExits(targetRoom);
         const targetExitKey = directionMap[targetDirection];
         if (!targetExitKey || targetExits[targetExitKey]) {
           ws.send(JSON.stringify({ type: 'error', message: 'Target room already has exit in opposite direction' }));
@@ -1191,24 +1181,22 @@ wss.on('connection', (ws, req) => {
         }
 
         // Update source room with connection
-        const updateSourceConnection = db.db.prepare(`
+        await db.query(`
           UPDATE rooms 
-          SET connected_map_id = ?, connected_room_x = ?, connected_room_y = ?, connection_direction = ?
-          WHERE id = ?
-        `);
-        updateSourceConnection.run(targetMapId, targetX, targetY, sourceDirection, sourceRoomId);
+          SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4
+          WHERE id = $5
+        `, [targetMapId, targetX, targetY, sourceDirection, sourceRoomId]);
 
         // Update target room with reverse connection
-        const updateTargetConnection = db.db.prepare(`
+        await db.query(`
           UPDATE rooms 
-          SET connected_map_id = ?, connected_room_x = ?, connected_room_y = ?, connection_direction = ?
-          WHERE id = ?
-        `);
-        updateTargetConnection.run(sourceRoom.map_id, sourceRoom.x, sourceRoom.y, targetDirection, targetRoom.id);
+          SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4
+          WHERE id = $5
+        `, [sourceRoom.map_id, sourceRoom.x, sourceRoom.y, targetDirection, targetRoom.id]);
 
         // Get updated rooms
-        const updatedSource = db.getRoomById(sourceRoomId);
-        const updatedTarget = db.getRoomById(targetRoom.id);
+        const updatedSource = await db.getRoomById(sourceRoomId);
+        const updatedTarget = await db.getRoomById(targetRoom.id);
 
         ws.send(JSON.stringify({
           type: 'mapConnected',
@@ -1243,13 +1231,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const roomTypeColors = db.getAllRoomTypeColors();
+        const roomTypeColors = await db.getAllRoomTypeColors();
         const colorMap = {};
         roomTypeColors.forEach(rtc => {
           colorMap[rtc.room_type] = rtc.color;
@@ -1270,7 +1258,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1283,7 +1271,7 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.setRoomTypeColor(roomType, color);
+          await db.setRoomTypeColor(roomType, color);
           ws.send(JSON.stringify({
             type: 'roomTypeColorUpdated',
             roomType,
@@ -1291,11 +1279,11 @@ wss.on('connection', (ws, req) => {
           }));
           
           // Broadcast to all connected map editors to refresh colors
-          connectedPlayers.forEach((playerData) => {
+          for (const [_, playerData] of connectedPlayers) {
             if (playerData.ws.readyState === WebSocket.OPEN) {
-              const otherPlayer = db.getPlayerByName(playerData.playerName);
-              if (otherPlayer && otherPlayer.god_mode === 1) {
-                const roomTypeColors = db.getAllRoomTypeColors();
+              const otherPlayer = await db.getPlayerByName(playerData.playerName);
+              if (otherPlayer && otherPlayer.flag_god_mode === 1) {
+                const roomTypeColors = await db.getAllRoomTypeColors();
                 const colorMap = {};
                 roomTypeColors.forEach(rtc => {
                   colorMap[rtc.room_type] = rtc.color;
@@ -1306,7 +1294,7 @@ wss.on('connection', (ws, req) => {
                 }));
               }
             }
-          });
+          }
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', message: 'Failed to set room type color: ' + err.message }));
         }
@@ -1326,13 +1314,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const npcs = db.getAllScriptableNPCs();
+        const npcs = await db.getAllScriptableNPCs();
         ws.send(JSON.stringify({
           type: 'npcList',
           npcs
@@ -1352,7 +1340,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1370,8 +1358,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const id = db.createScriptableNPC(npc);
-          const created = db.getScriptableNPCById(id);
+          const id = await db.createScriptableNPC(npc);
+          const created = await db.getScriptableNPCById(id);
           ws.send(JSON.stringify({
             type: 'npcCreated',
             npc: created
@@ -1394,7 +1382,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1412,8 +1400,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.updateScriptableNPC(npc);
-          const updated = db.getScriptableNPCById(npc.id);
+          await db.updateScriptableNPC(npc);
+          const updated = await db.getScriptableNPCById(npc.id);
           ws.send(JSON.stringify({
             type: 'npcUpdated',
             npc: updated
@@ -1436,7 +1424,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1448,7 +1436,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const placements = db.getNpcPlacements(npcId);
+        const placements = await db.getNpcPlacements(npcId);
         ws.send(JSON.stringify({
           type: 'npcPlacements',
           npcId,
@@ -1469,19 +1457,19 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const moonless = db.getMapByName('Moonless Meadow');
+        const moonless = await db.getMapByName('Moonless Meadow');
         if (!moonless) {
           ws.send(JSON.stringify({ type: 'npcPlacementRooms', error: 'Moonless Meadow map not found' }));
           return;
         }
 
-        const rooms = db.getRoomsForNpcPlacement(moonless.id);
+        const rooms = await db.getRoomsForNpcPlacement(moonless.id);
         ws.send(JSON.stringify({
           type: 'npcPlacementRooms',
           map: { id: moonless.id, name: moonless.name },
@@ -1502,7 +1490,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1516,8 +1504,8 @@ wss.on('connection', (ws, req) => {
 
         try {
           // placeNPCInRoom enforces Moonless Meadow restriction
-          const placementId = db.placeNPCInRoom(npcId, roomId, slot || 0, { cycles: 0 });
-          const placements = db.getNpcPlacements(npcId);
+          const placementId = await db.placeNPCInRoom(npcId, roomId, slot || 0, { cycles: 0 });
+          const placements = await db.getNpcPlacements(npcId);
           const placement = placements.find(p => p.id === placementId) || null;
           ws.send(JSON.stringify({
             type: 'npcPlacementAdded',
@@ -1541,7 +1529,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1554,8 +1542,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.deleteNpcPlacement(placementId);
-          const placements = npcId ? db.getNpcPlacements(npcId) : [];
+          await db.deleteNpcPlacement(placementId);
+          const placements = npcId ? await db.getNpcPlacements(npcId) : [];
           ws.send(JSON.stringify({
             type: 'npcPlacementRemoved',
             placementId,
@@ -1583,13 +1571,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const items = db.getAllItems();
+        const items = await db.getAllItems();
         ws.send(JSON.stringify({ type: 'itemList', items }));
       }
 
@@ -1606,7 +1594,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1619,7 +1607,7 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const newItem = db.createItem(item);
+          const newItem = await db.createItem(item);
           ws.send(JSON.stringify({ type: 'itemCreated', item: newItem }));
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', message: 'Failed to create item: ' + err.message }));
@@ -1639,7 +1627,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1652,7 +1640,7 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const updatedItem = db.updateItem(item);
+          const updatedItem = await db.updateItem(item);
           ws.send(JSON.stringify({ type: 'itemUpdated', item: updatedItem }));
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', message: 'Failed to update item: ' + err.message }));
@@ -1675,13 +1663,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const players = db.getAllPlayers();
+        const players = await db.getAllPlayers();
         ws.send(JSON.stringify({ type: 'playerList', players }));
       }
 
@@ -1698,7 +1686,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        const currentPlayer = await db.getPlayerByName(currentPlayerName);
         if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1711,7 +1699,7 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const updatedPlayer = db.updatePlayer(player);
+          const updatedPlayer = await db.updatePlayer(player);
           ws.send(JSON.stringify({ type: 'playerUpdated', player: updatedPlayer }));
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', message: 'Failed to update player: ' + err.message }));
@@ -1732,15 +1720,15 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        const currentPlayer = await db.getPlayerByName(currentPlayerName);
         if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
         const { playerId } = data;
-        const inventory = db.getPlayerItems(playerId);
-        const currentEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        const inventory = await db.getPlayerItems(playerId);
+        const currentEncumbrance = await db.getPlayerCurrentEncumbrance(playerId);
         
         ws.send(JSON.stringify({ 
           type: 'playerInventory', 
@@ -1763,7 +1751,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        const currentPlayer = await db.getPlayerByName(currentPlayerName);
         if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1772,15 +1760,15 @@ wss.on('connection', (ws, req) => {
         const { playerId, itemName, quantity } = data;
         
         // Check encumbrance
-        const targetPlayer = db.getPlayerById(playerId);
+        const targetPlayer = await db.getPlayerById(playerId);
         if (!targetPlayer) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
         
-        const currentEnc = db.getPlayerCurrentEncumbrance(playerId);
+        const currentEnc = await db.getPlayerCurrentEncumbrance(playerId);
         const maxEnc = targetPlayer.resource_max_encumbrance || 100;
-        const itemEnc = db.getItemEncumbrance(itemName);
+        const itemEnc = await db.getItemEncumbrance(itemName);
         const totalNewEnc = itemEnc * quantity;
         
         if (currentEnc + totalNewEnc > maxEnc) {
@@ -1788,10 +1776,10 @@ wss.on('connection', (ws, req) => {
           return;
         }
         
-        db.addPlayerItem(playerId, itemName, quantity);
+        await db.addPlayerItem(playerId, itemName, quantity);
         
-        const inventory = db.getPlayerItems(playerId);
-        const newEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        const inventory = await db.getPlayerItems(playerId);
+        const newEncumbrance = await db.getPlayerCurrentEncumbrance(playerId);
         
         ws.send(JSON.stringify({ 
           type: 'playerInventoryUpdated', 
@@ -1800,11 +1788,11 @@ wss.on('connection', (ws, req) => {
         }));
         
         // If this player is online, update their stats
-        connectedPlayers.forEach((pd, sid) => {
+        for (const [sid, pd] of connectedPlayers) {
           if (pd.playerId === playerId) {
-            sendPlayerStats(sid);
+            await sendPlayerStats(sid);
           }
-        });
+        }
       }
 
       // Remove item from player inventory (God Mode)
@@ -1821,7 +1809,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const currentPlayer = db.getPlayerByName(currentPlayerName);
+        const currentPlayer = await db.getPlayerByName(currentPlayerName);
         if (!currentPlayer || currentPlayer.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1829,10 +1817,10 @@ wss.on('connection', (ws, req) => {
 
         const { playerId, itemName, quantity } = data;
         
-        db.removePlayerItem(playerId, itemName, quantity);
+        await db.removePlayerItem(playerId, itemName, quantity);
         
-        const inventory = db.getPlayerItems(playerId);
-        const newEncumbrance = db.getPlayerCurrentEncumbrance(playerId);
+        const inventory = await db.getPlayerItems(playerId);
+        const newEncumbrance = await db.getPlayerCurrentEncumbrance(playerId);
         
         ws.send(JSON.stringify({ 
           type: 'playerInventoryUpdated', 
@@ -1841,11 +1829,11 @@ wss.on('connection', (ws, req) => {
         }));
         
         // If this player is online, update their stats
-        connectedPlayers.forEach((pd, sid) => {
+        for (const [sid, pd] of connectedPlayers) {
           if (pd.playerId === playerId) {
-            sendPlayerStats(sid);
+            await sendPlayerStats(sid);
           }
-        });
+        }
       }
 
       // ============================================================
@@ -1864,13 +1852,13 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
         }
 
-        const maps = db.getAllMaps();
+        const maps = await db.getAllMaps();
         ws.send(JSON.stringify({ type: 'jumpMaps', maps }));
       }
 
@@ -1887,7 +1875,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1899,26 +1887,20 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const rooms = db.getRoomsByMap(mapId);
+        const rooms = await db.getRoomsByMap(mapId);
         ws.send(JSON.stringify({ type: 'jumpRooms', rooms }));
       }
 
       else if (data.type === 'jumpToRoom') {
-        let currentSessionId = null;
-        let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, sId) => {
-          if (playerData.ws === ws) {
-            currentSessionId = sId;
-            currentPlayerName = playerData.playerName;
-          }
-        });
-
-        if (!currentPlayerName) {
+        // connectionId is already available in closure from authentication
+        if (!connectionId || !connectedPlayers.has(connectionId)) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
           return;
         }
+        const jumpPlayerData = connectedPlayers.get(connectionId);
+        const currentPlayerName = jumpPlayerData.playerName;
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -1930,49 +1912,49 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const targetRoom = db.getRoomById(roomId);
+        const targetRoom = await db.getRoomById(roomId);
         if (!targetRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
           return;
         }
 
         // Update player's room in database
-        db.updatePlayerRoom(targetRoom.id, currentPlayerName);
+        await db.updatePlayerRoom(targetRoom.id, currentPlayerName);
         
         // Update connected player data
-        const playerData = connectedPlayers.get(currentSessionId);
-        const oldRoomId = playerData.roomId;
-        playerData.roomId = targetRoom.id;
+        const oldRoomId = jumpPlayerData.roomId;
+        jumpPlayerData.roomId = targetRoom.id;
 
         // End any active harvest session
-        if (playerData.playerId) {
-          const activeSession = findPlayerHarvestSession(playerData.playerId);
+        if (jumpPlayerData.playerId) {
+          const activeSession = await findPlayerHarvestSession(jumpPlayerData.playerId);
           if (activeSession) {
-            endHarvestSession(activeSession.roomNpcId, true);
+            await endHarvestSession(activeSession.roomNpcId, true);
           }
         }
 
         // Remove poofable items from old room
-        db.removePoofableItemsFromRoom(oldRoomId);
+        await db.removePoofableItemsFromRoom(oldRoomId);
 
         // Notify players in old room
         broadcastToRoom(oldRoomId, {
           type: 'playerLeft',
           playerName: currentPlayerName
-        }, currentSessionId);
+        }, connectionId);
 
         // Get new room data
         const playersInNewRoom = getConnectedPlayersInRoom(targetRoom.id).filter(p => p !== currentPlayerName);
-        const exits = getExits(targetRoom);
-        const map = db.getMapById(targetRoom.map_id);
-        const npcsInNewRoom = db.getNPCsInRoom(targetRoom.id).map(npc => ({
+        const exits = await getExits(targetRoom);
+        const map = await db.getMapById(targetRoom.map_id);
+        const npcsInNewRoomRaw = await db.getNPCsInRoom(targetRoom.id);
+        const npcsInNewRoom = npcsInNewRoomRaw.map(npc => ({
           id: npc.id,
           name: npc.name,
           description: npc.description,
           state: npc.state,
           color: npc.color
         }));
-        const roomItems = db.getRoomItems(targetRoom.id);
+        const roomItems = await db.getRoomItems(targetRoom.id);
 
         // Send moved message to player
         ws.send(JSON.stringify({
@@ -1987,7 +1969,7 @@ wss.on('connection', (ws, req) => {
         }));
 
         // Send map update
-        const mapRooms = db.getRoomsByMap(targetRoom.map_id);
+        const mapRooms = await db.getRoomsByMap(targetRoom.map_id);
         ws.send(JSON.stringify({
           type: 'mapData',
           rooms: mapRooms.map(r => ({
@@ -2007,7 +1989,7 @@ wss.on('connection', (ws, req) => {
         broadcastToRoom(targetRoom.id, {
           type: 'playerJoined',
           playerName: currentPlayerName
-        }, currentSessionId);
+        }, connectionId);
 
         ws.send(JSON.stringify({ 
           type: 'message', 
@@ -2031,7 +2013,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -2043,8 +2025,8 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const roomItems = db.getRoomItems(roomId);
-        const allItems = db.getAllItems();
+        const roomItems = await db.getRoomItems(roomId);
+        const allItems = await db.getAllItems();
         ws.send(JSON.stringify({
           type: 'roomItemsForEditor',
           roomId,
@@ -2066,7 +2048,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -2079,8 +2061,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.addRoomItem(roomId, itemName, quantity || 1);
-          const roomItems = db.getRoomItems(roomId);
+          await db.addRoomItem(roomId, itemName, quantity || 1);
+          const roomItems = await db.getRoomItems(roomId);
           ws.send(JSON.stringify({
             type: 'roomItemAdded',
             roomId,
@@ -2105,7 +2087,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -2118,8 +2100,8 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          db.removeRoomItem(roomId, itemName, quantity || 1);
-          const roomItems = db.getRoomItems(roomId);
+          await db.removeRoomItem(roomId, itemName, quantity || 1);
+          const roomItems = await db.getRoomItems(roomId);
           ws.send(JSON.stringify({
             type: 'roomItemRemoved',
             roomId,
@@ -2144,7 +2126,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -2158,9 +2140,9 @@ wss.on('connection', (ws, req) => {
 
         try {
           // Get all items in room and remove them all
-          const currentItems = db.getRoomItems(roomId);
+          const currentItems = await db.getRoomItems(roomId);
           for (const item of currentItems) {
-            db.removeRoomItem(roomId, item.item_name, item.quantity);
+            await db.removeRoomItem(roomId, item.item_name, item.quantity);
           }
           ws.send(JSON.stringify({
             type: 'roomItemsCleared',
@@ -2173,28 +2155,20 @@ wss.on('connection', (ws, req) => {
       }
 
       else if (data.type === 'look') {
-        // Find player by WebSocket connection - need both sessionId and playerName
-        let currentSessionId = null;
-        let currentPlayerName = null;
-        connectedPlayers.forEach((playerData, sId) => {
-          if (playerData.ws === ws) {
-            currentSessionId = sId;
-            currentPlayerName = playerData.playerName;
-          }
-        });
-
-        if (!currentPlayerName || !currentSessionId) {
+        // connectionId is already available in closure from authentication
+        if (!connectionId || !connectedPlayers.has(connectionId)) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
           return;
         }
+        const lookPlayerData = connectedPlayers.get(connectionId);
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(lookPlayerData.playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
 
-        const currentRoom = db.getRoomById(player.current_room_id);
+        const currentRoom = await db.getRoomById(player.current_room_id);
         if (!currentRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
           return;
@@ -2203,12 +2177,12 @@ wss.on('connection', (ws, req) => {
         const target = (data.target || '').trim();
         if (!target) {
           // No specific target: send full room update (same as entering room)
-          sendRoomUpdate(currentSessionId, currentRoom, true); // showFullInfo = true
+          await sendRoomUpdate(connectionId, currentRoom, true); // showFullInfo = true
           return;
         }
 
         // LOOK at NPC in room by (partial) name match
-        const npcsInRoom = db.getNPCsInRoom(currentRoom.id);
+        const npcsInRoom = await db.getNPCsInRoom(currentRoom.id);
         const query = target.toLowerCase();
         const matches = npcsInRoom.filter(npc => 
           npc.name && npc.name.toLowerCase().includes(query)
@@ -2238,13 +2212,13 @@ wss.on('connection', (ws, req) => {
       // Inventory Command (inventory, inv, i)
       // ============================================================
       else if (data.type === 'inventory') {
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
         
-        const items = db.getPlayerItems(player.id);
+        const items = await db.getPlayerItems(player.id);
         ws.send(JSON.stringify({ type: 'inventoryList', items }));
       }
 
@@ -2253,13 +2227,13 @@ wss.on('connection', (ws, req) => {
       // Supports: "take <item>", "take all <item>", "take <quantity> <item>"
       // ============================================================
       else if (data.type === 'take') {
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
         
-        const currentRoom = db.getRoomById(player.current_room_id);
+        const currentRoom = await db.getRoomById(player.current_room_id);
         if (!currentRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
           return;
@@ -2275,7 +2249,7 @@ wss.on('connection', (ws, req) => {
         let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
         const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
         
-        const roomItems = db.getRoomItems(currentRoom.id);
+        const roomItems = await db.getRoomItems(currentRoom.id);
         const matches = roomItems.filter(i => i.item_name.toLowerCase().includes(query));
         
         if (matches.length === 0) {
@@ -2288,10 +2262,10 @@ wss.on('connection', (ws, req) => {
           const availableQuantity = item.quantity;
           
           // Calculate encumbrance limits
-          const currentEncumbrance = db.getPlayerCurrentEncumbrance(player.id);
+          const currentEncumbrance = await db.getPlayerCurrentEncumbrance(player.id);
           const maxEncumbrance = player.resource_max_encumbrance || 100;
           const remainingCapacity = maxEncumbrance - currentEncumbrance;
-          const itemEncumbrance = db.getItemEncumbrance(item.item_name);
+          const itemEncumbrance = await db.getItemEncumbrance(item.item_name);
           
           // How many can fit in remaining capacity?
           const maxCanCarry = Math.floor(remainingCapacity / itemEncumbrance);
@@ -2330,8 +2304,8 @@ wss.on('connection', (ws, req) => {
           }
           
           // Remove from room and add to player inventory
-          db.removeRoomItem(currentRoom.id, item.item_name, quantityToTake);
-          db.addPlayerItem(player.id, item.item_name, quantityToTake);
+          await db.removeRoomItem(currentRoom.id, item.item_name, quantityToTake);
+          await db.addPlayerItem(player.id, item.item_name, quantityToTake);
           
           // Send feedback message
           let message;
@@ -2352,10 +2326,10 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ type: 'message', message }));
           
           // Send updated room to player to refresh items on ground
-          sendRoomUpdate(sessionId, currentRoom);
+          await sendRoomUpdate(connectionId, currentRoom);
           
           // Send updated player stats (encumbrance changed)
-          sendPlayerStats(sessionId);
+          await sendPlayerStats(connectionId);
         }
       }
 
@@ -2364,13 +2338,13 @@ wss.on('connection', (ws, req) => {
       // Supports: "drop <item>", "drop all <item>", "drop <quantity> <item>"
       // ============================================================
       else if (data.type === 'drop') {
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
         
-        const currentRoom = db.getRoomById(player.current_room_id);
+        const currentRoom = await db.getRoomById(player.current_room_id);
         if (!currentRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
           return;
@@ -2386,7 +2360,7 @@ wss.on('connection', (ws, req) => {
         let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
         const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
         
-        const playerItems = db.getPlayerItems(player.id);
+        const playerItems = await db.getPlayerItems(player.id);
         const matches = playerItems.filter(i => i.item_name.toLowerCase().includes(query));
         
         if (matches.length === 0) {
@@ -2419,8 +2393,8 @@ wss.on('connection', (ws, req) => {
           }
           
           // Remove from player inventory and add to room
-          db.removePlayerItem(player.id, item.item_name, quantityToDrop);
-          db.addRoomItem(currentRoom.id, item.item_name, quantityToDrop);
+          await db.removePlayerItem(player.id, item.item_name, quantityToDrop);
+          await db.addRoomItem(currentRoom.id, item.item_name, quantityToDrop);
           
           // Send feedback message
           let message;
@@ -2432,10 +2406,10 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ type: 'message', message }));
           
           // Send updated room to player to refresh items on ground
-          sendRoomUpdate(sessionId, currentRoom);
+          await sendRoomUpdate(connectionId, currentRoom);
           
           // Send updated player stats (encumbrance changed)
-          sendPlayerStats(sessionId);
+          await sendPlayerStats(connectionId);
         }
       }
 
@@ -2444,13 +2418,13 @@ wss.on('connection', (ws, req) => {
       // Starts a harvest SESSION, NPC produces while session is active
       // ============================================================
       else if (data.type === 'harvest') {
-        const player = db.getPlayerByName(playerName);
+        const player = await db.getPlayerByName(playerName);
         if (!player) {
           ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
           return;
         }
         
-        const currentRoom = db.getRoomById(player.current_room_id);
+        const currentRoom = await db.getRoomById(player.current_room_id);
         if (!currentRoom) {
           ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
           return;
@@ -2463,7 +2437,7 @@ wss.on('connection', (ws, req) => {
         }
         
         // Find NPC in room by partial name match
-        const npcsInRoom = db.getNPCsInRoom(currentRoom.id);
+        const npcsInRoom = await db.getNPCsInRoom(currentRoom.id);
         const npcMatches = npcsInRoom.filter(n => n.name && n.name.toLowerCase().includes(query));
         
         if (npcMatches.length === 0) {
@@ -2480,7 +2454,7 @@ wss.on('connection', (ws, req) => {
         const roomNpc = npcMatches[0];
         
         // Get NPC definition to check type and required items
-        const npcDef = db.getScriptableNPCById(roomNpc.npcId);
+        const npcDef = await db.getScriptableNPCById(roomNpc.npcId);
         if (!npcDef) {
           ws.send(JSON.stringify({ type: 'message', message: `${roomNpc.name} cannot be harvested.` }));
           return;
@@ -2502,7 +2476,7 @@ wss.on('connection', (ws, req) => {
         
         // Verify player has all required items
         if (Object.keys(requiredItems).length > 0) {
-          const playerItems = db.getPlayerItems(player.id);
+          const playerItems = await db.getPlayerItems(player.id);
           for (const [itemName, requiredQty] of Object.entries(requiredItems)) {
             const playerItem = playerItems.find(i => 
               i.item_name.toLowerCase() === itemName.toLowerCase()
@@ -2516,7 +2490,8 @@ wss.on('connection', (ws, req) => {
         
         // Get fresh NPC state from database (roomNpc.state is already parsed, but we need to check fresh)
         // Re-fetch the room NPC to ensure we have the latest state
-        const freshRoomNpc = db.db.prepare('SELECT * FROM room_npcs WHERE id = ?').get(roomNpc.id);
+        const freshRoomNpcResult = await db.query('SELECT * FROM room_npcs WHERE id = $1', [roomNpc.id]);
+        const freshRoomNpc = freshRoomNpcResult.rows[0];
         let npcState = {};
         try {
           npcState = freshRoomNpc && freshRoomNpc.state ? JSON.parse(freshRoomNpc.state) : {};
@@ -2551,7 +2526,7 @@ wss.on('connection', (ws, req) => {
         npcState.cooldown_until = null;
         
         // Update NPC state in database
-        db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);
+        await db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);
         
         ws.send(JSON.stringify({ type: 'message', message: `You begin harvesting the ${roomNpc.name}.` }));
       }
@@ -2569,7 +2544,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        const player = db.getPlayerByName(currentPlayerName);
+        const player = await db.getPlayerByName(currentPlayerName);
         if (!player || player.flag_god_mode !== 1) {
           ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
           return;
@@ -2582,17 +2557,17 @@ wss.on('connection', (ws, req) => {
         }
 
         try {
-          const room = db.getRoomById(roomId);
+          const room = await db.getRoomById(roomId);
           if (!room) {
             ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
             return;
           }
 
           // Disconnect the room (handles both ends and orphaned connections)
-          db.disconnectRoom(roomId);
+          await db.disconnectRoom(roomId);
 
           // Get updated room
-          const updatedRoom = db.getRoomById(roomId);
+          const updatedRoom = await db.getRoomById(roomId);
 
           ws.send(JSON.stringify({
             type: 'mapDisconnected',
@@ -2616,40 +2591,41 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => {
-    // Find and remove disconnected player by sessionId
-    if (sessionId && connectedPlayers.has(sessionId)) {
-      const playerData = connectedPlayers.get(sessionId);
+  ws.on('close', async () => {
+    // Find and remove disconnected player by connectionId (stored on ws object)
+    const connId = ws.connectionId || connectionId;
+    if (connId && connectedPlayers.has(connId)) {
+      const playerData = connectedPlayers.get(connId);
       const roomId = playerData.roomId;
       const disconnectedPlayerName = playerData.playerName;
       const disconnectedPlayerId = playerData.playerId;
       
       // End any active harvest sessions for this player
       if (disconnectedPlayerId) {
-        const activeSession = findPlayerHarvestSession(disconnectedPlayerId);
+        const activeSession = await findPlayerHarvestSession(disconnectedPlayerId);
         if (activeSession) {
-          endHarvestSession(activeSession.roomNpcId, true);
+          await endHarvestSession(activeSession.roomNpcId, true);
         }
       }
       
       // Remove poofable items from room when player disconnects
       if (roomId) {
-        db.removePoofableItemsFromRoom(roomId);
+        await db.removePoofableItemsFromRoom(roomId);
         
         // Send room update to players still in room to refresh items
-        const room = db.getRoomById(roomId);
+        const room = await db.getRoomById(roomId);
         if (room) {
-          connectedPlayers.forEach((otherPlayerData, otherSessionId) => {
+          for (const [otherConnId, otherPlayerData] of connectedPlayers) {
             if (otherPlayerData.roomId === roomId && 
                 otherPlayerData.ws.readyState === WebSocket.OPEN &&
-                otherSessionId !== sessionId) {
-              sendRoomUpdate(otherSessionId, room);
+                otherConnId !== connId) {
+              await sendRoomUpdate(otherConnId, room);
             }
-          });
+          }
         }
       }
       
-      connectedPlayers.delete(sessionId);
+      connectedPlayers.delete(connId);
 
       // Notify others in the room
       broadcastToRoom(roomId, {
@@ -2657,7 +2633,7 @@ wss.on('connection', (ws, req) => {
         playerName: disconnectedPlayerName
       });
 
-      console.log(`Player ${disconnectedPlayerName} disconnected`);
+      console.log(`Player ${disconnectedPlayerName} disconnected (${connId})`);
     }
   });
 });
@@ -2675,12 +2651,13 @@ const HARVEST_SAFE_COMMANDS = [
 ];
 
 // Helper to end a harvest session on an NPC
-function endHarvestSession(roomNpcId, startCooldown = true) {
-  const roomNpc = db.db.prepare('SELECT * FROM room_npcs WHERE id = ?').get(roomNpcId);
+async function endHarvestSession(roomNpcId, startCooldown = true) {
+  const roomNpcResult = await db.query('SELECT * FROM room_npcs WHERE id = $1', [roomNpcId]);
+  const roomNpc = roomNpcResult.rows[0];
   if (!roomNpc) return;
   
   // Get NPC definition for cooldown time
-  const npcDef = db.getScriptableNPCById(roomNpc.npc_id);
+  const npcDef = await db.getScriptableNPCById(roomNpc.npc_id);
   const cooldownTime = npcDef ? (npcDef.cooldown_time || 120000) : 120000;
   
   let state = {};
@@ -2697,20 +2674,20 @@ function endHarvestSession(roomNpcId, startCooldown = true) {
     state.cooldown_until = Date.now() + cooldownTime;
   }
   
-  db.updateNPCState(roomNpcId, state, roomNpc.last_cycle_run);
+  await db.updateNPCState(roomNpcId, state, roomNpc.last_cycle_run);
   return state;
 }
 
 // Helper to find active harvest session for a player
-function findPlayerHarvestSession(playerId) {
+async function findPlayerHarvestSession(playerId) {
   // Find any room_npc where this player has an active harvest
-  const stmt = db.db.prepare(`
+  const result = await db.query(`
     SELECT rn.*, sn.name as npc_name, sn.npc_type 
     FROM room_npcs rn 
     JOIN scriptable_npcs sn ON rn.npc_id = sn.id 
-    WHERE rn.active = 1 AND sn.npc_type = 'rhythm'
+    WHERE rn.active = TRUE AND sn.npc_type = 'rhythm'
   `);
-  const rhythmNpcs = stmt.all();
+  const rhythmNpcs = result.rows;
   
   for (const npc of rhythmNpcs) {
     let state = {};
@@ -2729,9 +2706,9 @@ function findPlayerHarvestSession(playerId) {
 // NPC Cycle Engine (Tick Loop)
 // Runs independently of player actions, processes NPC cycles on timer
 function startNPCCycleEngine() {
-  setInterval(() => {
+  setInterval(async () => {
     try {
-      const activeNPCs = db.getAllActiveNPCs();
+      const activeNPCs = await db.getAllActiveNPCs();
       const now = Date.now();
       
       for (const roomNpc of activeNPCs) {
@@ -2744,13 +2721,13 @@ function startNPCCycleEngine() {
             // Harvest time expired - end the session
             const harvestingPlayerId = roomNpc.state.harvesting_player_id;
             // Get NPC name from definition
-            const npcDef = db.getScriptableNPCById(roomNpc.npcId);
+            const npcDef = await db.getScriptableNPCById(roomNpc.npcId);
             const npcName = npcDef ? npcDef.name : 'creature';
             
-            endHarvestSession(roomNpc.id, true);
+            await endHarvestSession(roomNpc.id, true);
             // Notify the harvesting player if they're still connected
             if (harvestingPlayerId) {
-              connectedPlayers.forEach((playerData, sessionId) => {
+              connectedPlayers.forEach((playerData, connId) => {
                 if (playerData.playerId === harvestingPlayerId && 
                     playerData.ws.readyState === WebSocket.OPEN) {
                   playerData.ws.send(JSON.stringify({ 
@@ -2761,7 +2738,7 @@ function startNPCCycleEngine() {
               });
             }
             // Reload NPC state after ending session
-            const updatedNPCs = db.getAllActiveNPCs();
+            const updatedNPCs = await db.getAllActiveNPCs();
             const updatedNPC = updatedNPCs.find(n => n.id === roomNpc.id);
             if (updatedNPC) {
               Object.assign(roomNpc, updatedNPC);
@@ -2789,22 +2766,22 @@ function startNPCCycleEngine() {
             // If NPC produced items, add them to the room
             if (result.producedItems && result.producedItems.length > 0) {
               for (const item of result.producedItems) {
-                db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
+                await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
               }
               
               // Send room update to all players in the room so they see the new items
-              const room = db.getRoomById(roomNpc.roomId);
+              const room = await db.getRoomById(roomNpc.roomId);
               if (room) {
-                connectedPlayers.forEach((playerData, sessionId) => {
+                for (const [sessionId, playerData] of connectedPlayers) {
                   if (playerData.roomId === roomNpc.roomId && playerData.ws.readyState === WebSocket.OPEN) {
-                    sendRoomUpdate(sessionId, room);
+                    await sendRoomUpdate(connectionId, room);
                   }
-                });
+                }
               }
             }
             
             // Update NPC state in database (just the state part)
-            db.updateNPCState(roomNpc.id, result.state, now);
+            await db.updateNPCState(roomNpc.id, result.state, now);
           } catch (err) {
             console.error(`Error processing NPC cycle for room_npc ${roomNpc.id}:`, err);
           }
@@ -2821,17 +2798,17 @@ function startNPCCycleEngine() {
 // Periodic room update for harvest/cooldown progress bars
 // Updates every second to keep progress bars smooth
 function startRoomUpdateTimer() {
-  setInterval(() => {
+  setInterval(async () => {
     try {
       // Send room updates to all connected players to refresh progress bars
-      connectedPlayers.forEach((playerData, sessionId) => {
+      for (const [connId, playerData] of connectedPlayers) {
         if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN && playerData.roomId) {
-          const room = db.getRoomById(playerData.roomId);
+          const room = await db.getRoomById(playerData.roomId);
           if (room) {
-            sendRoomUpdate(sessionId, room);
+            await sendRoomUpdate(connId, room);
           }
         }
-      });
+      }
     } catch (err) {
       console.error('Error in room update timer:', err);
     }
@@ -2842,11 +2819,34 @@ function startRoomUpdateTimer() {
 
 const PORT = process.env.PORT || 3434;
 const HOST = process.env.HOST || '0.0.0.0';
-server.listen(PORT, HOST, () => {
-  console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
-  // Start NPC cycle engine after server starts
-  startNPCCycleEngine();
-  // Start room update timer for progress bars
-  startRoomUpdateTimer();
-});
 
+// Async startup function
+async function startServer() {
+  try {
+    // Test database connection
+    const connected = await db.testConnection();
+    if (!connected) {
+      console.error('FATAL: Could not connect to PostgreSQL database');
+      process.exit(1);
+    }
+    
+    // Run migrations
+    const runMigrations = require('./scripts/migrate');
+    await runMigrations();
+    
+    // Start HTTP server
+    server.listen(PORT, HOST, () => {
+      console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
+      // Start NPC cycle engine after server starts
+      startNPCCycleEngine();
+      // Start room update timer for progress bars
+      startRoomUpdateTimer();
+    });
+  } catch (err) {
+    console.error('FATAL: Server startup failed:', err.message);
+    console.error(err.stack);
+    process.exit(1);
+  }
+}
+
+startServer();
