@@ -1113,8 +1113,9 @@ function updateSidePanel() {
             ${connectionInfo}
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <label style="margin: 0; min-width: 80px;">Room Name:</label>
-                <input type="text" id="editRoomName" value="${selectedRoom.name}" style="flex: 1;">
+                <input type="text" id="editRoomName" value="${selectedRoom.name}" style="flex: 1;" placeholder="Room name">
             </div>
+            <div style="font-size: 0.75em; color: #888; margin-bottom: 8px;">ID: ${selectedRoom.id}</div>
             <label style="margin-top: 8px;">Description:</label>
             <textarea id="editRoomDescription" style="min-height: 60px; margin-bottom: 8px;">${selectedRoom.description || ''}</textarea>
             <label style="margin-top: 8px;">Room Type:</label>
@@ -1131,7 +1132,7 @@ function updateSidePanel() {
                     <p style="font-size: 0.8em; color: #888;">Loading items...</p>
                 </div>
                 <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: stretch;">
-                    <select id="itemToAdd" style="flex: 1; font-size: 0.8em; min-width: 0;">
+                    <select id="itemToAdd" style="flex: 0.75; font-size: 0.8em; min-width: 0;">
                         <option value="">Select item...</option>
                     </select>
                     <button id="addItemBtn" style="padding: 4px 12px; font-size: 0.8em; white-space: nowrap; flex-shrink: 0;">Add</button>

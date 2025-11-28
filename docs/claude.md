@@ -16,9 +16,18 @@ thegame/
 │   ├── client.js (game client)
 │   ├── map-editor.js (map editor logic)
 │   └── npc-editor.js (NPC editor logic)
+├── migrations/
+│   ├── 001_schema.sql
+│   ├── 002_seed_data.sql
+│   └── 003_indexes.sql
+├── scripts/
+│   ├── migrate.js
+│   └── migrate-data.js
 ├── docs/
-│   └── claude.md
-└── game.db (SQLite database, auto-created)
+│   ├── claude.md
+│   └── requirements.md
+├── .env (DATABASE_URL for PostgreSQL)
+└── nixpacks.toml (Railway deployment config)
 ```
 
 ## Implementation Steps
@@ -27,12 +36,19 @@ thegame/
 - Create `package.json` with dependencies:
   - `express` - web server
   - `ws` - WebSocket library
-  - `better-sqlite3` - SQLite database (synchronous, faster than sqlite3)
+  - `pg` - PostgreSQL database client (async with connection pooling)
+  - `dotenv` - Environment variable management
+  - `express-session` - Session management middleware
+  - `cookie-parser` - Cookie parsing middleware
   - `nodemon` - Development tool for auto-restart (dev dependency)
-- Set up npm scripts for running the server (`start` and `dev`)
+- Set up npm scripts for running the server (`start`, `dev`, `migrate`)
+- Environment configuration: `.env` file with `DATABASE_URL` for PostgreSQL connection
 
 ### 2. Database Setup (`database.js`)
-- Initialize SQLite database connection
+- Initialize PostgreSQL connection pool using `pg` library
+- All database functions are async (return Promises, use `await`)
+- Connection string from `DATABASE_URL` environment variable
+- SSL configuration for production (Railway)
 - Create `maps` table with columns: `id`, `name`, `width`, `height`, `description`
 - Create `rooms` table with columns:
   - Basic: `id`, `name`, `description`, `x`, `y` (coordinate-based map)
@@ -45,7 +61,12 @@ thegame/
   - **Abilities** (all default 0): `crafting`, `lockpicking`, `stealth`, `dodge`, `critical_hit`
   - **Resources**: `hit_points` (default 50), `max_hit_points` (default 50), `mana` (default 0), `max_mana` (default 0)
   - **God Mode**: `god_mode` (INTEGER, default 0) - administrative privileges flag
-- Database migration: Automatically adds new columns to existing databases
+- Database schema managed via SQL migration files in `migrations/` directory:
+  - `001_schema.sql` - Core table definitions (PostgreSQL syntax: SERIAL, BOOLEAN, TIMESTAMP)
+  - `002_seed_data.sql` - Initial maps, rooms, players, items, room type colors
+  - `003_indexes.sql` - Performance indexes
+- Migration runner: `scripts/migrate.js` applies migrations automatically on server start
+- Data migration: `scripts/migrate-data.js` exports data from SQLite to PostgreSQL (one-time use)
 - Insert initial data:
   - **Maps**:
     - **Newhaven** (20x20): Main town with organized streets
@@ -88,7 +109,8 @@ thegame/
 - Serve static files from `public/` directory
 - Set up WebSocket server using `ws` library
 - WebSocket connection handling:
-  - Track connected players (player name -> WebSocket connection)
+  - Track connected players using unique `connectionId` per WebSocket (allows multiple tabs/browsers)
+  - `connectedPlayers` Map: `connectionId -> { ws, roomId, playerName, playerId, sessionId }`
   - Track which room each player is in (from database)
   - Handle player movement: validate direction (N/S/E/W/NE/NW/SE/SW/U/D), check if adjacent room exists at target coordinates OR if map connection exists, update database
   - Broadcast player join/leave events to all clients in the same room (real-time)
@@ -378,7 +400,7 @@ thegame/
 ## Key Files
 
 1. **package.json** - Project dependencies and scripts
-2. **database.js** - SQLite initialization, multi-map system, room queries, map connections, god mode and room type support, map editor query functions
+2. **database.js** - PostgreSQL connection pool, async database queries, multi-map system, room queries, map connections, god mode and room type support, map editor query functions
 3. **server.js** - Express server + WebSocket server + movement handling + map transitions + god mode handlers + map editor WebSocket handlers
 4. **public/index.html** - Frontend HTML with MajorMUD-style layout, compass coordinates, god mode buttons, map editor overlay
 5. **public/style.css** - Retro terminal styling with coordinates display, god mode button bar, map editor styling
@@ -387,7 +409,10 @@ thegame/
 
 ## Technical Decisions
 
-- Using `better-sqlite3` for synchronous SQLite operations (simpler, faster)
+- Using `pg` (PostgreSQL) with connection pooling for async database operations
+- All database functions are async (return Promises, use `await`)
+- Schema managed via SQL migration files (no inline schema creation)
+- Environment-based configuration: `DATABASE_URL` from `.env` or Railway
 - WebSocket server integrated with Express HTTP server
 - Real-time updates via WebSocket broadcasts (no polling)
 - Simple JSON message protocol for WebSocket communication
@@ -530,7 +555,40 @@ thegame/
 
 ## Recent Updates
 
-### Route-Based Authentication and Session Management (Latest)
+### PostgreSQL Migration (Latest)
+
+#### Database Migration from SQLite to PostgreSQL
+- **Complete rewrite** of `database.js` from synchronous SQLite (`better-sqlite3`) to async PostgreSQL (`pg`)
+- **Migration System**: SQL-based migrations in `migrations/` directory
+  - `001_schema.sql` - Core PostgreSQL schema (SERIAL, BOOLEAN, TIMESTAMP)
+  - `002_seed_data.sql` - Initial data (maps, rooms, players, items, room type colors)
+  - `003_indexes.sql` - Performance indexes
+- **Data Migration Script**: `scripts/migrate-data.js` exports existing SQLite data to PostgreSQL
+- **All database functions converted to async**: All 176+ `db.` calls in `server.js` updated to `await`
+- **Connection Pooling**: Uses `pg.Pool` for efficient connection management
+- **Environment Configuration**: `DATABASE_URL` from `.env` (local) or Railway (production)
+- **PostgreSQL Syntax**: 
+  - `SERIAL PRIMARY KEY` instead of `INTEGER PRIMARY KEY AUTOINCREMENT`
+  - Native `BOOLEAN` type instead of `INTEGER`
+  - `TIMESTAMP DEFAULT NOW()` instead of `TEXT DEFAULT CURRENT_TIMESTAMP`
+  - `RETURNING id` for inserts instead of `lastInsertRowid`
+  - `ON CONFLICT DO NOTHING` instead of `INSERT OR IGNORE`
+- **Removed Legacy Code**: All SQLite-specific cleanup functions, inline seeding, and startup normalizers removed
+
+#### Session Bug Fix (Multiplayer Support)
+- **Fixed "Session Mismatch" Error**: Changed `connectedPlayers` from `sessionId` key to unique `connectionId` per WebSocket
+- **Multiple Browser Support**: Players can now open multiple tabs/browsers with different characters simultaneously
+- **Connection Tracking**: Each WebSocket gets unique `connectionId` (e.g., `conn_1`, `conn_2`)
+- **Room Update Timer Fix**: Fixed timer loop to use `connectionId` instead of undefined `sessionId`
+
+#### UI Improvements
+- **Player Name in HTML Title**: Browser tab title updates to `"The Game - [PlayerName]"` for easy identification
+- **Map Editor Enhancements**:
+  - Room ID display: Shows database ID below room name field (e.g., "ID: 123")
+  - Item selector width: Adjusted from `flex: 1` to `flex: 0.75` to give "Add" button more space
+  - Side panel button width: Set to 20% for consistent sizing
+
+### Route-Based Authentication and Session Management
 
 #### Session-Based Authentication System
 - **express-session Integration**: Server uses `express-session` middleware with MemoryStore
@@ -562,8 +620,10 @@ thegame/
 - WebSocket upgrade request includes session cookie
 - `getSessionFromRequest(req)` extracts and validates session from cookie
 - `authenticateSession` message type validates existing session on WebSocket connect
-- All subsequent WebSocket messages require valid `sessionId` in `connectedPlayers` map
-- `connectedPlayers` Map uses `sessionId` as key (not playerName)
+- Each WebSocket connection gets a unique `connectionId` (e.g., `conn_1`, `conn_2`)
+- `connectedPlayers` Map uses `connectionId` as key (not `sessionId`) to support multiple tabs/browsers
+- All subsequent WebSocket messages require valid `connectionId` in `connectedPlayers` map
+- This allows multiple characters from the same browser to connect simultaneously without conflicts
 
 #### God Mode UI Visibility
 - God mode buttons (Map, NPC, Items, Spells, Craft) only visible to god mode players
@@ -908,9 +968,9 @@ God mode is a special privilege system that grants players administrative capabi
   - `allMaps` - List of all maps
   - `mapConnected` - Maps connected successfully
 
-## Game Database (game.db)
+## PostgreSQL Database
 
-All game data is stored in `game.db`, a SQLite database. This includes:
+All game data is stored in a PostgreSQL database. Connection string provided via `DATABASE_URL` environment variable (from `.env` locally or Railway in production). This includes:
 
 ### Core Tables
 | Table | Purpose |
@@ -1128,10 +1188,17 @@ thegame/
 │   ├── npc-editor.js
 │   ├── item-editor.js (NEW)
 │   └── player-editor.js (NEW)
+├── migrations/
+│   ├── 001_schema.sql
+│   ├── 002_seed_data.sql
+│   └── 003_indexes.sql
+├── scripts/
+│   ├── migrate.js
+│   └── migrate-data.js
 ├── docs/
 │   ├── claude.md
 │   └── requirements.md
-└── game.db
+└── .env (DATABASE_URL for PostgreSQL)
 ```
 
 ### New Database Functions
