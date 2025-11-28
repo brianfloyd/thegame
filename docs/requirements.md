@@ -4,9 +4,24 @@
 ```
 thegame/
 ├── package.json
-├── server.js
-├── database.js
-├── npcLogic.js
+├── server.js                   # ~200 lines: Express/WS setup, wiring
+├── database.js                 # PostgreSQL async database module
+├── npcLogic.js                 # NPC AI behavior logic
+├── handlers/                   # WebSocket message handlers
+│   ├── index.js               # Message dispatcher/router
+│   ├── game.js                # Core gameplay (move, look, take, drop, harvest)
+│   ├── mapEditor.js           # Map editing (God Mode)
+│   ├── npcEditor.js           # NPC editing (God Mode)
+│   ├── itemEditor.js          # Item editing (God Mode)
+│   └── playerEditor.js        # Player editing (God Mode)
+├── middleware/
+│   └── session.js             # Session config, validation middleware
+├── routes/
+│   └── api.js                 # HTTP routes for pages and API
+├── services/
+│   └── npcCycleEngine.js      # NPC tick loop, harvest sessions
+├── utils/
+│   └── broadcast.js           # Shared broadcast/room helpers
 ├── public/
 │   ├── index.html
 │   ├── game.html
@@ -32,6 +47,26 @@ thegame/
 │   └── claude.md
 └── nixpacks.toml
 ```
+
+## Server Architecture
+
+The server is modularized into distinct handler files for maintainability:
+
+### Handler Modules
+Each handler module exports functions that receive a context object with:
+- `ws` - WebSocket connection
+- `db` - Database module
+- `connectedPlayers` - Map of connected players
+- `factoryWidgetState` - Map of factory widget states
+- `connectionId` - Current connection ID
+- `playerName` - Current player name
+
+### Message Types by Handler
+- **game.js**: `authenticateSession`, `move`, `look`, `inventory`, `take`, `drop`, `harvest`, `factoryWidgetAddItem`
+- **mapEditor.js**: `getMapEditorData`, `createMap`, `createRoom`, `deleteRoom`, `updateRoom`, `getAllMaps`, `connectMaps`, `disconnectMap`, `getAllRoomTypeColors`, `setRoomTypeColor`, `getJumpMaps`, `getJumpRooms`, `jumpToRoom`, `getRoomItemsForEditor`, `addItemToRoom`, `removeItemFromRoom`, `clearAllItemsFromRoom`
+- **npcEditor.js**: `getAllNPCs`, `createNPC`, `updateNPC`, `getNpcPlacements`, `getNpcPlacementRooms`, `addNpcToRoom`, `removeNpcFromRoom`
+- **itemEditor.js**: `getAllItems`, `createItem`, `updateItem`
+- **playerEditor.js**: `getAllPlayers`, `updatePlayer`, `getPlayerInventory`, `addPlayerInventoryItem`, `removePlayerInventoryItem`
 
 ## Implementation Steps
 
@@ -481,6 +516,31 @@ The following 10 NPCs have been added to the database:
 | `collect <npc>` | `c <npc>` | Alias for harvest |
 | `gather <npc>` | `g <npc>` | Alias for harvest |
 
+### Communication Commands
+
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `talk <message>` | `say`, `t` | Talk to players in the same room |
+| `resonate <message>` | `res`, `r` | Broadcast message to all players in the world |
+| `telepath <player> <message>` | `tele`, `tell`, `whisper` | Send private message to specific player |
+
+### Communication Widget
+
+- **Toggleable Widget**: Communication widget can be toggled on/off via widget bar
+- **Three Communication Modes**:
+  - **Talk**: Room chat - messages visible to all players in the same room
+  - **Resonate**: World broadcast - messages visible to all players everywhere
+  - **Telepath**: Private messages - messages visible only to sender and recipient
+- **Widget Features**:
+  - Mode selector buttons (Talk/Resonate/Telepath)
+  - Scrollable chat history for each mode (last 100 messages per channel)
+  - Input field with send button
+  - Messages displayed in both widget and terminal
+- **Command Line Interface**: All three modes work from command line
+  - `talk hello world` - room hears message
+  - `resonate hello world` - everyone hears message
+  - `telepath hebron hello world` - only Hebron hears message
+
 ### Dynamic Command Registry
 Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new command:
 1. Add an entry to `COMMAND_REGISTRY` with `name`, `abbrev`, `description`, and `category`
@@ -536,9 +596,17 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 - `{ type: 'take', itemName: 'partial_name' }` - Take item from ground
 - `{ type: 'drop', itemName: 'partial_name' }` - Drop item to ground
 - `{ type: 'harvest', target: 'partial_npc_name' }` - Harvest from NPC
+- `{ type: 'talk', message: 'Hello World!' }` - Room chat message
+- `{ type: 'resonate', message: 'Hello World!' }` - Broadcast message to all players
+- `{ type: 'telepath', targetPlayer: 'Hebron', message: 'Hello World!' }` - Private message to player
 
 #### Server → Client
 - `{ type: 'inventoryList', items: [{ item_name, quantity }] }` - Player inventory
+- `{ type: 'talked', playerName: 'Fliz', message: 'Hello World!' }` - Room chat message
+- `{ type: 'resonated', playerName: 'Fliz', message: 'Hello World!' }` - World broadcast message
+- `{ type: 'telepath', fromPlayer: 'Fliz', message: 'Hello World!' }` - Private message received
+- `{ type: 'telepathSent', toPlayer: 'Hebron', message: 'Hello World!' }` - Private message sent confirmation
+- `{ type: 'systemMessage', message: 'Fliz has entered the game.' }` - System-wide announcement
 - `{ type: 'message', message: 'You pick up item_name.' }` - Action feedback
 - Room updates (`roomUpdate`, `moved`) now include `roomItems` array
 

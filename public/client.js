@@ -4,11 +4,20 @@ let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
 
 // Widget system state
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map'];
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'communication'];
 let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
 let factoryWidgetState = { slots: [null, null], textInput: '' }; // Factory widget state
+
+// Communication widget state
+let commMode = 'talk'; // 'talk', 'resonate', 'telepath'
+let commHistory = {
+    talk: [],
+    resonate: [],
+    telepath: []
+};
+let commTargetPlayer = null; // For telepathy mode
 
 // Get protocol (ws or wss) based on current page protocol
 const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -66,6 +75,29 @@ function handleMessage(data) {
             break;
         case 'playerLeft':
             removePlayerFromTerminal(data.playerName, data.direction);
+            break;
+        case 'resonated':
+            displayResonatedMessage(data.playerName, data.message);
+            // Check if this is from current player or another player
+            const isResonatedFromSelf = data.playerName === currentPlayerName;
+            addToCommHistory('resonate', data.playerName, data.message, !isResonatedFromSelf);
+            break;
+        case 'talked':
+            displayTalkedMessage(data.playerName, data.message);
+            // Check if this is from current player or another player
+            const isTalkedFromSelf = data.playerName === currentPlayerName;
+            addToCommHistory('talk', data.playerName, data.message, !isTalkedFromSelf);
+            break;
+        case 'telepath':
+            displayTelepathMessage(data.fromPlayer, data.message, true);
+            addToCommHistory('telepath', data.fromPlayer, data.message, true);
+            break;
+        case 'telepathSent':
+            displayTelepathMessage(data.toPlayer, data.message, false);
+            addToCommHistory('telepath', currentPlayerName, data.message, false, data.toPlayer);
+            break;
+        case 'systemMessage':
+            displaySystemMessage(data.message);
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
@@ -514,6 +546,11 @@ const COMMAND_REGISTRY = [
     { name: 'harvest', abbrev: 'h/p', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
     { name: 'collect', abbrev: 'c', description: 'Alias for harvest', category: 'NPC' },
     { name: 'gather', abbrev: 'g', description: 'Alias for harvest', category: 'NPC' },
+    
+    // Communication commands
+    { name: 'talk', abbrev: 'say, t', description: 'Talk to players in room (talk <message>)', category: 'Communication' },
+    { name: 'resonate', abbrev: 'res, r', description: 'Broadcast message to all players (resonate <message>)', category: 'Communication' },
+    { name: 'telepath', abbrev: 'tele, tell, whisper', description: 'Private message to player (telepath <player> <message>)', category: 'Communication' },
 ];
 
 // Build command map from registry for movement commands
@@ -897,6 +934,245 @@ function addToTerminal(message, type = 'info') {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
+// Display resonated message (world broadcast)
+function displayResonatedMessage(playerName, message) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'resonated-message';
+    messageDiv.innerHTML = `<span class="resonated-player">${escapeHtml(playerName)}</span> resonated <span class="resonated-text">${escapeHtml(message)}</span>!`;
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Display system message (world-wide announcements)
+function displaySystemMessage(message) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'system-message';
+    messageDiv.textContent = message;
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Communication Widget Functions
+function initCommunicationWidget() {
+    const commWidget = document.getElementById('widget-communication');
+    if (!commWidget) return;
+    
+    // Mode selector buttons
+    const modeButtons = commWidget.querySelectorAll('.comm-mode-btn');
+    modeButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            setCommMode(mode);
+        });
+    });
+    
+    // Send button
+    const sendBtn = document.getElementById('commSendBtn');
+    const commInput = document.getElementById('commInput');
+    
+    if (sendBtn) {
+        sendBtn.addEventListener('click', () => {
+            sendCommMessage();
+        });
+    }
+    
+    if (commInput) {
+        commInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendCommMessage();
+            }
+        });
+    }
+}
+
+function setCommMode(mode) {
+    commMode = mode;
+    
+    // Update button states
+    const modeButtons = document.querySelectorAll('.comm-mode-btn');
+    modeButtons.forEach(btn => {
+        if (btn.dataset.mode === mode) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Update input placeholder
+    const commInput = document.getElementById('commInput');
+    if (commInput) {
+        if (mode === 'telepath') {
+            commInput.placeholder = 'Type player name, then message...';
+        } else if (mode === 'resonate') {
+            commInput.placeholder = 'Type world broadcast...';
+        } else {
+            commInput.placeholder = 'Type room message...';
+        }
+    }
+    
+    // Render current mode's history
+    renderCommHistory();
+}
+
+function sendCommMessage() {
+    const commInput = document.getElementById('commInput');
+    if (!commInput || !ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    const input = commInput.value.trim();
+    if (!input) return;
+    
+    if (commMode === 'telepath') {
+        // Parse: "player message" or "player message text"
+        const parts = input.split(/\s+/);
+        if (parts.length < 2) {
+            addToTerminal('Telepath who? (Format: player message)', 'error');
+            return;
+        }
+        const targetPlayer = parts[0];
+        const message = parts.slice(1).join(' ');
+        ws.send(JSON.stringify({ type: 'telepath', targetPlayer, message }));
+    } else if (commMode === 'resonate') {
+        // Add to history immediately (will be confirmed by server response)
+        addToCommHistory('resonate', currentPlayerName, input, false);
+        ws.send(JSON.stringify({ type: 'resonate', message: input }));
+    } else {
+        // Add to history immediately (will be confirmed by server response)
+        addToCommHistory('talk', currentPlayerName, input, false);
+        ws.send(JSON.stringify({ type: 'talk', message: input }));
+    }
+    
+    commInput.value = '';
+}
+
+function addToCommHistory(mode, playerName, message, isReceived, targetPlayer = null) {
+    if (!commHistory[mode]) {
+        commHistory[mode] = [];
+    }
+    
+    const entry = {
+        playerName,
+        message,
+        isReceived,
+        targetPlayer,
+        timestamp: Date.now()
+    };
+    
+    commHistory[mode].push(entry);
+    
+    // Keep only last 100 messages per channel
+    if (commHistory[mode].length > 100) {
+        commHistory[mode] = commHistory[mode].slice(-100);
+    }
+    
+    // Update display if this mode is active
+    if (mode === commMode) {
+        renderCommHistory();
+    }
+}
+
+function renderCommHistory() {
+    const content = document.getElementById('commChatContent');
+    if (!content) return;
+    
+    const history = commHistory[commMode] || [];
+    content.innerHTML = '';
+    
+    if (history.length === 0) {
+        const emptyMsg = document.createElement('div');
+        emptyMsg.className = 'comm-empty';
+        emptyMsg.textContent = 'No messages yet...';
+        content.appendChild(emptyMsg);
+        return;
+    }
+    
+    history.forEach(entry => {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `comm-message comm-message-${commMode}`;
+        
+        let displayText = '';
+        if (commMode === 'telepath') {
+            if (entry.isReceived) {
+                displayText = `<span class="comm-player">${escapeHtml(entry.playerName)}</span> telepaths: ${escapeHtml(entry.message)}`;
+            } else {
+                const target = entry.targetPlayer || 'unknown';
+                displayText = `You telepath <span class="comm-player">${escapeHtml(target)}</span>: ${escapeHtml(entry.message)}`;
+            }
+        } else if (commMode === 'resonate') {
+            if (entry.isReceived) {
+                displayText = `<span class="comm-player">${escapeHtml(entry.playerName)}</span> resonated <span class="comm-text">${escapeHtml(entry.message)}</span>!`;
+            } else {
+                displayText = `You resonated <span class="comm-text">${escapeHtml(entry.message)}</span>!`;
+            }
+        } else {
+            // Talk mode
+            if (entry.isReceived) {
+                displayText = `<span class="comm-player">${escapeHtml(entry.playerName)}</span>: ${escapeHtml(entry.message)}`;
+            } else {
+                displayText = `You: ${escapeHtml(entry.message)}`;
+            }
+        }
+        
+        msgDiv.innerHTML = displayText;
+        content.appendChild(msgDiv);
+    });
+    
+    // Scroll to bottom
+    const scroll = document.getElementById('commChatScroll');
+    if (scroll) {
+        scroll.scrollTop = scroll.scrollHeight;
+    }
+}
+
+// Display talked message in terminal
+function displayTalkedMessage(playerName, message) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'talked-message';
+    messageDiv.innerHTML = `<span class="talked-player">${escapeHtml(playerName)}</span> says: <span class="talked-text">${escapeHtml(message)}</span>`;
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Display telepath message in terminal
+function displayTelepathMessage(playerName, message, isReceived) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'telepath-message';
+    
+    if (isReceived) {
+        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> <span class="telepath-player">${escapeHtml(playerName)}</span> telepaths: <span class="telepath-text">${escapeHtml(message)}</span>`;
+    } else {
+        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> You telepath <span class="telepath-player">${escapeHtml(playerName)}</span>: <span class="telepath-text">${escapeHtml(message)}</span>`;
+    }
+    
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Initialize communication widget when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCommunicationWidget);
+} else {
+    initCommunicationWidget();
+}
+
 // Update the room items display bar (dynamic, updates in place)
 function updateRoomItemsDisplay(roomItems) {
     const display = document.getElementById('roomItemsDisplay');
@@ -1150,6 +1426,63 @@ function executeCommand(command) {
         }
         const target = parts.slice(1).join(' ');
         ws.send(JSON.stringify({ type: 'harvest', target }));
+        return;
+    }
+
+    // TALK <message> - room chat
+    if (base === 'talk' || base === 'say' || base === 't') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const message = parts.slice(1).join(' ');
+        if (!message) {
+            addToTerminal('Talk what? (talk <message>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'talk', message }));
+        return;
+    }
+
+    // RESONATE / RES / R <message> - broadcast to all players
+    if (base === 'resonate' || base === 'res' || base === 'r') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const message = parts.slice(1).join(' ');
+        if (!message) {
+            addToTerminal('Resonate what? (resonate <message>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'resonate', message }));
+        return;
+    }
+
+    // TELEPATH / TELE <player> <message> - private message
+    if (base === 'telepath' || base === 'tele' || base === 'tell' || base === 'whisper') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        if (parts.length < 3) {
+            addToTerminal('Telepath who? (telepath <player> <message>)', 'error');
+            return;
+        }
+        
+        const targetPlayer = parts[1];
+        const message = parts.slice(2).join(' ');
+        if (!message) {
+            addToTerminal('Telepath what? (telepath <player> <message>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'telepath', targetPlayer, message }));
         return;
     }
 
