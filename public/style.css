@@ -1162,6 +1162,12 @@ body {
 .widget-slot {
     position: relative;
     overflow: hidden;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.widget-slot.widget-drag-over {
+    border: 2px dashed #ffff00;
+    background: rgba(255, 255, 0, 0.1);
 }
 
 .widget {
@@ -1177,6 +1183,21 @@ body {
     flex-direction: column;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
     overflow: hidden;
+}
+
+.widget[draggable="true"] {
+    cursor: move;
+    user-select: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.widget[draggable="true"]:hover {
+    border-color: #ffff00;
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.5);
+}
+
+.widget[draggable="true"]:active {
+    cursor: grabbing;
 }
 
 .widget.hidden {
@@ -1199,6 +1220,8 @@ body {
     font-size: 0.85em;
     text-transform: uppercase;
     font-family: 'Courier New', monospace;
+    pointer-events: none;
+    user-select: none;
     font-weight: bold;
     border-bottom: 1px solid #333;
     flex-shrink: 0;

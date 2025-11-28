@@ -2538,11 +2538,20 @@ function updateWidgetDisplay() {
             const widget = slot.querySelector(`[data-widget="${widgetName}"]`);
             if (widget) {
                 widget.classList.remove('hidden');
+                // Make widget draggable if it's a toggleable widget
+                if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
+                    widget.draggable = true;
+                    widget.dataset.widgetName = widgetName;
+                }
             } else {
                 // Widget doesn't exist in this slot, need to move it
                 const existingWidget = document.getElementById(`widget-${widgetName}`);
                 if (existingWidget) {
                     existingWidget.classList.remove('hidden');
+                    if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
+                        existingWidget.draggable = true;
+                        existingWidget.dataset.widgetName = widgetName;
+                    }
                     slot.appendChild(existingWidget);
                 }
             }
@@ -2554,6 +2563,117 @@ function updateWidgetDisplay() {
             }
         }
     });
+    
+    // Initialize drag and drop handlers
+    initWidgetDragDrop();
+}
+
+// Initialize widget drag and drop (using event delegation)
+let widgetDragDropInitialized = false;
+function initWidgetDragDrop() {
+    // Only initialize once
+    if (widgetDragDropInitialized) return;
+    widgetDragDropInitialized = true;
+    
+    // Use event delegation on widget grid to handle drag and drop
+    const widgetGrid = document.querySelector('.widget-grid');
+    if (!widgetGrid) return;
+    
+    // Handle dragstart on widgets
+    widgetGrid.addEventListener('dragstart', (e) => {
+        const widget = e.target.closest('.widget[draggable="true"]');
+        if (!widget) return;
+        
+        const widgetName = widget.dataset.widgetName;
+        if (!widgetName) return;
+        
+        e.dataTransfer.setData('text/plain', widgetName);
+        e.dataTransfer.effectAllowed = 'move';
+        widget.style.opacity = '0.5';
+    });
+    
+    // Handle dragend on widgets
+    widgetGrid.addEventListener('dragend', (e) => {
+        const widget = e.target.closest('.widget[draggable="true"]');
+        if (!widget) return;
+        
+        widget.style.opacity = '1';
+        // Remove drag-over class from all slots
+        document.querySelectorAll('.widget-slot').forEach(slot => {
+            slot.classList.remove('widget-drag-over');
+        });
+    });
+    
+    // Handle dragover on slots
+    widgetGrid.addEventListener('dragover', (e) => {
+        const slot = e.target.closest('.widget-slot');
+        if (!slot) return;
+        
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        slot.classList.add('widget-drag-over');
+    });
+    
+    // Handle dragleave on slots
+    widgetGrid.addEventListener('dragleave', (e) => {
+        const slot = e.target.closest('.widget-slot');
+        if (!slot) return;
+        
+        // Only remove class if we're actually leaving the slot
+        const rect = slot.getBoundingClientRect();
+        const x = e.clientX;
+        const y = e.clientY;
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+            slot.classList.remove('widget-drag-over');
+        }
+    });
+    
+    // Handle drop on slots
+    widgetGrid.addEventListener('drop', (e) => {
+        const slot = e.target.closest('.widget-slot');
+        if (!slot) return;
+        
+        e.preventDefault();
+        slot.classList.remove('widget-drag-over');
+        
+        const widgetName = e.dataTransfer.getData('text/plain');
+        if (!widgetName) return;
+        
+        // Get slot index
+        const slotIndex = parseInt(slot.dataset.slot) || 0;
+        
+        // Reorder activeWidgets array
+        reorderWidget(widgetName, slotIndex);
+    });
+}
+
+// Reorder widgets based on drag and drop
+function reorderWidget(widgetName, targetSlotIndex) {
+    // Build list of widgets to show (activeWidgets + NPC widget if visible + Factory widget if visible)
+    let widgetsToShow = [...activeWidgets];
+    if (npcWidgetVisible) {
+        widgetsToShow.push('npc');
+    }
+    if (factoryWidgetVisible) {
+        widgetsToShow.push('factory');
+    }
+    
+    // Find current position of widget
+    const currentIndex = widgetsToShow.indexOf(widgetName);
+    if (currentIndex === -1) return; // Widget not in list
+    
+    // Remove from current position
+    widgetsToShow.splice(currentIndex, 1);
+    
+    // Insert at target position (clamp to valid range)
+    const maxIndex = Math.min(targetSlotIndex, widgetsToShow.length);
+    widgetsToShow.splice(maxIndex, 0, widgetName);
+    
+    // Update activeWidgets (remove NPC and factory from the list)
+    activeWidgets = widgetsToShow.filter(w => w !== 'npc' && w !== 'factory');
+    
+    // Update display
+    updateWidgetDisplay();
 }
 
 // Show the NPC widget (auto-triggered during harvest/cooldown)
