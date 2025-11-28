@@ -249,6 +249,10 @@ app.get('/player', validateSession, checkGodMode, (req, res) => {
 const connectedPlayers = new Map();
 let nextConnectionId = 1;
 
+// Track factory widget state per player: connectionId -> { roomId, slots: [slot1, slot2], textInput }
+// slots array: [{ itemName, quantity } | null, { itemName, quantity } | null]
+const factoryWidgetState = new Map();
+
 // Helper function to get available exits for a room
 async function getExits(room) {
   const exits = {
@@ -310,6 +314,17 @@ function getConnectedPlayersInRoom(roomId) {
     }
   });
   return players;
+}
+
+// Helper function to check if a room is empty (no players)
+function isRoomEmpty(roomId) {
+  let count = 0;
+  connectedPlayers.forEach((playerData) => {
+    if (playerData.roomId === roomId && playerData.ws.readyState === WebSocket.OPEN) {
+      count++;
+    }
+  });
+  return count === 0;
 }
 
 // Helper function to send room update to a player by connectionId
@@ -390,6 +405,32 @@ async function sendRoomUpdate(connectionId, room, showFullInfo = false) {
   const map = await db.getMapById(room.map_id);
   const mapName = map ? map.name : '';
 
+  // Get factory widget state if room is factory type
+  let factoryState = null;
+  if (room.room_type === 'factory') {
+    const existingState = factoryWidgetState.get(connectionId);
+    if (existingState && existingState.roomId === room.id) {
+      factoryState = {
+        slots: existingState.slots,
+        textInput: existingState.textInput || ''
+      };
+    } else {
+      // Initialize empty factory state
+      factoryState = {
+        slots: [null, null],
+        textInput: ''
+      };
+      factoryWidgetState.set(connectionId, {
+        roomId: room.id,
+        slots: [null, null],
+        textInput: ''
+      });
+    }
+  } else {
+    // Clear factory state if leaving factory room
+    factoryWidgetState.delete(connectionId);
+  }
+
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
     room: {
@@ -398,13 +439,15 @@ async function sendRoomUpdate(connectionId, room, showFullInfo = false) {
       description: room.description,
       x: room.x,
       y: room.y,
-      mapName: mapName
+      mapName: mapName,
+      roomType: room.room_type || 'normal'
     },
     players: playersInRoom,
     npcs: npcsInRoom,
     roomItems: roomItems,
     exits: exits,
-    showFullInfo: showFullInfo
+    showFullInfo: showFullInfo,
+    factoryWidgetState: factoryState
   }));
 }
 
@@ -737,25 +780,74 @@ wss.on('connection', (ws, req) => {
           }
         }
 
-        // Remove poofable items from old room when player leaves
-        await db.removePoofableItemsFromRoom(oldRoomId);
-        
-        // Send room update to players still in old room to refresh items
-        const oldRoom = await db.getRoomById(oldRoomId);
-        if (oldRoom) {
-          for (const [otherSessionId, otherPlayerData] of connectedPlayers) {
-            if (otherPlayerData.roomId === oldRoomId && 
-                otherPlayerData.ws.readyState === WebSocket.OPEN &&
-                otherSessionId !== sessionId) {
-              await sendRoomUpdate(otherSessionId, oldRoom);
+        // Drop factory widget items to ground if player was in factory room
+        const oldFactoryState = factoryWidgetState.get(sessionId);
+        if (oldFactoryState && oldFactoryState.roomId === oldRoomId) {
+          const oldRoom = await db.getRoomById(oldRoomId);
+          if (oldRoom && oldRoom.room_type === 'factory') {
+            // Drop items from factory slots to room ground
+            for (let i = 0; i < oldFactoryState.slots.length; i++) {
+              const slot = oldFactoryState.slots[i];
+              if (slot && slot.itemName) {
+                await db.addRoomItem(oldRoomId, slot.itemName, slot.quantity);
+              }
+            }
+            // Clear factory state
+            factoryWidgetState.delete(sessionId);
+            
+            // Check if room is now empty and remove poofable items
+            if (isRoomEmpty(oldRoomId)) {
+              await db.removePoofableItemsFromRoom(oldRoomId);
+            }
+            
+            // Send room update to players still in old room to refresh items
+            const updatedOldRoom = await db.getRoomById(oldRoomId);
+            if (updatedOldRoom) {
+              for (const [otherSessionId, otherPlayerData] of connectedPlayers) {
+                if (otherPlayerData.roomId === oldRoomId && 
+                    otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                    otherSessionId !== sessionId) {
+                  await sendRoomUpdate(otherSessionId, updatedOldRoom);
+                }
+              }
+            }
+          }
+        } else {
+          // Remove poofable items from old room when player leaves (non-factory rooms)
+          await db.removePoofableItemsFromRoom(oldRoomId);
+          
+          // Send room update to players still in old room to refresh items
+          const oldRoom = await db.getRoomById(oldRoomId);
+          if (oldRoom) {
+            for (const [otherSessionId, otherPlayerData] of connectedPlayers) {
+              if (otherPlayerData.roomId === oldRoomId && 
+                  otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                  otherSessionId !== sessionId) {
+                await sendRoomUpdate(otherSessionId, oldRoom);
+              }
             }
           }
         }
 
+        // Direction names for messages
+        const directionNamesForMsg = {
+          'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west',
+          'NE': 'northeast', 'NW': 'northwest', 'SE': 'southeast', 'SW': 'southwest',
+          'U': 'up', 'D': 'down'
+        };
+        const oppositeDirection = {
+          'N': 'south', 'S': 'north', 'E': 'west', 'W': 'east',
+          'NE': 'southwest', 'NW': 'southeast', 'SE': 'northwest', 'SW': 'northeast',
+          'U': 'below', 'D': 'above'
+        };
+        const leftDirection = directionNamesForMsg[direction] || direction.toLowerCase();
+        const enteredFrom = oppositeDirection[direction] || 'somewhere';
+
         // Notify players in old room
         broadcastToRoom(oldRoomId, {
           type: 'playerLeft',
-          playerName: playerName
+          playerName: playerName,
+          direction: leftDirection
         }, sessionId);
 
         // Send moved message to moving player
@@ -780,6 +872,32 @@ wss.on('connection', (ws, req) => {
         // Get items on the ground in the new room
         const roomItemsInNewRoom = await db.getRoomItems(targetRoom.id);
 
+        // Get factory widget state if room is factory type
+        let factoryState = null;
+        if (targetRoom.room_type === 'factory') {
+          const existingState = factoryWidgetState.get(sessionId);
+          if (existingState && existingState.roomId === targetRoom.id) {
+            factoryState = {
+              slots: existingState.slots,
+              textInput: existingState.textInput || ''
+            };
+          } else {
+            // Initialize empty factory state
+            factoryState = {
+              slots: [null, null],
+              textInput: ''
+            };
+            factoryWidgetState.set(sessionId, {
+              roomId: targetRoom.id,
+              slots: [null, null],
+              textInput: ''
+            });
+          }
+        } else {
+          // Clear factory state if leaving factory room
+          factoryWidgetState.delete(sessionId);
+        }
+
         if (playerData.ws.readyState === WebSocket.OPEN) {
           playerData.ws.send(JSON.stringify({
             type: 'moved',
@@ -789,13 +907,15 @@ wss.on('connection', (ws, req) => {
               description: targetRoom.description,
               x: targetRoom.x,
               y: targetRoom.y,
-              mapName: mapName
+              mapName: mapName,
+              roomType: targetRoom.room_type || 'normal'
             },
             players: playersInNewRoom,
             npcs: npcsInNewRoom,
             roomItems: roomItemsInNewRoom,
             exits: exits,
-            showFullInfo: true // Always show full room info when entering a new room
+            showFullInfo: true, // Always show full room info when entering a new room
+            factoryWidgetState: factoryState
           }));
 
           // If this was a map transition, send new map data
@@ -845,7 +965,8 @@ wss.on('connection', (ws, req) => {
         // Notify players in new room
         broadcastToRoom(targetRoom.id, {
           type: 'playerJoined',
-          playerName: playerName
+          playerName: playerName,
+          direction: enteredFrom
         }, sessionId);
 
         console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
@@ -1933,8 +2054,30 @@ wss.on('connection', (ws, req) => {
           }
         }
 
-        // Remove poofable items from old room
-        await db.removePoofableItemsFromRoom(oldRoomId);
+        // Drop factory widget items to ground if player was in factory room
+        const oldFactoryState = factoryWidgetState.get(connectionId);
+        if (oldFactoryState && oldFactoryState.roomId === oldRoomId) {
+          const oldRoom = await db.getRoomById(oldRoomId);
+          if (oldRoom && oldRoom.room_type === 'factory') {
+            // Drop items from factory slots to room ground
+            for (let i = 0; i < oldFactoryState.slots.length; i++) {
+              const slot = oldFactoryState.slots[i];
+              if (slot && slot.itemName) {
+                await db.addRoomItem(oldRoomId, slot.itemName, slot.quantity);
+              }
+            }
+            // Clear factory state
+            factoryWidgetState.delete(connectionId);
+            
+            // Check if room is now empty and remove poofable items
+            if (isRoomEmpty(oldRoomId)) {
+              await db.removePoofableItemsFromRoom(oldRoomId);
+            }
+          }
+        } else {
+          // Remove poofable items from old room
+          await db.removePoofableItemsFromRoom(oldRoomId);
+        }
 
         // Notify players in old room
         broadcastToRoom(oldRoomId, {
@@ -1956,16 +2099,46 @@ wss.on('connection', (ws, req) => {
         }));
         const roomItems = await db.getRoomItems(targetRoom.id);
 
+        // Get factory widget state if room is factory type
+        let factoryState = null;
+        if (targetRoom.room_type === 'factory') {
+          const existingState = factoryWidgetState.get(connectionId);
+          if (existingState && existingState.roomId === targetRoom.id) {
+            factoryState = {
+              slots: existingState.slots,
+              textInput: existingState.textInput || ''
+            };
+          } else {
+            // Initialize empty factory state
+            factoryState = {
+              slots: [null, null],
+              textInput: ''
+            };
+            factoryWidgetState.set(connectionId, {
+              roomId: targetRoom.id,
+              slots: [null, null],
+              textInput: ''
+            });
+          }
+        } else {
+          // Clear factory state if leaving factory room
+          factoryWidgetState.delete(connectionId);
+        }
+
         // Send moved message to player
         ws.send(JSON.stringify({
           type: 'moved',
-          room: targetRoom,
+          room: {
+            ...targetRoom,
+            roomType: targetRoom.room_type || 'normal'
+          },
           players: playersInNewRoom,
           exits: exits,
           npcs: npcsInNewRoom,
           roomItems: roomItems,
           mapName: map ? map.name : '',
-          showFullInfo: true
+          showFullInfo: true,
+          factoryWidgetState: factoryState
         }));
 
         // Send map update
@@ -2414,6 +2587,92 @@ wss.on('connection', (ws, req) => {
       }
 
       // ============================================================
+      // Factory Widget - Add Item to Slot
+      // ============================================================
+      else if (data.type === 'factoryWidgetAddItem') {
+        const player = await db.getPlayerByName(playerName);
+        if (!player) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+          return;
+        }
+        
+        const currentRoom = await db.getRoomById(player.current_room_id);
+        if (!currentRoom) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+          return;
+        }
+        
+        // Validate player is in factory room
+        if (currentRoom.room_type !== 'factory') {
+          ws.send(JSON.stringify({ type: 'error', message: 'You must be in a factory room to use the machine.' }));
+          return;
+        }
+        
+        const slotIndex = data.slotIndex;
+        if (slotIndex !== 0 && slotIndex !== 1) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index.' }));
+          return;
+        }
+        
+        const itemName = data.itemName;
+        if (!itemName) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Item name required.' }));
+          return;
+        }
+        
+        // Check player has the item in inventory
+        const playerItems = await db.getPlayerItems(player.id);
+        const item = playerItems.find(i => i.item_name.toLowerCase() === itemName.toLowerCase());
+        
+        if (!item || item.quantity < 1) {
+          ws.send(JSON.stringify({ type: 'error', message: `You don't have "${itemName}".` }));
+          return;
+        }
+        
+        // Get or initialize factory widget state
+        let factoryState = factoryWidgetState.get(connectionId);
+        if (!factoryState || factoryState.roomId !== currentRoom.id) {
+          factoryState = {
+            roomId: currentRoom.id,
+            slots: [null, null],
+            textInput: ''
+          };
+          factoryWidgetState.set(connectionId, factoryState);
+        }
+        
+        // Check if slot is already occupied
+        if (factoryState.slots[slotIndex] !== null) {
+          ws.send(JSON.stringify({ type: 'error', message: 'That slot is already occupied.' }));
+          return;
+        }
+        
+        // Remove 1 item from player inventory
+        await db.removePlayerItem(player.id, item.item_name, 1);
+        
+        // Add item to slot
+        factoryState.slots[slotIndex] = {
+          itemName: item.item_name,
+          quantity: 1
+        };
+        
+        // Send updated factory widget state
+        ws.send(JSON.stringify({
+          type: 'factoryWidgetState',
+          state: {
+            slots: factoryState.slots,
+            textInput: factoryState.textInput
+          }
+        }));
+        
+        // Send updated inventory
+        const updatedItems = await db.getPlayerItems(player.id);
+        ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+        
+        // Send updated player stats (encumbrance changed)
+        await sendPlayerStats(connectionId);
+      }
+
+      // ============================================================
       // Harvest Command (harvest, h, p) - Rhythm NPCs only
       // Starts a harvest SESSION, NPC produces while session is active
       // ============================================================
@@ -2608,23 +2867,57 @@ wss.on('connection', (ws, req) => {
         }
       }
       
-      // Remove poofable items from room when player disconnects
+      // Drop factory widget items and remove poofable items when player disconnects
       if (roomId) {
-        await db.removePoofableItemsFromRoom(roomId);
-        
-        // Send room update to players still in room to refresh items
+        const factoryState = factoryWidgetState.get(connId);
         const room = await db.getRoomById(roomId);
-        if (room) {
-          for (const [otherConnId, otherPlayerData] of connectedPlayers) {
-            if (otherPlayerData.roomId === roomId && 
-                otherPlayerData.ws.readyState === WebSocket.OPEN &&
-                otherConnId !== connId) {
-              await sendRoomUpdate(otherConnId, room);
+        
+        if (factoryState && factoryState.roomId === roomId && room && room.room_type === 'factory') {
+          // Drop items from factory slots to room ground
+          for (let i = 0; i < factoryState.slots.length; i++) {
+            const slot = factoryState.slots[i];
+            if (slot && slot.itemName) {
+              await db.addRoomItem(roomId, slot.itemName, slot.quantity);
+            }
+          }
+          // Clear factory state
+          factoryWidgetState.delete(connId);
+          
+          // Check if room is now empty and remove poofable items
+          if (isRoomEmpty(roomId)) {
+            await db.removePoofableItemsFromRoom(roomId);
+          }
+          
+          // Send room update to players still in room to refresh items
+          const updatedRoom = await db.getRoomById(roomId);
+          if (updatedRoom) {
+            for (const [otherConnId, otherPlayerData] of connectedPlayers) {
+              if (otherPlayerData.roomId === roomId && 
+                  otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                  otherConnId !== connId) {
+                await sendRoomUpdate(otherConnId, updatedRoom);
+              }
+            }
+          }
+        } else {
+          // Remove poofable items from room (non-factory rooms)
+          await db.removePoofableItemsFromRoom(roomId);
+          
+          // Send room update to players still in room to refresh items
+          if (room) {
+            for (const [otherConnId, otherPlayerData] of connectedPlayers) {
+              if (otherPlayerData.roomId === roomId && 
+                  otherPlayerData.ws.readyState === WebSocket.OPEN &&
+                  otherConnId !== connId) {
+                await sendRoomUpdate(otherConnId, room);
+              }
             }
           }
         }
       }
       
+      // Clean up factory state
+      factoryWidgetState.delete(connId);
       connectedPlayers.delete(connId);
 
       // Notify others in the room

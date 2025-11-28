@@ -164,6 +164,11 @@ thegame/
   - "No one else is here." when room is empty
   - Automatically removes "No one else is here." when player joins
   - Automatically restores "No one else is here." when last player leaves
+- Player movement notifications:
+  - When a player enters: "[PlayerName] enters from the [opposite direction]." (e.g., "Fliz enters from the south.")
+  - When a player leaves: "[PlayerName] left to the [direction]." (e.g., "Fliz left to the west.")
+  - For teleports/connections: "[PlayerName] has arrived." / "[PlayerName] has left."
+  - Player names highlighted in cyan, message text in gray italic
 - Terminal display:
   - Room name, description, and players displayed in terminal
   - Auto-scroll to bottom on updates
@@ -571,6 +576,39 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 - **Map Editor**: Rooms rendered with their type-specific colors
 - **Game UI Map Widget**: Rooms displayed with type-specific colors (current room always highlighted in green with yellow border)
 - **Map Data**: Room type colors are sent with map data messages for client-side rendering
+
+## Factory Widget System
+
+### Overview
+Factory widgets appear automatically when players enter rooms with type "factory", allowing players to drag items from their inventory into machine slots. Items persist per-player and drop to the ground when players leave without operating the machine.
+
+### Factory Widget Features
+- **Automatic Display**: Widget appears in slot 4 when entering factory-type rooms
+- **Three Slots**: 
+  - Slot 1: Drag-and-drop item slot
+  - Slot 2: Drag-and-drop item slot
+  - Input: Text input box (placeholder for future functionality)
+- **Drag and Drop**: Players can drag items from inventory table to factory slots
+- **Item Removal**: Only 1 item is removed from inventory per drag operation (even if player has multiple)
+- **Per-Player State**: Each player has their own factory widget state (not shared between players)
+- **Item Persistence**: Items in factory slots drop to room ground when player leaves factory room
+- **Poofing Logic**: Poofable items disappear when room becomes empty (no players remaining)
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'factoryWidgetAddItem', slotIndex: 0|1, itemName: 'item_name' }` - Add item from inventory to factory slot
+
+#### Server → Client
+- `{ type: 'factoryWidgetState', state: { slots: [null|{itemName, quantity}, null|{itemName, quantity}], textInput: '' } }` - Factory widget state update
+- Factory widget state included in `roomUpdate` and `moved` messages when in factory rooms
+
+### UI/UX
+- **Widget Styling**: Retro terminal aesthetic matching game theme (green borders, yellow header)
+- **Slot Styling**: Dashed borders for empty slots, solid borders when filled
+- **Drag Feedback**: Visual feedback when dragging items over slots (yellow highlight)
+- **Inventory Dragging**: Inventory table rows are draggable with grab cursor
+- **Item Display**: Item names displayed in filled slots with green text
 
 ## Documentation
 

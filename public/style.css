@@ -161,6 +161,19 @@ body {
     color: #00ffff;
 }
 
+/* Player movement messages (entry/departure) */
+.player-movement-message {
+    color: #888888;
+    margin: 5px 0;
+    font-style: italic;
+}
+
+.player-movement-message .player-name-highlight {
+    color: #00ffff;
+    font-style: normal;
+    font-weight: bold;
+}
+
 /* NPC Section Styling */
 .npcs-section {
     margin-top: 15px;
@@ -1230,6 +1243,104 @@ body {
 .timing-row span:last-child {
     color: #ff9900;
     font-weight: bold;
+}
+
+/* Factory Widget Styles */
+#widget-factory {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+}
+
+#widget-factory .widget-header {
+    background: #1a1a1a;
+    border-bottom: 2px solid #00ff00;
+    color: #ffff00;
+    font-weight: bold;
+    padding: 8px;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.factory-slot-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px;
+}
+
+.factory-slot {
+    border: 2px dashed #00ff00;
+    border-radius: 4px;
+    padding: 8px;
+    min-height: 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color 0.2s;
+}
+
+.factory-slot.drag-over {
+    border-color: #ffff00;
+    border-style: solid;
+    background: rgba(255, 255, 0, 0.1);
+}
+
+.factory-slot-label {
+    font-size: 0.75em;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.factory-slot-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #888;
+    font-size: 0.9em;
+    min-height: 40px;
+}
+
+.factory-slot-content.filled {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.factory-slot-text {
+    border-style: solid;
+}
+
+.factory-text-input {
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    padding: 4px 8px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.factory-text-input:focus {
+    outline: none;
+    border-color: #ffff00;
+}
+
+/* Inventory draggable row styles */
+.inventory-table tbody tr[draggable="true"] {
+    cursor: grab;
+    user-select: none;
+}
+
+.inventory-table tbody tr[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.inventory-table tbody tr[draggable="true"]:hover {
+    background: rgba(0, 255, 0, 0.1);
 }
 
 /* Map Editor Overlay */

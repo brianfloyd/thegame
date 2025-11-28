@@ -19,3 +19,4 @@ CREATE INDEX IF NOT EXISTS idx_rooms_coords ON rooms(map_id, x, y);
 CREATE INDEX IF NOT EXISTS idx_players_current_room ON players(current_room_id);
 
 
+

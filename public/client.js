@@ -7,6 +7,8 @@ let currentRoomId = null; // Track current room to detect room changes
 const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map'];
 let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
+let factoryWidgetVisible = false; // Factory widget is special - auto-managed
+let factoryWidgetState = { slots: [null, null], textInput: '' }; // Factory widget state
 
 // Get protocol (ws or wss) based on current page protocol
 const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -46,15 +48,24 @@ function handleMessage(data) {
     switch (data.type) {
         case 'roomUpdate':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            // Handle factory widget state
+            if (data.factoryWidgetState !== undefined) {
+                if (data.room.roomType === 'factory') {
+                    factoryWidgetState = data.factoryWidgetState;
+                    showFactoryWidget(factoryWidgetState);
+                } else {
+                    hideFactoryWidget();
+                }
+            }
             break;
         case 'inventoryList':
             displayInventory(data.items);
             break;
         case 'playerJoined':
-            addPlayerToTerminal(data.playerName);
+            addPlayerToTerminal(data.playerName, data.direction);
             break;
         case 'playerLeft':
-            removePlayerFromTerminal(data.playerName);
+            removePlayerFromTerminal(data.playerName, data.direction);
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
@@ -608,12 +619,29 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         
         // Display players
         const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
+        const playersDiv = document.createElement('div');
+        playersDiv.className = 'players-section';
+        const playersLine = document.createElement('span');
+        playersLine.className = 'players-line';
+        playersLine.innerHTML = `<span class="players-section-title">Also here:</span>`;
+        
         if (otherPlayers.length > 0) {
-            const playersDiv = document.createElement('div');
-            playersDiv.className = 'players-section';
-            playersDiv.innerHTML = `<span class="players-section-title">Also here:</span> ${otherPlayers.join(', ')}`;
-            terminalContent.appendChild(playersDiv);
+            otherPlayers.forEach((playerName, index) => {
+                const playerSpan = document.createElement('span');
+                playerSpan.className = 'player-item';
+                playerSpan.setAttribute('data-player', playerName);
+                playerSpan.textContent = (index === 0 ? ' ' : ', ') + playerName;
+                playersLine.appendChild(playerSpan);
+            });
+        } else {
+            const noPlayers = document.createElement('span');
+            noPlayers.className = 'player-item';
+            noPlayers.textContent = ' No one else is here.';
+            playersLine.appendChild(noPlayers);
         }
+        
+        playersDiv.appendChild(playersLine);
+        terminalContent.appendChild(playersDiv);
         
         // Display NPCs
         if (npcs && npcs.length > 0) {
@@ -731,6 +759,26 @@ function displayInventory(items) {
     const tbody = document.createElement('tbody');
     items.forEach(item => {
         const row = document.createElement('tr');
+        row.draggable = true;
+        row.dataset.itemName = item.item_name;
+        row.dataset.quantity = item.quantity;
+        row.style.cursor = 'grab';
+        
+        // Drag start handler
+        row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({
+                itemName: item.item_name,
+                quantity: item.quantity
+            }));
+            e.dataTransfer.effectAllowed = 'move';
+            row.style.opacity = '0.5';
+        });
+        
+        // Drag end handler
+        row.addEventListener('dragend', (e) => {
+            row.style.opacity = '1';
+        });
+        
         const tdItem = document.createElement('td');
         tdItem.textContent = item.item_name;
         const tdQty = document.createElement('td');
@@ -747,11 +795,25 @@ function displayInventory(items) {
 }
 
 // Add player to terminal
-function addPlayerToTerminal(playerName) {
+function addPlayerToTerminal(playerName, direction) {
     if (playerName === currentPlayerName) return;
     
     const terminalContent = document.getElementById('terminalContent');
-    const playersLine = terminalContent.querySelector('.players-line');
+    
+    // Display entry message
+    const entryMsg = document.createElement('div');
+    entryMsg.className = 'player-movement-message';
+    if (direction) {
+        entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> enters from the ${direction}.`;
+    } else {
+        entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has arrived.`;
+    }
+    terminalContent.appendChild(entryMsg);
+    
+    // Find the most recent players-line (from current room display)
+    // Get all players-lines and use the last one (most recent room)
+    const allPlayersLines = terminalContent.querySelectorAll('.players-line');
+    const playersLine = allPlayersLines.length > 0 ? allPlayersLines[allPlayersLines.length - 1] : null;
     
     if (playersLine) {
         // Remove "No one else is here." message if it exists
@@ -777,9 +839,23 @@ function addPlayerToTerminal(playerName) {
 }
 
 // Remove player from terminal
-function removePlayerFromTerminal(playerName) {
+function removePlayerFromTerminal(playerName, direction) {
     const terminalContent = document.getElementById('terminalContent');
-    const playersLine = terminalContent.querySelector('.players-line');
+    
+    // Display departure message
+    const departMsg = document.createElement('div');
+    departMsg.className = 'player-movement-message';
+    if (direction) {
+        departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> left to the ${direction}.`;
+    } else {
+        departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has left.`;
+    }
+    terminalContent.appendChild(departMsg);
+    
+    // Find the most recent players-line (from current room display)
+    // Get all players-lines and use the last one (most recent room)
+    const allPlayersLines = terminalContent.querySelectorAll('.players-line');
+    const playersLine = allPlayersLines.length > 0 ? allPlayersLines[allPlayersLines.length - 1] : null;
     const playerElement = playersLine ? playersLine.querySelector(`[data-player="${playerName}"]`) : null;
     
     if (playerElement) {
@@ -806,6 +882,9 @@ function removePlayerFromTerminal(playerName) {
             playersLine.appendChild(noPlayers);
         }
     }
+    
+    // Scroll to bottom
+    terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
 // Add message to terminal
@@ -2105,10 +2184,13 @@ function updateWidgetDisplay() {
         }
     });
     
-    // Build list of widgets to show (activeWidgets + NPC widget if visible)
+    // Build list of widgets to show (activeWidgets + NPC widget if visible + Factory widget if visible)
     let widgetsToShow = [...activeWidgets];
     if (npcWidgetVisible) {
         widgetsToShow.push('npc');
+    }
+    if (factoryWidgetVisible) {
+        widgetsToShow.push('factory');
     }
     
     // Assign widgets to slots
@@ -2186,6 +2268,126 @@ function hideNPCWidget() {
     
     npcWidgetVisible = false;
     updateWidgetDisplay();
+}
+
+// Show the factory widget (auto-triggered when entering factory room)
+function showFactoryWidget(state) {
+    const factoryWidget = document.getElementById('widget-factory');
+    if (!factoryWidget) return;
+    
+    factoryWidgetVisible = true;
+    factoryWidgetState = state || { slots: [null, null], textInput: '' };
+    
+    updateFactoryWidgetSlots(factoryWidgetState);
+    updateWidgetDisplay();
+}
+
+// Hide the factory widget (auto-triggered when leaving factory room)
+function hideFactoryWidget() {
+    if (!factoryWidgetVisible) return;
+    
+    factoryWidgetVisible = false;
+    updateWidgetDisplay();
+}
+
+// Update factory widget slots display
+function updateFactoryWidgetSlots(state) {
+    const slot0 = document.getElementById('factory-slot-0');
+    const slot1 = document.getElementById('factory-slot-1');
+    const textInput = document.getElementById('factory-text-input');
+    
+    if (slot0) {
+        const content = slot0.querySelector('.factory-slot-content');
+        if (content) {
+            if (state.slots[0]) {
+                content.textContent = state.slots[0].itemName;
+                content.className = 'factory-slot-content filled';
+            } else {
+                content.textContent = '';
+                content.className = 'factory-slot-content';
+            }
+        }
+    }
+    
+    if (slot1) {
+        const content = slot1.querySelector('.factory-slot-content');
+        if (content) {
+            if (state.slots[1]) {
+                content.textContent = state.slots[1].itemName;
+                content.className = 'factory-slot-content filled';
+            } else {
+                content.textContent = '';
+                content.className = 'factory-slot-content';
+            }
+        }
+    }
+    
+    if (textInput && state.textInput !== undefined) {
+        textInput.value = state.textInput;
+    }
+}
+
+// Handle factory widget state message
+function handleFactoryWidgetState(state) {
+    factoryWidgetState = state;
+    updateFactoryWidgetSlots(factoryWidgetState);
+}
+
+// Initialize factory widget drag and drop handlers
+function initFactoryWidgetDragDrop() {
+    const slot0 = document.getElementById('factory-slot-0');
+    const slot1 = document.getElementById('factory-slot-1');
+    
+    [slot0, slot1].forEach((slot, index) => {
+        if (!slot) return;
+        
+        // Allow drop
+        slot.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            slot.classList.add('drag-over');
+        });
+        
+        slot.addEventListener('dragleave', (e) => {
+            slot.classList.remove('drag-over');
+        });
+        
+        slot.addEventListener('drop', (e) => {
+            e.preventDefault();
+            slot.classList.remove('drag-over');
+            
+            try {
+                const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                const itemName = data.itemName;
+                
+                if (!itemName) return;
+                
+                // Send message to server to add item to slot
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'factoryWidgetAddItem',
+                        slotIndex: index,
+                        itemName: itemName
+                    }));
+                }
+            } catch (err) {
+                console.error('Error parsing drag data:', err);
+            }
+        });
+    });
+}
+
+// Initialize factory widget drag and drop when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFactoryWidgetDragDrop);
+} else {
+    initFactoryWidgetDragDrop();
+}
+
+// Handle factory widget state message
+function handleFactoryWidgetState(state) {
+    factoryWidgetState = state;
+    updateFactoryWidgetSlots(factoryWidgetState);
 }
 
 // Initialize widget toggle bar click handlers
