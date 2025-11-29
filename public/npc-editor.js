@@ -15,6 +15,7 @@ let npcPlacements = [];
 let npcPlacementRooms = [];
 let npcPlacementMap = null;
 let npcPlacementMaps = []; // List of all maps for placement selection
+let allItems = []; // List of all available items for reward dropdown
 
 // Non-blocking notification for editor errors
 function showEditorNotification(message, type = 'info') {
@@ -135,6 +136,13 @@ function handleMessage(data) {
         case 'npcPlacementMaps':
             npcPlacementMaps = Array.isArray(data.maps) ? data.maps : [];
             populateNpcPlacementMaps();
+            break;
+        case 'itemList':
+            allItems = data.items || [];
+            // Repopulate reward item dropdowns if form is already rendered
+            if (selectedNpc) {
+                populateRewardItemDropdowns();
+            }
             break;
         case 'error':
             showEditorNotification(data.message, 'error');
@@ -309,6 +317,43 @@ function renderNpcPlacements() {
     });
 }
 
+// Populate reward item dropdowns with available items
+function populateRewardItemDropdowns() {
+    // Populate glow_codex puzzle reward item dropdown
+    const glowCodexRewardSelect = document.getElementById('npcPuzzleRewardItem');
+    if (glowCodexRewardSelect) {
+        glowCodexRewardSelect.innerHTML = '<option value="">None (no reward)</option>';
+        allItems.forEach(item => {
+            if (item.active) { // Only show active items
+                const option = document.createElement('option');
+                option.value = item.name;
+                option.textContent = item.name;
+                if (selectedNpc && selectedNpc.puzzle_reward_item === item.name) {
+                    option.selected = true;
+                }
+                glowCodexRewardSelect.appendChild(option);
+            }
+        });
+    }
+    
+    // Populate Lore Keeper puzzle reward item dropdown
+    const lkPuzzleRewardSelect = document.getElementById('lkPuzzleRewardItem');
+    if (lkPuzzleRewardSelect) {
+        lkPuzzleRewardSelect.innerHTML = '<option value="">None (no reward)</option>';
+        allItems.forEach(item => {
+            if (item.active) { // Only show active items
+                const option = document.createElement('option');
+                option.value = item.name;
+                option.textContent = item.name;
+                if (selectedNpc && selectedNpc.lorekeeper && selectedNpc.lorekeeper.puzzle_reward_item === item.name) {
+                    option.selected = true;
+                }
+                lkPuzzleRewardSelect.appendChild(option);
+            }
+        });
+    }
+}
+
 function renderNpcForm() {
     const sidePanel = document.getElementById('npcSidePanelContent');
     if (!sidePanel) return;
@@ -438,6 +483,89 @@ function renderNpcForm() {
                     </div>
                 </div>
                 
+                <!-- Glow Codex Puzzle Section (shown when puzzle_type = glow_codex) -->
+                <div id="glowCodexPuzzleFields" class="glow-codex-section" style="display: ${selectedNpc.puzzle_type === 'glow_codex' ? 'block' : 'none'};">
+                    <div class="npc-section-title">Glow Codex Puzzle</div>
+                    <!-- Row GC1: Puzzle Type -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Puzzle Type</label>
+                            <select id="npcPuzzleType">
+                                <option value="none" ${(selectedNpc.puzzle_type || 'none') === 'none' ? 'selected' : ''}>none</option>
+                                <option value="glow_codex" ${selectedNpc.puzzle_type === 'glow_codex' ? 'selected' : ''}>glow_codex</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Row GC2: Glow Clues (JSON array) -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Glow Clues<span class="npc-json-label"> (JSON array: ["clue with <glowword>", ...])</span></label>
+                            <textarea id="npcPuzzleGlowClues" class="npc-json-textarea" placeholder='["Pulsewood <resin> is the first...", "If you quiet your breath, you can feel the natural <hum>..."]'>${selectedNpc.puzzle_glow_clues || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC3: Extraction Pattern + Solution -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-half">
+                            <label>Extraction Pattern<span class="npc-json-label"> (JSON array: [1,2,3,4])</span></label>
+                            <input type="text" id="npcPuzzleExtractionPattern" value="${selectedNpc.puzzle_extraction_pattern || '[1,2,3,4]'}" placeholder="[1,2,3,4]">
+                        </div>
+                        <div class="npc-field-group npc-field-half">
+                            <label>Solution Word</label>
+                            <input type="text" id="npcPuzzleSolutionWord" value="${selectedNpc.puzzle_solution_word || ''}" placeholder="rune">
+                        </div>
+                    </div>
+                    <!-- Row GC4: Success Response -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Success Response</label>
+                            <textarea id="npcPuzzleSuccessResponse" class="npc-textarea">${selectedNpc.puzzle_success_response || 'Yes… you have seen the hidden thread. Take this. You will need it.'}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC5: Failure Response -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Failure Response</label>
+                            <textarea id="npcPuzzleFailureResponse" class="npc-textarea">${selectedNpc.puzzle_failure_response || 'That is not the answer I seek.'}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC6: Reward Item -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Reward Item (optional)</label>
+                            <select id="npcPuzzleRewardItem">
+                                <option value="">None (no reward)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Row GC7: Puzzle Hint Responses -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Puzzle Hint Responses<span class="npc-json-label"> (JSON array: ["hint1", "hint2", ...])</span></label>
+                            <textarea id="npcPuzzleHintResponses" class="npc-json-textarea" placeholder='["Look to the glowwords, but only in the order I spoke them.", "Each truth hides a letter—first, second, third, and fourth."]'>${selectedNpc.puzzle_hint_responses || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC8: Puzzle Followup Responses -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Puzzle Followup Responses<span class="npc-json-label"> (JSON array: ["response1", "response2", ...])</span></label>
+                            <textarea id="npcPuzzleFollowupResponses" class="npc-json-textarea" placeholder='["What do you mean?", "Can you explain?", "I need more help."]'>${selectedNpc.puzzle_followup_responses || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC9: Puzzle Incorrect Attempt Responses -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label>Puzzle Incorrect Attempt Responses<span class="npc-json-label"> (JSON array: ["response1", "response2", ...])</span></label>
+                            <textarea id="npcPuzzleIncorrectAttemptResponses" class="npc-json-textarea" placeholder='["That is not the answer I seek.", "Try again.", "Look more carefully."]'>${selectedNpc.puzzle_incorrect_attempt_responses || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC10: Template Button -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <button type="button" id="loadGlowCodexTemplate" class="npc-template-btn">Load Example Template</button>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Lore Keeper Specific Fields (shown when type = lorekeeper) -->
                 <div id="loreKeeperFields" class="lorekeeper-section" style="display: ${selectedNpc.npc_type === 'lorekeeper' ? 'block' : 'none'};">
                     <div class="npc-section-title">Lore Keeper Configuration</div>
@@ -499,6 +627,19 @@ function renderNpcForm() {
                     
                     <!-- Puzzle-specific fields -->
                     <div id="lkPuzzleFields" style="display: ${selectedNpc.lorekeeper?.lore_type === 'puzzle' ? 'block' : 'none'};">
+                        <!-- Keywords/Responses (shared with dialogue) -->
+                        <div class="npc-row">
+                            <div class="npc-field-group npc-field-full">
+                                <label>Keywords/Responses<span class="npc-json-label"> (JSON: {"keyword": "response", ...})</span></label>
+                                <textarea id="lkPuzzleKeywordsResponses" class="npc-json-textarea">${selectedNpc.lorekeeper?.keywords_responses || ''}</textarea>
+                            </div>
+                        </div>
+                        <div class="npc-row">
+                            <div class="npc-field-group npc-field-full">
+                                <label>Incorrect Response</label>
+                                <input type="text" id="lkPuzzleIncorrectResponse" value="${selectedNpc.lorekeeper?.incorrect_response || 'I do not understand what you mean.'}">
+                            </div>
+                        </div>
                         <div class="npc-row">
                             <div class="npc-field-group npc-field-half">
                                 <label>Puzzle Mode</label>
@@ -529,6 +670,14 @@ function renderNpcForm() {
                             <div class="npc-field-group npc-field-full">
                                 <label>Failure Message</label>
                                 <input type="text" id="lkPuzzleFailureMessage" value="${selectedNpc.lorekeeper?.puzzle_failure_message || 'That is not the answer I seek.'}">
+                            </div>
+                        </div>
+                        <div class="npc-row">
+                            <div class="npc-field-group npc-field-full">
+                                <label>Reward Item (optional)</label>
+                                <select id="lkPuzzleRewardItem">
+                                    <option value="">None (no reward)</option>
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -594,6 +743,16 @@ function renderNpcForm() {
         });
     }
 
+    // Wire up Puzzle Type change to show/hide Glow Codex fields
+    const puzzleTypeSelect = document.getElementById('npcPuzzleType');
+    const glowCodexFields = document.getElementById('glowCodexPuzzleFields');
+    if (puzzleTypeSelect && glowCodexFields) {
+        puzzleTypeSelect.addEventListener('change', () => {
+            const isGlowCodex = puzzleTypeSelect.value === 'glow_codex';
+            glowCodexFields.style.display = isGlowCodex ? 'block' : 'none';
+        });
+    }
+
     const addPlacementBtn = document.getElementById('addNpcPlacementBtn');
     const roomSelect = document.getElementById('npcPlacementRoomSelect');
     if (addPlacementBtn && roomSelect && selectedNpc && selectedNpc.id) {
@@ -634,6 +793,94 @@ function renderNpcForm() {
     
     populateNpcPlacementRooms();
     renderNpcPlacements();
+    
+    // Populate reward item dropdowns
+    populateRewardItemDropdowns();
+    
+    // Enable JavaScript-based textarea resizing
+    enableTextareaResize();
+}
+
+// Enable JavaScript-based textarea resizing with custom drag handles
+function enableTextareaResize() {
+    const form = document.querySelector('.npc-editor-form');
+    if (!form) return;
+    
+    const textareas = form.querySelectorAll('textarea');
+    textareas.forEach(textarea => {
+        // Skip if already has a resize handle
+        if (textarea.parentElement.querySelector('.textarea-resize-handle')) return;
+        
+        // Wrap textarea in a container for positioning
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'relative';
+        wrapper.style.display = 'block';
+        wrapper.style.width = '100%';
+        
+        textarea.parentNode.insertBefore(wrapper, textarea);
+        wrapper.appendChild(textarea);
+        
+        // Create resize handle
+        const handle = document.createElement('div');
+        handle.className = 'textarea-resize-handle';
+        handle.style.cssText = `
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            width: 16px;
+            height: 16px;
+            cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 50%, #00ff00 50%);
+            opacity: 0.7;
+            z-index: 10;
+        `;
+        wrapper.appendChild(handle);
+        
+        // Set initial explicit height if not set
+        if (!textarea.style.height) {
+            textarea.style.height = textarea.offsetHeight + 'px';
+        }
+        
+        let isResizing = false;
+        let startY = 0;
+        let startHeight = 0;
+        
+        const onMouseDown = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            isResizing = true;
+            startY = e.clientY;
+            startHeight = textarea.offsetHeight;
+            
+            document.body.style.cursor = 'nwse-resize';
+            document.body.style.userSelect = 'none';
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
+        
+        const onMouseMove = (e) => {
+            if (!isResizing) return;
+            e.preventDefault();
+            
+            const deltaY = e.clientY - startY;
+            const newHeight = Math.max(60, startHeight + deltaY);
+            textarea.style.height = newHeight + 'px';
+        };
+        
+        const onMouseUp = (e) => {
+            if (!isResizing) return;
+            isResizing = false;
+            
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+        
+        handle.addEventListener('mousedown', onMouseDown);
+    });
 }
 
 function startCreateNpc() {
@@ -676,6 +923,17 @@ function saveNpc() {
         return;
     }
 
+    const puzzle_type = document.getElementById('npcPuzzleType')?.value || 'none';
+    const puzzle_glow_clues = document.getElementById('npcPuzzleGlowClues')?.value.trim() || null;
+    const puzzle_extraction_pattern = document.getElementById('npcPuzzleExtractionPattern')?.value.trim() || null;
+    const puzzle_solution_word = document.getElementById('npcPuzzleSolutionWord')?.value.trim() || null;
+    const puzzle_success_response = document.getElementById('npcPuzzleSuccessResponse')?.value.trim() || null;
+    const puzzle_failure_response = document.getElementById('npcPuzzleFailureResponse')?.value.trim() || null;
+    const puzzle_reward_item = document.getElementById('npcPuzzleRewardItem')?.value || null;
+    const puzzle_hint_responses = document.getElementById('npcPuzzleHintResponses')?.value.trim() || null;
+    const puzzle_followup_responses = document.getElementById('npcPuzzleFollowupResponses')?.value.trim() || null;
+    const puzzle_incorrect_attempt_responses = document.getElementById('npcPuzzleIncorrectAttemptResponses')?.value.trim() || null;
+
     const payloadNpc = {
         name,
         description,
@@ -688,24 +946,40 @@ function saveNpc() {
         output_items: output_items || null,
         failure_states: failure_states || null,
         display_color,
-        active
+        active,
+        puzzle_type,
+        puzzle_glow_clues,
+        puzzle_extraction_pattern,
+        puzzle_solution_word,
+        puzzle_success_response,
+        puzzle_failure_response,
+        puzzle_reward_item,
+        puzzle_hint_responses,
+        puzzle_followup_responses,
+        puzzle_incorrect_attempt_responses
     };
 
     // Add Lore Keeper data if this is a lorekeeper type
     if (npc_type === 'lorekeeper') {
         const lkLoreType = document.getElementById('lkLoreType')?.value || 'dialogue';
+        // Get keywords/responses - use puzzle-specific field if puzzle type, otherwise dialogue field
+        const lkKeywordsResponses = lkLoreType === 'puzzle' 
+            ? (document.getElementById('lkPuzzleKeywordsResponses')?.value.trim() || null)
+            : (document.getElementById('lkKeywordsResponses')?.value.trim() || null);
+        const lkIncorrectResponse = lkLoreType === 'puzzle'
+            ? (document.getElementById('lkPuzzleIncorrectResponse')?.value.trim() || 'I do not understand what you mean.')
+            : (document.getElementById('lkIncorrectResponse')?.value.trim() || 'I do not understand what you mean.');
         const lkEngagementEnabled = document.getElementById('lkEngagementEnabled')?.value === '1';
         const lkEngagementDelay = parseInt(document.getElementById('lkEngagementDelay')?.value, 10) || 3000;
         const lkInitialMessage = document.getElementById('lkInitialMessage')?.value.trim() || null;
         const lkInitialMessageColor = document.getElementById('lkInitialMessageColor')?.value.trim() || '#00ffff';
         const lkKeywordColor = document.getElementById('lkKeywordColor')?.value.trim() || '#ff00ff';
-        const lkKeywordsResponses = document.getElementById('lkKeywordsResponses')?.value.trim() || null;
-        const lkIncorrectResponse = document.getElementById('lkIncorrectResponse')?.value.trim() || 'I do not understand what you mean.';
         const lkPuzzleMode = document.getElementById('lkPuzzleMode')?.value || 'word';
         const lkPuzzleClues = document.getElementById('lkPuzzleClues')?.value.trim() || null;
         const lkPuzzleSolution = document.getElementById('lkPuzzleSolution')?.value.trim() || null;
         const lkPuzzleSuccessMessage = document.getElementById('lkPuzzleSuccessMessage')?.value.trim() || null;
         const lkPuzzleFailureMessage = document.getElementById('lkPuzzleFailureMessage')?.value.trim() || 'That is not the answer I seek.';
+        const lkPuzzleRewardItem = document.getElementById('lkPuzzleRewardItem')?.value || null;
 
         payloadNpc.lorekeeper = {
             lore_type: lkLoreType,
@@ -720,7 +994,8 @@ function saveNpc() {
             puzzle_clues: lkPuzzleClues,
             puzzle_solution: lkPuzzleSolution,
             puzzle_success_message: lkPuzzleSuccessMessage,
-            puzzle_failure_message: lkPuzzleFailureMessage
+            puzzle_failure_message: lkPuzzleFailureMessage,
+            puzzle_reward_item: lkPuzzleRewardItem
         };
     }
 
@@ -776,11 +1051,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Connect to WebSocket and initialize
     connectWebSocket();
     
-    // Request NPC list and placement maps/rooms from server
+    // Request NPC list, placement maps/rooms, and items from server
     setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'getAllNPCs' }));
             ws.send(JSON.stringify({ type: 'getNpcPlacementMaps' }));
+            ws.send(JSON.stringify({ type: 'getAllItems' }));
         }
     }, 500);
 });

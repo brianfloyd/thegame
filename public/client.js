@@ -2495,6 +2495,66 @@ function renderNpcForm() {
                     </div>
                 </div>
                 
+                <!-- Glow Codex Puzzle Section (shown when puzzle_type = glow_codex) -->
+                <div id=\"glowCodexPuzzleFields\" class=\"glow-codex-section\" style=\"display: ${selectedNpc.puzzle_type === 'glow_codex' ? 'block' : 'none'};\">
+                    <div class=\"npc-section-title\">Glow Codex Puzzle</div>
+                    <!-- Row GC1: Puzzle Type -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Puzzle Type</label>
+                            <select id=\"npcPuzzleType\">
+                                <option value=\"none\" ${(selectedNpc.puzzle_type || 'none') === 'none' ? 'selected' : ''}>none</option>
+                                <option value=\"glow_codex\" ${selectedNpc.puzzle_type === 'glow_codex' ? 'selected' : ''}>glow_codex</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Row GC2: Glow Clues (JSON array) -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Glow Clues<span class=\"npc-json-label\"> (JSON array: [\"clue with <glowword>\", ...])</span></label>
+                            <textarea id=\"npcPuzzleGlowClues\" class=\"npc-json-textarea\" placeholder='[\"Pulsewood <resin> is the first...\", \"If you quiet your breath, you can feel the natural <hum>...\"]'>${selectedNpc.puzzle_glow_clues || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC3: Extraction Pattern + Solution -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-half\">
+                            <label>Extraction Pattern<span class=\"npc-json-label\"> (JSON array: [1,2,3,4])</span></label>
+                            <input type=\"text\" id=\"npcPuzzleExtractionPattern\" value=\"${selectedNpc.puzzle_extraction_pattern || '[1,2,3,4]'}\" placeholder=\"[1,2,3,4]\">
+                        </div>
+                        <div class=\"npc-field-group npc-field-half\">
+                            <label>Solution Word</label>
+                            <input type=\"text\" id=\"npcPuzzleSolutionWord\" value=\"${selectedNpc.puzzle_solution_word || ''}\" placeholder=\"rune\">
+                        </div>
+                    </div>
+                    <!-- Row GC4: Success Response -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Success Response</label>
+                            <textarea id=\"npcPuzzleSuccessResponse\" class=\"npc-textarea\">${selectedNpc.puzzle_success_response || 'Yes… you have seen the hidden thread. Take this. You will need it.'}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC5: Failure Response -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Failure Response</label>
+                            <textarea id=\"npcPuzzleFailureResponse\" class=\"npc-textarea\">${selectedNpc.puzzle_failure_response || 'That is not the answer I seek.'}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row GC6: Reward Item -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Reward Item (optional)</label>
+                            <input type=\"text\" id=\"npcPuzzleRewardItem\" value=\"${selectedNpc.puzzle_reward_item || ''}\" placeholder=\"Harvester Rune\">
+                        </div>
+                    </div>
+                    <!-- Row GC7: Template Button -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <button type=\"button\" id=\"loadGlowCodexTemplate\" class=\"npc-template-btn\">Load Example Template</button>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Lore Keeper Specific Fields (shown when type = lorekeeper) -->
                 <div id=\"loreKeeperFields\" class=\"lorekeeper-section\" style=\"display: ${selectedNpc.npc_type === 'lorekeeper' ? 'block' : 'none'};\">
                     <div class=\"npc-section-title\">Lore Keeper Configuration</div>
@@ -2642,6 +2702,43 @@ function renderNpcForm() {
         });
     }
 
+    // Wire up Puzzle Type change to show/hide Glow Codex fields
+    const puzzleTypeSelect = document.getElementById('npcPuzzleType');
+    const glowCodexFields = document.getElementById('glowCodexPuzzleFields');
+    if (puzzleTypeSelect && glowCodexFields) {
+        puzzleTypeSelect.addEventListener('change', () => {
+            const isGlowCodex = puzzleTypeSelect.value === 'glow_codex';
+            glowCodexFields.style.display = isGlowCodex ? 'block' : 'none';
+        });
+    }
+
+    // Wire up template button
+    const templateBtn = document.getElementById('loadGlowCodexTemplate');
+    if (templateBtn) {
+        templateBtn.addEventListener('click', () => {
+            const glowCluesEl = document.getElementById('npcPuzzleGlowClues');
+            const extractionPatternEl = document.getElementById('npcPuzzleExtractionPattern');
+            const solutionEl = document.getElementById('npcPuzzleSolutionWord');
+            const successEl = document.getElementById('npcPuzzleSuccessResponse');
+            const failureEl = document.getElementById('npcPuzzleFailureResponse');
+            const rewardEl = document.getElementById('npcPuzzleRewardItem');
+            
+            if (glowCluesEl) {
+                glowCluesEl.value = JSON.stringify([
+                    "Pulsewood <resin> is the first substance every seeker must learn; without it, no Binder can form.",
+                    "If you quiet your breath, you can feel the natural <hum> beneath Newhaven.",
+                    "Ancient Pulsewood trunks are wrapped in living <vines> for centuries.",
+                    "Every Lore Keeper shapes a single <rune> to keep the Pulse in balance."
+                ], null, 2);
+            }
+            if (extractionPatternEl) extractionPatternEl.value = '[1,2,3,4]';
+            if (solutionEl) solutionEl.value = 'rune';
+            if (successEl) successEl.value = 'Yes… you have seen the hidden thread. Take this. You will need it.';
+            if (failureEl) failureEl.value = 'That is not the answer I seek.';
+            if (rewardEl) rewardEl.value = 'Harvester Rune';
+        });
+    }
+
     // Wire up color preview square
     const colorSelect = document.getElementById('npcColor');
     const colorPreview = document.getElementById('npcColorPreview');
@@ -2721,6 +2818,14 @@ function saveNpc() {
         return;
     }
 
+    const puzzle_type = document.getElementById('npcPuzzleType')?.value || 'none';
+    const puzzle_glow_clues = document.getElementById('npcPuzzleGlowClues')?.value.trim() || null;
+    const puzzle_extraction_pattern = document.getElementById('npcPuzzleExtractionPattern')?.value.trim() || null;
+    const puzzle_solution_word = document.getElementById('npcPuzzleSolutionWord')?.value.trim() || null;
+    const puzzle_success_response = document.getElementById('npcPuzzleSuccessResponse')?.value.trim() || null;
+    const puzzle_failure_response = document.getElementById('npcPuzzleFailureResponse')?.value.trim() || null;
+    const puzzle_reward_item = document.getElementById('npcPuzzleRewardItem')?.value.trim() || null;
+
     const payloadNpc = {
         name,
         description,
@@ -2733,7 +2838,14 @@ function saveNpc() {
         output_items: output_items || null,
         failure_states: failure_states || null,
         display_color,
-        active
+        active,
+        puzzle_type,
+        puzzle_glow_clues,
+        puzzle_extraction_pattern,
+        puzzle_solution_word,
+        puzzle_success_response,
+        puzzle_failure_response,
+        puzzle_reward_item
     };
 
     // Add Lore Keeper data if this is a lorekeeper type

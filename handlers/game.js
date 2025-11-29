@@ -20,6 +20,41 @@ const { findPlayerHarvestSession, endHarvestSession } = require('../services/npc
 // Track Lore Keeper engagement timers per connectionId
 const loreKeeperEngagementTimers = new Map();
 
+// Track active Glow Codex puzzles per player (connectionId -> { npcId, npcName, puzzleType, clueIndex })
+const activeGlowCodexPuzzles = new Map();
+
+/**
+ * Extract letters from glow codex clues based on extraction pattern
+ * Helper function for debugging/validation (backend only)
+ * @param {Array<string>} glowClues - Array of clue strings with <glowword> markers
+ * @param {Array<number>} extractionPattern - Array of 1-based indices
+ * @returns {string} Extracted word
+ */
+function extractGlowCodexLetters(glowClues, extractionPattern) {
+  if (!glowClues || !extractionPattern || glowClues.length !== extractionPattern.length) {
+    return '';
+  }
+  
+  const letters = [];
+  for (let i = 0; i < glowClues.length; i++) {
+    const clue = glowClues[i];
+    const patternIndex = extractionPattern[i] - 1; // Convert to 0-based
+    
+    // Extract text inside <>
+    const match = clue.match(/<([^>]+)>/);
+    if (!match) {
+      continue;
+    }
+    
+    const glowWord = match[1];
+    if (patternIndex >= 0 && patternIndex < glowWord.length) {
+      letters.push(glowWord[patternIndex]);
+    }
+  }
+  
+  return letters.join('').toLowerCase();
+}
+
 /**
  * Cancel any pending Lore Keeper engagement for a connection
  */
@@ -1068,6 +1103,179 @@ async function talk(ctx, data) {
     return;
   }
   
+  // Check if player has an active Glow Codex puzzle
+  const activePuzzle = activeGlowCodexPuzzles.get(connectionId);
+  if (activePuzzle) {
+    // Player is solving a puzzle - route all messages through puzzle solver
+    const npcsInRoom = await db.getNPCsInRoom(currentRoom.id);
+    const puzzleNpc = npcsInRoom.find(n => n.npcId === activePuzzle.npcId);
+    
+    if (puzzleNpc && puzzleNpc.puzzleType === 'glow_codex') {
+      const messageLower = message.toLowerCase();
+      
+      // Check if message is a question-like input (help, explain, hint, what, how)
+      const isQuestion = /(help|explain|hint|what|how|clarify|tell|more|again)/i.test(message);
+      
+      // Check if message exactly matches the solution
+      const sanitizedInput = message.trim().toLowerCase();
+      const solution = puzzleNpc.puzzleSolutionWord ? puzzleNpc.puzzleSolutionWord.toLowerCase() : '';
+      
+      if (sanitizedInput === solution && solution) {
+        // Correct answer!
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'loreKeeperMessage',
+          npcName: puzzleNpc.name,
+          npcColor: puzzleNpc.color,
+          message: puzzleNpc.puzzleSuccessResponse || 'Yes... you have seen the hidden thread.',
+          messageColor: '#00ff00',
+          isSuccess: true
+        });
+        
+        // Grant reward item if specified and not already awarded
+        if (puzzleNpc.puzzleRewardItem) {
+          const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, puzzleNpc.npcId, puzzleNpc.puzzleRewardItem);
+          if (!alreadyAwarded) {
+            await db.addPlayerItem(player.id, puzzleNpc.puzzleRewardItem, 1);
+            await db.recordLoreKeeperItemAward(player.id, puzzleNpc.npcId, puzzleNpc.puzzleRewardItem);
+            ws.send(JSON.stringify({
+              type: 'message',
+              message: `You receive ${puzzleNpc.puzzleRewardItem}.`
+            }));
+            
+            // Send updated inventory
+            const updatedItems = await db.getPlayerItems(player.id);
+            ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+            await sendPlayerStats(connectedPlayers, db, connectionId);
+          }
+        }
+        
+        // Clear active puzzle
+        activeGlowCodexPuzzles.delete(connectionId);
+        
+        // Still broadcast the player's message to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'talked',
+          playerName: player.name,
+          message: message
+        });
+        
+        return;
+      } else if (isQuestion) {
+        // Question-like input - return hint or followup response
+        let responses = null;
+        if (puzzleNpc.puzzleHintResponses && puzzleNpc.puzzleHintResponses.length > 0) {
+          responses = puzzleNpc.puzzleHintResponses;
+        } else if (puzzleNpc.puzzleFollowupResponses && puzzleNpc.puzzleFollowupResponses.length > 0) {
+          responses = puzzleNpc.puzzleFollowupResponses;
+        }
+        
+        if (responses && responses.length > 0) {
+          const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+          ws.send(JSON.stringify({
+            type: 'loreKeeperMessage',
+            npcName: puzzleNpc.name,
+            npcColor: puzzleNpc.color,
+            message: randomResponse,
+            messageColor: puzzleNpc.color || '#00ffff',
+            keywordColor: puzzleNpc.color || '#ff00ff'
+          }));
+        } else {
+          // Fallback to followup responses or default
+          const fallbackResponses = puzzleNpc.puzzleFollowupResponses || ['What do you mean?'];
+          const randomResponse = Array.isArray(fallbackResponses) 
+            ? fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)]
+            : fallbackResponses;
+          ws.send(JSON.stringify({
+            type: 'loreKeeperMessage',
+            npcName: puzzleNpc.name,
+            npcColor: puzzleNpc.color,
+            message: randomResponse,
+            messageColor: puzzleNpc.color || '#00ffff',
+            keywordColor: puzzleNpc.color || '#ff00ff'
+          }));
+        }
+        
+        // Still broadcast the player's message to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'talked',
+          playerName: player.name,
+          message: message
+        });
+        
+        return;
+      } else if (/[a-zA-Z]/.test(message)) {
+        // Message contains letters - likely an answer attempt
+        let responses = null;
+        if (puzzleNpc.puzzleIncorrectAttemptResponses && puzzleNpc.puzzleIncorrectAttemptResponses.length > 0) {
+          responses = puzzleNpc.puzzleIncorrectAttemptResponses;
+        } else if (puzzleNpc.puzzleFailureResponse) {
+          responses = [puzzleNpc.puzzleFailureResponse];
+        }
+        
+        if (responses && responses.length > 0) {
+          const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+          ws.send(JSON.stringify({
+            type: 'loreKeeperMessage',
+            npcName: puzzleNpc.name,
+            npcColor: puzzleNpc.color,
+            message: randomResponse,
+            messageColor: '#ff6666',
+            isFailure: true
+          }));
+        } else {
+          // Default failure response
+          ws.send(JSON.stringify({
+            type: 'loreKeeperMessage',
+            npcName: puzzleNpc.name,
+            npcColor: puzzleNpc.color,
+            message: 'That is not the answer I seek.',
+            messageColor: '#ff6666',
+            isFailure: true
+          }));
+        }
+        
+        // Still broadcast the player's message to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'talked',
+          playerName: player.name,
+          message: message
+        });
+        
+        return;
+      } else {
+        // Default to followup responses for non-question, non-answer inputs
+        let responses = null;
+        if (puzzleNpc.puzzleFollowupResponses && puzzleNpc.puzzleFollowupResponses.length > 0) {
+          responses = puzzleNpc.puzzleFollowupResponses;
+        }
+        
+        if (responses && responses.length > 0) {
+          const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+          ws.send(JSON.stringify({
+            type: 'loreKeeperMessage',
+            npcName: puzzleNpc.name,
+            npcColor: puzzleNpc.color,
+            message: randomResponse,
+            messageColor: puzzleNpc.color || '#00ffff',
+            keywordColor: puzzleNpc.color || '#ff00ff'
+          }));
+        }
+        
+        // Still broadcast the player's message to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'talked',
+          playerName: player.name,
+          message: message
+        });
+        
+        return;
+      }
+    } else {
+      // Puzzle NPC no longer in room or puzzle type changed - clear puzzle
+      activeGlowCodexPuzzles.delete(connectionId);
+    }
+  }
+  
   // Broadcast to all players in the same room (including sender)
   broadcastToRoom(connectedPlayers, currentRoom.id, {
     type: 'talked',
@@ -1075,12 +1283,153 @@ async function talk(ctx, data) {
     message: message
   });
   
-  // Check for Lore Keeper keyword triggers
-  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  // Check for NPCs with Glow Codex puzzles (start puzzle if player talks to them or asks them)
+  const npcsInRoom = await db.getNPCsInRoom(currentRoom.id);
   const messageLower = message.toLowerCase();
   
+  for (const npc of npcsInRoom) {
+    if (npc.puzzleType === 'glow_codex' && npc.puzzleGlowClues && npc.puzzleGlowClues.length > 0) {
+      // Check if player mentioned this NPC by name
+      const npcNameLower = npc.name.toLowerCase();
+      const mentionedNpc = messageLower.includes(npcNameLower) || 
+          npcNameLower.split(' ').some(part => messageLower.includes(part));
+      
+      if (mentionedNpc) {
+        // Check if message is a question (help, explain, hint, what, how)
+        const isQuestion = /(help|explain|hint|what|how|clarify|tell|more|again)/i.test(message);
+        
+        // Start the puzzle - set active puzzle state
+        activeGlowCodexPuzzles.set(connectionId, {
+          npcId: npc.npcId,
+          npcName: npc.name,
+          puzzleType: npc.puzzleType,
+          clueIndex: 0
+        });
+        
+        if (isQuestion) {
+          // If it's a question, respond with hint or followup response
+          let responses = null;
+          if (npc.puzzleHintResponses && npc.puzzleHintResponses.length > 0) {
+            responses = npc.puzzleHintResponses;
+          } else if (npc.puzzleFollowupResponses && npc.puzzleFollowupResponses.length > 0) {
+            responses = npc.puzzleFollowupResponses;
+          }
+          
+          if (responses && responses.length > 0) {
+            const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+            ws.send(JSON.stringify({
+              type: 'loreKeeperMessage',
+              npcName: npc.name,
+              npcColor: npc.color,
+              message: randomResponse,
+              messageColor: npc.color || '#00ffff',
+              keywordColor: npc.color || '#ff00ff'
+            }));
+          } else {
+            // Fallback: send all clues in sequence
+            for (let i = 0; i < npc.puzzleGlowClues.length; i++) {
+              const clue = npc.puzzleGlowClues[i];
+              setTimeout(() => {
+                ws.send(JSON.stringify({
+                  type: 'loreKeeperMessage',
+                  npcName: npc.name,
+                  npcColor: npc.color,
+                  message: clue,
+                  messageColor: npc.color || '#00ffff',
+                  keywordColor: npc.color || '#ff00ff'
+                }));
+              }, i * 1000); // Stagger clues by 1 second each
+            }
+          }
+        } else {
+          // Not a question - send all clues in sequence
+          for (let i = 0; i < npc.puzzleGlowClues.length; i++) {
+            const clue = npc.puzzleGlowClues[i];
+            setTimeout(() => {
+              ws.send(JSON.stringify({
+                type: 'loreKeeperMessage',
+                npcName: npc.name,
+                npcColor: npc.color,
+                message: clue,
+                messageColor: npc.color || '#00ffff',
+                keywordColor: npc.color || '#ff00ff'
+              }));
+            }, i * 1000); // Stagger clues by 1 second each
+          }
+        }
+        
+        break; // Only start one puzzle at a time
+      }
+    }
+  }
+  
+  // Check for Lore Keeper puzzle solutions FIRST (before keywords)
+  // This allows players to solve puzzles by saying the solution word
+  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  
   for (const lk of loreKeepers) {
-    if (lk.loreType !== 'dialogue' || !lk.keywordsResponses) {
+    // Check if this is a puzzle-type Lore Keeper with a solution
+    if (lk.loreType === 'puzzle' && lk.puzzleSolution) {
+      const npcNameLower = lk.name.toLowerCase();
+      const mentionedNpc = messageLower.includes(npcNameLower) || 
+          npcNameLower.split(' ').some(part => messageLower.includes(part));
+      
+      // Check if message exactly matches the solution (case-insensitive)
+      const sanitizedMessage = message.trim().toLowerCase();
+      const solution = lk.puzzleSolution.toLowerCase().trim();
+      
+      // Check if message is exactly the solution (with or without NPC name)
+      const isExactSolution = sanitizedMessage === solution;
+      // Or if NPC is mentioned and message contains the solution word
+      const containsSolution = mentionedNpc && messageLower.includes(solution);
+      
+      if (isExactSolution || containsSolution) {
+        // Correct solution! Award success
+        const successMessage = lk.puzzleSuccessMessage || 'Correct! The puzzle is solved.';
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'loreKeeperMessage',
+          npcName: lk.name,
+          npcColor: lk.displayColor,
+          message: successMessage,
+          messageColor: '#00ff00', // Green for success
+          keywordColor: lk.keywordColor,
+          isSuccess: true
+        });
+        
+        // Award reward item if specified and not already awarded
+        if (lk.puzzleRewardItem) {
+          const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, lk.npcId, lk.puzzleRewardItem);
+          if (!alreadyAwarded) {
+            await db.addPlayerItem(player.id, lk.puzzleRewardItem, 1);
+            await db.recordLoreKeeperItemAward(player.id, lk.npcId, lk.puzzleRewardItem);
+            ws.send(JSON.stringify({
+              type: 'message',
+              message: `You receive ${lk.puzzleRewardItem}.`
+            }));
+            
+            // Send updated inventory
+            const updatedItems = await db.getPlayerItems(player.id);
+            ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+            await sendPlayerStats(connectedPlayers, db, connectionId);
+          }
+        }
+        
+        // Still broadcast the player's message to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'talked',
+          playerName: player.name,
+          message: message
+        });
+        
+        return; // Exit early - puzzle solved
+      }
+    }
+  }
+  
+  // Check for Lore Keeper keyword triggers (both dialogue and puzzle types)
+  for (const lk of loreKeepers) {
+    // Both dialogue and puzzle types support keywords/responses
+    if (!lk.keywordsResponses) {
       continue;
     }
     
@@ -1119,6 +1468,23 @@ async function talk(ctx, data) {
       }
     }
   }
+}
+
+/**
+ * Handle ask command - same as talk but specifically for NPC dialogue
+ * Format: ask <npc> <question>
+ */
+async function ask(ctx, data) {
+  // Extract NPC name and question from message
+  const fullMessage = (data.message || '').trim();
+  if (!fullMessage) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: 'Ask what? (ask <npc> <question>)' }));
+    return;
+  }
+  
+  // For now, treat ask the same as talk - the talk handler will detect NPC mentions
+  // and handle puzzle dialogue appropriately
+  await talk(ctx, { ...data, message: fullMessage });
 }
 
 /**
@@ -1251,7 +1617,23 @@ async function solve(ctx, data) {
       isSuccess: true
     });
     
-    // Future: Could update puzzle_solved state, trigger events, grant items, etc.
+    // Award reward item if specified and not already awarded
+    if (lk.puzzleRewardItem) {
+      const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, lk.npcId, lk.puzzleRewardItem);
+      if (!alreadyAwarded) {
+        await db.addPlayerItem(player.id, lk.puzzleRewardItem, 1);
+        await db.recordLoreKeeperItemAward(player.id, lk.npcId, lk.puzzleRewardItem);
+        ws.send(JSON.stringify({
+          type: 'message',
+          message: `You receive ${lk.puzzleRewardItem}.`
+        }));
+        
+        // Send updated inventory
+        const updatedItems = await db.getPlayerItems(player.id);
+        ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+        await sendPlayerStats(connectedPlayers, db, connectionId);
+      }
+    }
   } else {
     // Failure - send only to the player
     const failureMessage = lk.puzzleFailureMessage || 'That is not the answer I seek.';
@@ -1406,6 +1788,8 @@ async function greet(ctx, data) {
 function cleanupLoreKeeperEngagement(connectionId) {
   cancelLoreKeeperEngagement(connectionId);
   // Note: Greeted state is now persisted in database, no need to clear in-memory state
+  // Clear active Glow Codex puzzles
+  activeGlowCodexPuzzles.delete(connectionId);
 }
 
 module.exports = {
@@ -1419,6 +1803,7 @@ module.exports = {
   harvest,
   resonate,
   talk,
+  ask,
   telepath,
   solve,
   clue,

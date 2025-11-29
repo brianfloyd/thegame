@@ -250,6 +250,54 @@ body {
     border-left: 3px solid #00ffff;
     font-size: 14px;
     line-height: 1.5;
+    position: relative;
+    min-width: 200px;
+    min-height: 50px;
+    overflow: auto; /* Allow scrolling if content exceeds box size */
+    resize: none; /* Disable default browser resize */
+    display: inline-block; /* Allow width/height to be set */
+    max-width: 100%; /* Don't exceed container width */
+}
+
+/* Resize handle for Lore Keeper messages */
+.lorekeeper-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    background: rgba(0, 255, 255, 0.3);
+    border-top: 1px solid #00ffff;
+    border-left: 1px solid #00ffff;
+    cursor: nwse-resize;
+    z-index: 100;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.lorekeeper-message.resizing {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.lorekeeper-resize-handle:hover {
+    background: rgba(0, 255, 255, 0.5);
+}
+
+.lorekeeper-resize-handle::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 8px 8px;
+    border-color: transparent transparent #00ffff transparent;
 }
 
 .lorekeeper-message .lorekeeper-name {
@@ -272,6 +320,20 @@ body {
     text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
 }
 
+.lorekeeper-message.lorekeeper-success .lorekeeper-resize-handle {
+    background: rgba(0, 255, 0, 0.3);
+    border-top-color: #00ff00;
+    border-left-color: #00ff00;
+}
+
+.lorekeeper-message.lorekeeper-success .lorekeeper-resize-handle:hover {
+    background: rgba(0, 255, 0, 0.5);
+}
+
+.lorekeeper-message.lorekeeper-success .lorekeeper-resize-handle::after {
+    border-color: transparent transparent #00ff00 transparent;
+}
+
 .lorekeeper-message.lorekeeper-failure {
     background: rgba(100, 0, 0, 0.3);
     border-left-color: #ff6666;
@@ -281,7 +343,21 @@ body {
     color: #ff6666;
 }
 
-/* Lore Keeper glowing text for <keywords> */
+.lorekeeper-message.lorekeeper-failure .lorekeeper-resize-handle {
+    background: rgba(255, 102, 102, 0.3);
+    border-top-color: #ff6666;
+    border-left-color: #ff6666;
+}
+
+.lorekeeper-message.lorekeeper-failure .lorekeeper-resize-handle:hover {
+    background: rgba(255, 102, 102, 0.5);
+}
+
+.lorekeeper-message.lorekeeper-failure .lorekeeper-resize-handle::after {
+    border-color: transparent transparent #ff6666 transparent;
+}
+
+/* Lore Keeper glowing text for <keywords> (purple color) */
 .lorekeeper-glow {
     font-weight: bold;
     text-shadow: 
@@ -290,6 +366,18 @@ body {
         0 0 15px currentColor,
         0 0 20px currentColor;
     animation: lorekeeper-pulse 2s ease-in-out infinite;
+}
+
+/* Lore Keeper glowing text for [text] (preserves original color) */
+.lorekeeper-glow-preserve {
+    font-weight: bold;
+    text-shadow: 
+        0 0 5px currentColor,
+        0 0 10px currentColor,
+        0 0 15px currentColor,
+        0 0 20px currentColor;
+    animation: lorekeeper-pulse 2s ease-in-out infinite;
+    /* Color is inherited from parent, not overridden */
 }
 
 @keyframes lorekeeper-pulse {
@@ -1947,19 +2035,27 @@ body {
     border: 1px solid #00ff00;
     color: #00ff00;
     font-family: 'Courier New', monospace;
-    resize: vertical;
+    resize: vertical !important;
+    max-height: 500px !important;
+    box-sizing: border-box;
+    overflow: auto !important;
+    display: block !important;
 }
 
 .npc-json-textarea {
-    flex: 1;
+    width: 100%;
     min-height: 80px;
     height: 80px;
+    resize: vertical !important;
+    box-sizing: border-box;
 }
 
 .npc-textarea {
-    flex: 1;
+    width: 100%;
     min-height: 60px;
     height: 60px;
+    resize: vertical !important;
+    box-sizing: border-box;
 }
 
 .npc-save-row {
@@ -1983,6 +2079,62 @@ body {
 .npc-editor-form button#saveNpcBtn:hover {
     background: #1a3a1a;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+/* Glow Codex Puzzle Section Styles */
+.glow-codex-section {
+    margin-top: 15px;
+    padding: 15px;
+    border: 2px solid #ff00ff;
+    border-radius: 4px;
+    background: rgba(80, 0, 80, 0.3);
+}
+
+.glow-codex-section .npc-section-title {
+    font-size: 12px;
+    font-weight: bold;
+    color: #ff00ff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #ff00ff;
+}
+
+.glow-codex-section label {
+    color: #ff00ff;
+}
+
+.glow-codex-section input,
+.glow-codex-section select,
+.glow-codex-section textarea {
+    border-color: #ff00ff;
+}
+
+.glow-codex-section input:focus,
+.glow-codex-section select:focus,
+.glow-codex-section textarea:focus {
+    border-color: #ff00ff;
+    box-shadow: 0 0 5px rgba(255, 0, 255, 0.5);
+}
+
+.npc-template-btn {
+    background: #0a0a0a;
+    border: 2px solid #ff00ff;
+    color: #ff00ff;
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 11px;
+    text-transform: uppercase;
+    width: 100%;
+    margin-top: 10px;
+}
+
+.npc-template-btn:hover {
+    background: rgba(255, 0, 255, 0.1);
+    box-shadow: 0 0 10px rgba(255, 0, 255, 0.5);
 }
 
 /* Lore Keeper Section Styles */
@@ -2132,7 +2284,7 @@ body {
 
 /* NPC Editor: allow scrolling so full NPC sheet (including Save button) is visible */
 #npcEditor .map-editor-side-panel {
-    overflow: hidden;
+    overflow: visible;
     display: flex;
     flex-direction: column;
 }
@@ -2141,7 +2293,7 @@ body {
     height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .map-editor-side-panel label {
@@ -2166,7 +2318,7 @@ body {
 
 .map-editor-side-panel textarea {
     min-height: 60px;
-    max-height: 80px;
+    max-height: none; /* Allow full resize */
     resize: vertical;
 }
 

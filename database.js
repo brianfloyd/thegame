@@ -371,13 +371,23 @@ async function createScriptableNPC(npc) {
     input_items = null,
     output_items = null,
     failure_states = null,
-    display_color = '#00ff00'
+    display_color = '#00ff00',
+    puzzle_type = 'none',
+    puzzle_glow_clues = null,
+    puzzle_extraction_pattern = null,
+    puzzle_solution_word = null,
+    puzzle_success_response = null,
+    puzzle_failure_response = null,
+    puzzle_reward_item = null,
+    puzzle_hint_responses = null,
+    puzzle_followup_responses = null,
+    puzzle_incorrect_attempt_responses = null
   } = npc;
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses]
   );
 
   return result.rows[0].id;
@@ -397,23 +407,41 @@ async function updateScriptableNPC(npc) {
     output_items = null,
     failure_states = null,
     display_color = '#00ff00',
-    active = true
+    active = true,
+    puzzle_type = 'none',
+    puzzle_glow_clues = null,
+    puzzle_extraction_pattern = null,
+    puzzle_solution_word = null,
+    puzzle_success_response = null,
+    puzzle_failure_response = null,
+    puzzle_reward_item = null,
+    puzzle_hint_responses = null,
+    puzzle_followup_responses = null,
+    puzzle_incorrect_attempt_responses = null
   } = npc;
 
   await query(
     `UPDATE scriptable_npcs SET 
       name = $1, description = $2, npc_type = $3, base_cycle_time = $4, difficulty = $5,
       required_stats = $6, required_buffs = $7, input_items = $8, output_items = $9,
-      failure_states = $10, display_color = $11, active = $12
-     WHERE id = $13`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, id]
+      failure_states = $10, display_color = $11, active = $12,
+      puzzle_type = $13, puzzle_glow_clues = $14, puzzle_extraction_pattern = $15,
+      puzzle_solution_word = $16, puzzle_success_response = $17, puzzle_failure_response = $18,
+      puzzle_reward_item = $19, puzzle_hint_responses = $20, puzzle_followup_responses = $21,
+      puzzle_incorrect_attempt_responses = $22
+     WHERE id = $23`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, id]
   );
 }
 
 async function getNPCsInRoom(roomId) {
   const rows = await getAll(
     `SELECT rn.id, rn.npc_id, rn.state, rn.slot,
-            sn.name, sn.description, sn.display_color, sn.harvestable_time, sn.cooldown_time
+            sn.name, sn.description, sn.display_color, sn.harvestable_time, sn.cooldown_time,
+            sn.puzzle_type, sn.puzzle_glow_clues, sn.puzzle_extraction_pattern,
+            sn.puzzle_solution_word, sn.puzzle_success_response, sn.puzzle_failure_response,
+            sn.puzzle_reward_item, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
+            sn.puzzle_incorrect_attempt_responses
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.room_id = $1 AND rn.active = TRUE
@@ -430,7 +458,17 @@ async function getNPCsInRoom(roomId) {
     state: row.state ? JSON.parse(row.state) : {},
     slot: row.slot,
     harvestableTime: row.harvestable_time || 60000,
-    cooldownTime: row.cooldown_time || 120000
+    cooldownTime: row.cooldown_time || 120000,
+    puzzleType: row.puzzle_type || 'none',
+    puzzleGlowClues: row.puzzle_glow_clues ? JSON.parse(row.puzzle_glow_clues) : null,
+    puzzleExtractionPattern: row.puzzle_extraction_pattern ? JSON.parse(row.puzzle_extraction_pattern) : null,
+    puzzleSolutionWord: row.puzzle_solution_word,
+    puzzleSuccessResponse: row.puzzle_success_response,
+    puzzleFailureResponse: row.puzzle_failure_response,
+    puzzleRewardItem: row.puzzle_reward_item,
+    puzzleHintResponses: row.puzzle_hint_responses ? JSON.parse(row.puzzle_hint_responses) : null,
+    puzzleFollowupResponses: row.puzzle_followup_responses ? JSON.parse(row.puzzle_followup_responses) : null,
+    puzzleIncorrectAttemptResponses: row.puzzle_incorrect_attempt_responses ? JSON.parse(row.puzzle_incorrect_attempt_responses) : null
   }));
 }
 
@@ -574,7 +612,8 @@ async function getLoreKeepersInRoom(roomId) {
     puzzleClues: row.puzzle_clues ? JSON.parse(row.puzzle_clues) : [],
     puzzleSolution: row.puzzle_solution,
     puzzleSuccessMessage: row.puzzle_success_message,
-    puzzleFailureMessage: row.puzzle_failure_message
+    puzzleFailureMessage: row.puzzle_failure_message,
+    puzzleRewardItem: row.puzzle_reward_item
   }));
 }
 
@@ -596,7 +635,8 @@ async function createLoreKeeper(config) {
     puzzle_clues = null,
     puzzle_solution = null,
     puzzle_success_message = null,
-    puzzle_failure_message = 'That is not the answer I seek.'
+    puzzle_failure_message = 'That is not the answer I seek.',
+    puzzle_reward_item = null
   } = config;
 
   const result = await query(
@@ -604,14 +644,14 @@ async function createLoreKeeper(config) {
       npc_id, lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     RETURNING id`,
     [
       npc_id, lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item
     ]
   );
 
@@ -636,7 +676,8 @@ async function updateLoreKeeper(config) {
     puzzle_clues = null,
     puzzle_solution = null,
     puzzle_success_message = null,
-    puzzle_failure_message = 'That is not the answer I seek.'
+    puzzle_failure_message = 'That is not the answer I seek.',
+    puzzle_reward_item = null
   } = config;
 
   await query(
@@ -645,14 +686,14 @@ async function updateLoreKeeper(config) {
       initial_message = $4, initial_message_color = $5,
       keywords_responses = $6, keyword_color = $7, incorrect_response = $8,
       puzzle_mode = $9, puzzle_clues = $10, puzzle_solution = $11, 
-      puzzle_success_message = $12, puzzle_failure_message = $13,
+      puzzle_success_message = $12, puzzle_failure_message = $13, puzzle_reward_item = $14,
       updated_at = NOW()
-    WHERE npc_id = $14`,
+    WHERE npc_id = $15`,
     [
       lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item,
       npc_id
     ]
   );
@@ -663,6 +704,34 @@ async function updateLoreKeeper(config) {
  */
 async function deleteLoreKeeperByNpcId(npcId) {
   await query('DELETE FROM lore_keepers WHERE npc_id = $1', [npcId]);
+}
+
+/**
+ * Check if a player has been awarded a specific item by a specific Lore Keeper
+ */
+async function hasPlayerBeenAwardedItemByLoreKeeper(playerId, npcId, itemName) {
+  const result = await getOne(
+    'SELECT id FROM lore_keeper_item_awards WHERE player_id = $1 AND npc_id = $2 AND item_name = $3',
+    [playerId, npcId, itemName]
+  );
+  return result !== null;
+}
+
+/**
+ * Record that a player has been awarded an item by a Lore Keeper
+ */
+async function recordLoreKeeperItemAward(playerId, npcId, itemName) {
+  try {
+    await query(
+      'INSERT INTO lore_keeper_item_awards (player_id, npc_id, item_name, awarded_at) VALUES ($1, $2, $3, NOW())',
+      [playerId, npcId, itemName]
+    );
+  } catch (err) {
+    // If unique constraint violation, player already received this item - that's okay
+    if (err.code !== '23505') { // PostgreSQL unique violation error code
+      throw err;
+    }
+  }
 }
 
 /**
@@ -987,6 +1056,8 @@ module.exports = {
   hasPlayerBeenGreetedByLoreKeeper,
   markPlayerGreetedByLoreKeeper,
   getGreetedLoreKeepersForPlayer,
+  hasPlayerBeenAwardedItemByLoreKeeper,
+  recordLoreKeeperItemAward,
   
   // Items
   getAllItems,
