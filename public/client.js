@@ -18,6 +18,46 @@ let commHistory = {
     telepath: []
 };
 let commTargetPlayer = null; // For telepathy mode
+let currentPlayerName = null; // Track player name for localStorage key
+
+// Load comms history from localStorage
+function loadCommsHistory() {
+    if (!currentPlayerName) return;
+    
+    try {
+        const stored = localStorage.getItem(`comms_history_${currentPlayerName}`);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            // Merge with existing (in case we already have some messages)
+            commHistory.talk = parsed.talk || [];
+            commHistory.resonate = parsed.resonate || [];
+            commHistory.telepath = parsed.telepath || [];
+            
+            // Keep only last 100 per channel
+            if (commHistory.talk.length > 100) commHistory.talk = commHistory.talk.slice(-100);
+            if (commHistory.resonate.length > 100) commHistory.resonate = commHistory.resonate.slice(-100);
+            if (commHistory.telepath.length > 100) commHistory.telepath = commHistory.telepath.slice(-100);
+            
+            // Re-render if widget is visible
+            if (commMode) {
+                renderCommHistory();
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load comms history:', e);
+    }
+}
+
+// Save comms history to localStorage
+function saveCommsHistory() {
+    if (!currentPlayerName) return;
+    
+    try {
+        localStorage.setItem(`comms_history_${currentPlayerName}`, JSON.stringify(commHistory));
+    } catch (e) {
+        console.error('Failed to save comms history:', e);
+    }
+}
 
 // Get protocol (ws or wss) based on current page protocol
 const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -128,8 +168,14 @@ function handleMessage(data) {
             updatePlayerStats(data.stats);
             // Set current player name and update page title
             if (data.stats.playerName) {
+                const previousPlayerName = currentPlayerName;
                 currentPlayerName = data.stats.playerName;
                 document.title = `The Game - ${data.stats.playerName}`;
+                
+                // Load comms history for this player if name changed
+                if (previousPlayerName !== currentPlayerName) {
+                    loadCommsHistory();
+                }
             }
             // godMode is returned as an object with .value property from dynamic stats system
             if (data.stats.godMode !== undefined) {
@@ -572,6 +618,7 @@ const COMMAND_REGISTRY = [
     // Lore Keeper interaction commands
     { name: 'solve', abbrev: 'sol', description: 'Attempt puzzle solution (solve <npc> <answer>)', category: 'Lore Keeper' },
     { name: 'clue', abbrev: 'cl', description: 'Get puzzle clue from NPC (clue <npc>)', category: 'Lore Keeper' },
+    { name: 'greet', abbrev: 'gr, hello, hi', description: 'Greet a Lore Keeper NPC (greet <npc>)', category: 'Lore Keeper' },
     
     // Communication commands
     { name: 'talk', abbrev: 'say, t', description: 'Talk to players in room (talk <message>)', category: 'Communication' },
@@ -1139,6 +1186,9 @@ function addToCommHistory(mode, playerName, message, isReceived, targetPlayer = 
         commHistory[mode] = commHistory[mode].slice(-100);
     }
     
+    // Save to localStorage
+    saveCommsHistory();
+    
     // Update display if this mode is active
     if (mode === commMode) {
         renderCommHistory();
@@ -1603,6 +1653,23 @@ function executeCommand(command) {
         }
         
         ws.send(JSON.stringify({ type: 'clue', target }));
+        return;
+    }
+
+    // GREET / GR / HELLO / HI <npc> - greet a Lore Keeper to hear initial message
+    if (base === 'greet' || base === 'gr' || base === 'hello' || base === 'hi') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const target = parts.slice(1).join(' ');
+        if (!target) {
+            addToTerminal('Greet whom? (greet <npc>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'greet', target }));
         return;
     }
 

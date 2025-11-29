@@ -665,6 +665,41 @@ async function deleteLoreKeeperByNpcId(npcId) {
   await query('DELETE FROM lore_keepers WHERE npc_id = $1', [npcId]);
 }
 
+/**
+ * Check if a player has been greeted by a Lore Keeper
+ */
+async function hasPlayerBeenGreetedByLoreKeeper(playerId, npcId) {
+  const result = await getOne(
+    'SELECT id FROM lore_keeper_greetings WHERE player_id = $1 AND npc_id = $2',
+    [playerId, npcId]
+  );
+  return result !== null;
+}
+
+/**
+ * Mark a player as having been greeted by a Lore Keeper
+ */
+async function markPlayerGreetedByLoreKeeper(playerId, npcId) {
+  await query(
+    `INSERT INTO lore_keeper_greetings (player_id, npc_id, first_greeted_at, last_greeted_at)
+     VALUES ($1, $2, NOW(), NOW())
+     ON CONFLICT (player_id, npc_id) 
+     DO UPDATE SET last_greeted_at = NOW()`,
+    [playerId, npcId]
+  );
+}
+
+/**
+ * Get all Lore Keepers that have greeted a player
+ */
+async function getGreetedLoreKeepersForPlayer(playerId) {
+  const rows = await getAll(
+    'SELECT npc_id FROM lore_keeper_greetings WHERE player_id = $1',
+    [playerId]
+  );
+  return rows.map(row => row.npc_id);
+}
+
 // ============================================================
 // Items Functions
 // ============================================================
@@ -949,6 +984,9 @@ module.exports = {
   createLoreKeeper,
   updateLoreKeeper,
   deleteLoreKeeperByNpcId,
+  hasPlayerBeenGreetedByLoreKeeper,
+  markPlayerGreetedByLoreKeeper,
+  getGreetedLoreKeepersForPlayer,
   
   // Items
   getAllItems,

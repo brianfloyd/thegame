@@ -28,6 +28,7 @@ const handlerMap = {
   telepath: gameHandlers.telepath,
   solve: gameHandlers.solve,
   clue: gameHandlers.clue,
+  greet: gameHandlers.greet,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

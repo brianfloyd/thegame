@@ -35,13 +35,14 @@ function cancelLoreKeeperEngagement(connectionId) {
 
 /**
  * Trigger Lore Keeper engagement for a player entering a room
+ * Only sends initial message if player hasn't already been greeted by this NPC (persists across sessions)
  */
 async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, roomId) {
   // Cancel any existing engagement timers
   cancelLoreKeeperEngagement(connectionId);
   
   const playerData = connectedPlayers.get(connectionId);
-  if (!playerData || playerData.ws.readyState !== WebSocket.OPEN) {
+  if (!playerData || playerData.ws.readyState !== WebSocket.OPEN || !playerData.playerId) {
     return;
   }
   
@@ -58,8 +59,14 @@ async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, r
       continue;
     }
     
+    // Check database to see if player has already been greeted by this Lore Keeper
+    const hasBeenGreeted = await db.hasPlayerBeenGreetedByLoreKeeper(playerData.playerId, lk.npcId);
+    if (hasBeenGreeted) {
+      continue;
+    }
+    
     // Set up delayed engagement
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       // Verify player is still in the room and connected
       const currentPlayerData = connectedPlayers.get(connectionId);
       if (!currentPlayerData || 
@@ -67,6 +74,9 @@ async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, r
           currentPlayerData.roomId !== roomId) {
         return;
       }
+      
+      // Mark as greeted in database before sending (so re-entering room won't re-trigger)
+      await db.markPlayerGreetedByLoreKeeper(currentPlayerData.playerId, lk.npcId);
       
       // Send engagement message to the player only
       currentPlayerData.ws.send(JSON.stringify({
@@ -1326,10 +1336,76 @@ async function clue(ctx, data) {
 }
 
 /**
+ * Handle greet command - re-trigger Lore Keeper initial message
+ */
+async function greet(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  const target = (data.target || '').trim().toLowerCase();
+  if (!target) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Greet whom? (greet <npc>)' }));
+    return;
+  }
+  
+  // Get Lore Keepers in the room
+  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  
+  // Find Lore Keeper by partial name match
+  const matches = loreKeepers.filter(lk => 
+    lk.name.toLowerCase().includes(target)
+  );
+  
+  if (matches.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `You don't see "${target}" here to greet.` }));
+    return;
+  }
+  
+  if (matches.length > 1) {
+    const names = matches.map(lk => lk.name).join(', ');
+    ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
+  }
+  
+  const lk = matches[0];
+  
+  // Check if Lore Keeper has an initial message
+  if (!lk.initialMessage) {
+    ws.send(JSON.stringify({ type: 'message', message: `${lk.name} nods silently.` }));
+    return;
+  }
+  
+  // Send the initial message (greet always works, even if already greeted)
+  ws.send(JSON.stringify({
+    type: 'loreKeeperMessage',
+    npcName: lk.name,
+    npcColor: lk.displayColor,
+    message: lk.initialMessage,
+    messageColor: lk.initialMessageColor,
+    keywordColor: lk.keywordColor
+  }));
+  
+  // Mark as greeted in database (in case they hadn't been greeted yet, or update last_greeted_at)
+  await db.markPlayerGreetedByLoreKeeper(player.id, lk.npcId);
+}
+
+/**
  * Cleanup function to cancel engagement timers when player disconnects
  */
 function cleanupLoreKeeperEngagement(connectionId) {
   cancelLoreKeeperEngagement(connectionId);
+  // Note: Greeted state is now persisted in database, no need to clear in-memory state
 }
 
 module.exports = {
@@ -1346,6 +1422,7 @@ module.exports = {
   telepath,
   solve,
   clue,
+  greet,
   cleanupLoreKeeperEngagement
 };
 
