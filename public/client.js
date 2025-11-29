@@ -4,8 +4,8 @@ let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
 
 // Widget system state
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'communication'];
-let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms'];
+let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets (stats always first when present)
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
 let factoryWidgetState = { slots: [null, null], textInput: '' }; // Factory widget state
@@ -101,6 +101,15 @@ function handleMessage(data) {
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            // Handle factory widget state
+            if (data.factoryWidgetState !== undefined) {
+                if (data.room.roomType === 'factory') {
+                    factoryWidgetState = data.factoryWidgetState;
+                    showFactoryWidget(factoryWidgetState);
+                } else {
+                    hideFactoryWidget();
+                }
+            }
             break;
         case 'playerStats':
             updatePlayerStats(data.stats);
@@ -2486,15 +2495,40 @@ function toggleWidget(widgetName) {
     const isActive = activeWidgets.includes(widgetName);
     
     if (isActive) {
-        // Hide the widget
+        // Hide the widget (but don't allow hiding if it would leave no widgets)
+        // Also, if hiding stats, make sure we have room for automatic widgets
+        const willHaveSpace = activeWidgets.length > 1 || (npcWidgetVisible || factoryWidgetVisible);
+        if (!willHaveSpace && widgetName !== 'stats') {
+            // Can't hide the last toggleable widget unless it's stats
+            return;
+        }
         activeWidgets = activeWidgets.filter(w => w !== widgetName);
     } else {
         // Show the widget
-        if (activeWidgets.length >= 4 || (activeWidgets.length >= 3 && npcWidgetVisible)) {
-            // At max capacity, replace bottom-right widget (last in array)
-            activeWidgets.pop();
+        // Calculate available slots (4 total, minus automatic widgets)
+        const automaticWidgetCount = (npcWidgetVisible ? 1 : 0) + (factoryWidgetVisible ? 1 : 0);
+        const maxToggleableWidgets = 4 - automaticWidgetCount;
+        
+        if (activeWidgets.length >= maxToggleableWidgets) {
+            // At max capacity, remove the last widget (but keep stats if it exists)
+            if (activeWidgets.includes('stats') && activeWidgets.length > 1) {
+                // Remove last widget that's not stats
+                const nonStatsWidgets = activeWidgets.filter(w => w !== 'stats');
+                if (nonStatsWidgets.length > 0) {
+                    activeWidgets = ['stats', ...nonStatsWidgets.slice(0, -1)];
+                }
+            } else if (!activeWidgets.includes('stats')) {
+                // No stats, just remove last
+                activeWidgets.pop();
+            }
         }
-        activeWidgets.push(widgetName);
+        
+        // Add widget, ensuring stats is always first if it's being added
+        if (widgetName === 'stats') {
+            activeWidgets = ['stats', ...activeWidgets.filter(w => w !== 'stats')];
+        } else {
+            activeWidgets.push(widgetName);
+        }
     }
     
     updateWidgetDisplay();
@@ -2517,14 +2551,22 @@ function updateWidgetDisplay() {
         }
     });
     
-    // Build list of widgets to show (activeWidgets + NPC widget if visible + Factory widget if visible)
-    let widgetsToShow = [...activeWidgets];
-    if (npcWidgetVisible) {
-        widgetsToShow.push('npc');
-    }
+    // Build list of widgets to show
+    // Priority: Factory widget in slot 0 (top-left), then NPC widget, then toggleable widgets
+    let widgetsToShow = [];
+    
+    // Slot 0: Factory widget (if in factory room) - always top left when visible
     if (factoryWidgetVisible) {
         widgetsToShow.push('factory');
     }
+    
+    // Slot 1: NPC widget (if harvesting) - always visible when active
+    if (npcWidgetVisible) {
+        widgetsToShow.push('npc');
+    }
+    
+    // Remaining slots: Toggleable widgets (stats, compass, map, communication)
+    widgetsToShow.push(...activeWidgets);
     
     // Assign widgets to slots
     slots.forEach((slot, index) => {
@@ -2649,28 +2691,57 @@ function initWidgetDragDrop() {
 
 // Reorder widgets based on drag and drop
 function reorderWidget(widgetName, targetSlotIndex) {
-    // Build list of widgets to show (activeWidgets + NPC widget if visible + Factory widget if visible)
-    let widgetsToShow = [...activeWidgets];
-    if (npcWidgetVisible) {
-        widgetsToShow.push('npc');
+    // Don't allow reordering automatic widgets (NPC/Factory) or stats to slot 0
+    if (widgetName === 'npc' || widgetName === 'factory') {
+        return; // Automatic widgets can't be reordered
     }
+    
+    // Build list of widgets to show (matching updateWidgetDisplay priority)
+    let widgetsToShow = [];
+    
+    // Slot 0: Factory widget (if in factory room)
     if (factoryWidgetVisible) {
         widgetsToShow.push('factory');
     }
+    
+    // Slot 1: NPC widget (if harvesting)
+    if (npcWidgetVisible) {
+        widgetsToShow.push('npc');
+    }
+    
+    // Remaining slots: Toggleable widgets
+    widgetsToShow.push(...activeWidgets);
     
     // Find current position of widget
     const currentIndex = widgetsToShow.indexOf(widgetName);
     if (currentIndex === -1) return; // Widget not in list
     
+    // Can't move to slot 0 (reserved for factory widget) or slot 1 (reserved for NPC widget)
+    if (targetSlotIndex === 0 && factoryWidgetVisible) {
+        return; // Slot 0 is for factory widget
+    }
+    if (targetSlotIndex === 1 && npcWidgetVisible) {
+        return; // Slot 1 is for NPC widget
+    }
+    
     // Remove from current position
     widgetsToShow.splice(currentIndex, 1);
     
-    // Insert at target position (clamp to valid range)
-    const maxIndex = Math.min(targetSlotIndex, widgetsToShow.length);
-    widgetsToShow.splice(maxIndex, 0, widgetName);
+    // Adjust target index to account for automatic widgets
+    // Factory is slot 0, NPC is slot 1, then toggleable widgets
+    let adjustedTargetIndex = targetSlotIndex;
+    const factoryOffset = factoryWidgetVisible ? 1 : 0;
+    const npcOffset = npcWidgetVisible ? 1 : 0;
+    adjustedTargetIndex = targetSlotIndex - factoryOffset - npcOffset;
+    // Clamp to valid range for toggleable widgets
+    adjustedTargetIndex = Math.max(0, Math.min(adjustedTargetIndex, widgetsToShow.length));
+    
+    // Insert at target position
+    widgetsToShow.splice(adjustedTargetIndex, 0, widgetName);
     
     // Update activeWidgets (remove NPC and factory from the list)
-    activeWidgets = widgetsToShow.filter(w => w !== 'npc' && w !== 'factory');
+    const toggleableWidgets = widgetsToShow.filter(w => w !== 'npc' && w !== 'factory');
+    activeWidgets = toggleableWidgets;
     
     // Update display
     updateWidgetDisplay();
@@ -2753,7 +2824,12 @@ function updateFactoryWidgetSlots(state) {
         const content = slot0.querySelector('.factory-slot-content');
         if (content) {
             if (state.slots[0]) {
-                content.textContent = state.slots[0].itemName;
+                const slot = state.slots[0];
+                if (slot.quantity > 1) {
+                    content.textContent = `${slot.itemName} (x${slot.quantity})`;
+                } else {
+                    content.textContent = slot.itemName;
+                }
                 content.className = 'factory-slot-content filled';
             } else {
                 content.textContent = '';
@@ -2766,7 +2842,12 @@ function updateFactoryWidgetSlots(state) {
         const content = slot1.querySelector('.factory-slot-content');
         if (content) {
             if (state.slots[1]) {
-                content.textContent = state.slots[1].itemName;
+                const slot = state.slots[1];
+                if (slot.quantity > 1) {
+                    content.textContent = `${slot.itemName} (x${slot.quantity})`;
+                } else {
+                    content.textContent = slot.itemName;
+                }
                 content.className = 'factory-slot-content filled';
             } else {
                 content.textContent = '';

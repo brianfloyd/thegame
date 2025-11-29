@@ -770,20 +770,31 @@ async function factoryWidgetAddItem(ctx, data) {
     factoryWidgetState.set(connectionId, factoryState);
   }
   
-  // Check if slot is already occupied
-  if (factoryState.slots[slotIndex] !== null) {
-    ws.send(JSON.stringify({ type: 'error', message: 'That slot is already occupied.' }));
-    return;
+  // Check if slot can accept this item
+  const currentSlot = factoryState.slots[slotIndex];
+  if (currentSlot !== null) {
+    // Slot is occupied - check if it's the same item type
+    if (currentSlot.itemName.toLowerCase() !== item.item_name.toLowerCase()) {
+      ws.send(JSON.stringify({ type: 'error', message: 'That slot already contains a different item type.' }));
+      return;
+    }
+    // Same item type - will stack
   }
   
   // Remove 1 item from player inventory
   await db.removePlayerItem(player.id, item.item_name, 1);
   
-  // Add item to slot
-  factoryState.slots[slotIndex] = {
-    itemName: item.item_name,
-    quantity: 1
-  };
+  // Add item to slot (stack if same type, or create new entry)
+  if (currentSlot && currentSlot.itemName.toLowerCase() === item.item_name.toLowerCase()) {
+    // Stack: increase quantity
+    currentSlot.quantity += 1;
+  } else {
+    // New item in slot
+    factoryState.slots[slotIndex] = {
+      itemName: item.item_name,
+      quantity: 1
+    };
+  }
   
   // Send updated factory widget state
   ws.send(JSON.stringify({
