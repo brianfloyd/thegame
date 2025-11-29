@@ -1853,6 +1853,10 @@ body {
     flex: 0 0 calc(25% - 6px);
 }
 
+.npc-field-third {
+    flex: 0 0 calc(33.33% - 6px);
+}
+
 .npc-field-half {
     flex: 0 0 calc(50% - 6px);
 }
@@ -1900,6 +1904,12 @@ body {
     flex: 1;
     min-height: 80px;
     height: 80px;
+}
+
+.npc-textarea {
+    flex: 1;
+    min-height: 60px;
+    height: 60px;
 }
 
 .npc-save-row {
