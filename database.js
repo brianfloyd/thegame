@@ -483,7 +483,7 @@ async function validateMoonlessMeadowRoom(roomId) {
 }
 
 async function placeNPCInRoom(npcId, roomId, slot = 0, initialState = {}, spawnRules = null) {
-  await validateMoonlessMeadowRoom(roomId);
+  // Note: Moonless Meadow restriction removed - NPCs can now be placed in any map
   
   const stateJson = JSON.stringify(initialState);
   const spawnRulesJson = spawnRules ? JSON.stringify(spawnRules) : null;

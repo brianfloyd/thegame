@@ -14,6 +14,7 @@ let npcEditorMode = 'view'; // 'view' | 'create' | 'edit'
 let npcPlacements = [];
 let npcPlacementRooms = [];
 let npcPlacementMap = null;
+let npcPlacementMaps = []; // List of all maps for placement selection
 
 // Non-blocking notification for editor errors
 function showEditorNotification(message, type = 'info') {
@@ -131,6 +132,10 @@ function handleMessage(data) {
             npcPlacementRooms = Array.isArray(data.rooms) ? data.rooms : [];
             populateNpcPlacementRooms();
             break;
+        case 'npcPlacementMaps':
+            npcPlacementMaps = Array.isArray(data.maps) ? data.maps : [];
+            populateNpcPlacementMaps();
+            break;
         case 'error':
             showEditorNotification(data.message, 'error');
             break;
@@ -213,7 +218,7 @@ function populateNpcPlacementRooms() {
     if (!npcPlacementRooms || npcPlacementRooms.length === 0) {
         const opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = 'No rooms available (Moonless Meadow not found)';
+        opt.textContent = 'No rooms available';
         roomSelect.appendChild(opt);
         return;
     }
@@ -224,6 +229,49 @@ function populateNpcPlacementRooms() {
         opt.textContent = `${room.name} (${room.x},${room.y})`;
         roomSelect.appendChild(opt);
     });
+}
+
+function populateNpcPlacementMaps() {
+    const mapSelect = document.getElementById('npcPlacementMapSelect');
+    if (!mapSelect) return;
+
+    mapSelect.innerHTML = '';
+
+    if (!npcPlacementMaps || npcPlacementMaps.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No maps available';
+        mapSelect.appendChild(opt);
+        return;
+    }
+
+    npcPlacementMaps.forEach(map => {
+        const opt = document.createElement('option');
+        opt.value = map.id;
+        opt.textContent = map.name;
+        mapSelect.appendChild(opt);
+    });
+    
+    // Select first map and load its rooms
+    if (npcPlacementMaps.length > 0) {
+        mapSelect.value = npcPlacementMaps[0].id;
+        loadRoomsForMap(npcPlacementMaps[0].id);
+    }
+}
+
+function loadRoomsForMap(mapId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+        type: 'getNpcPlacementRooms',
+        mapId: mapId
+    }));
+}
+
+function loadAllPlacementMaps() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+        type: 'getNpcPlacementMaps'
+    }));
 }
 
 function renderNpcPlacements() {
@@ -494,8 +542,8 @@ function renderNpcForm() {
             <div class="npc-placement-section">
                 <h4>Room Placements</h4>
                 <div class="npc-placement-controls-horizontal">
-                    <select id="npcPlacementMapSelect" disabled>
-                        <option value="">Moonless Meadow</option>
+                    <select id="npcPlacementMapSelect">
+                        <option value="">Select Map...</option>
                     </select>
                     <select id="npcPlacementRoomSelect"></select>
                     <button id="addNpcPlacementBtn" class="npc-small-btn">Add to Room</button>
@@ -568,6 +616,22 @@ function renderNpcForm() {
         });
     }
 
+    // Wire up map select change to load rooms for that map
+    const mapSelect = document.getElementById('npcPlacementMapSelect');
+    if (mapSelect) {
+        mapSelect.addEventListener('change', () => {
+            const mapId = parseInt(mapSelect.value, 10);
+            if (mapId) {
+                loadRoomsForMap(mapId);
+            }
+        });
+    }
+
+    // Populate maps dropdown (if maps are already loaded)
+    if (npcPlacementMaps.length > 0) {
+        populateNpcPlacementMaps();
+    }
+    
     populateNpcPlacementRooms();
     renderNpcPlacements();
 }
@@ -712,11 +776,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Connect to WebSocket and initialize
     connectWebSocket();
     
-    // Request NPC list and placement rooms from server
+    // Request NPC list and placement maps/rooms from server
     setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'getAllNPCs' }));
-            ws.send(JSON.stringify({ type: 'getNpcPlacementRooms' }));
+            ws.send(JSON.stringify({ type: 'getNpcPlacementMaps' }));
         }
     }, 500);
 });

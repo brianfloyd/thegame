@@ -203,7 +203,7 @@ async function getNpcPlacements(ctx, data) {
 }
 
 /**
- * Get rooms available for NPC placement (Moonless Meadow only)
+ * Get rooms available for NPC placement (any map)
  */
 async function getNpcPlacementRooms(ctx, data) {
   const { ws, db, connectedPlayers } = ctx;
@@ -214,17 +214,46 @@ async function getNpcPlacementRooms(ctx, data) {
     return;
   }
 
-  const moonless = await db.getMapByName('Moonless Meadow');
-  if (!moonless) {
-    ws.send(JSON.stringify({ type: 'npcPlacementRooms', error: 'Moonless Meadow map not found' }));
+  const { mapId } = data;
+  
+  // If no mapId provided, get the first map (for backwards compatibility)
+  let targetMap;
+  if (mapId) {
+    targetMap = await db.getMapById(mapId);
+  } else {
+    const allMaps = await db.getAllMaps();
+    targetMap = allMaps[0];
+  }
+  
+  if (!targetMap) {
+    ws.send(JSON.stringify({ type: 'npcPlacementRooms', error: 'Map not found' }));
     return;
   }
 
-  const rooms = await db.getRoomsForNpcPlacement(moonless.id);
+  const rooms = await db.getRoomsForNpcPlacement(targetMap.id);
   ws.send(JSON.stringify({
     type: 'npcPlacementRooms',
-    map: { id: moonless.id, name: moonless.name },
+    map: { id: targetMap.id, name: targetMap.name },
     rooms
+  }));
+}
+
+/**
+ * Get all maps for NPC placement dropdown
+ */
+async function getNpcPlacementMaps(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const maps = await db.getAllMaps();
+  ws.send(JSON.stringify({
+    type: 'npcPlacementMaps',
+    maps: maps.map(m => ({ id: m.id, name: m.name }))
   }));
 }
 
@@ -247,7 +276,7 @@ async function addNpcToRoom(ctx, data) {
   }
 
   try {
-    // placeNPCInRoom enforces Moonless Meadow restriction
+    // placeNPCInRoom - NPCs can be placed in any room
     const placementId = await db.placeNPCInRoom(npcId, roomId, slot || 0, { cycles: 0 });
     const placements = await db.getNpcPlacements(npcId);
     const placement = placements.find(p => p.id === placementId) || null;
@@ -298,6 +327,7 @@ module.exports = {
   updateNPC,
   getNpcPlacements,
   getNpcPlacementRooms,
+  getNpcPlacementMaps,
   addNpcToRoom,
   removeNpcFromRoom
 };

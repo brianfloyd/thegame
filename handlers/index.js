@@ -54,6 +54,7 @@ const handlerMap = {
   updateNPC: npcEditorHandlers.updateNPC,
   getNpcPlacements: npcEditorHandlers.getNpcPlacements,
   getNpcPlacementRooms: npcEditorHandlers.getNpcPlacementRooms,
+  getNpcPlacementMaps: npcEditorHandlers.getNpcPlacementMaps,
   addNpcToRoom: npcEditorHandlers.addNpcToRoom,
   removeNpcFromRoom: npcEditorHandlers.removeNpcFromRoom,
   
