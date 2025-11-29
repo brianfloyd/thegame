@@ -18,7 +18,6 @@ let commHistory = {
     telepath: []
 };
 let commTargetPlayer = null; // For telepathy mode
-let currentPlayerName = null; // Track player name for localStorage key
 
 // Load comms history from localStorage
 function loadCommsHistory() {
