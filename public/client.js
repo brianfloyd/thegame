@@ -101,6 +101,8 @@ function handleMessage(data) {
             break;
         case 'loreKeeperMessage':
             displayLoreKeeperMessage(data.npcName, data.npcColor, data.message, data.messageColor, data.isSuccess, data.isFailure);
+            // Add to talk history in comms widget (Lore Keepers participate in room conversation)
+            addToCommHistory('talk', data.npcName, data.message, true);
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
