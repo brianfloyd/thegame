@@ -432,6 +432,27 @@ body {
     color: inherit;
 }
 
+/* Lore Keeper styling in comms widget */
+.comm-message.comm-lorekeeper {
+    padding: 4px 6px;
+    margin: 4px 0;
+    background: rgba(0, 50, 50, 0.4);
+    border-left: 2px solid #00ffff;
+    border-radius: 2px;
+}
+
+.comm-message.comm-lorekeeper-success {
+    background: rgba(0, 100, 0, 0.4);
+    border-left-color: #00ff00;
+}
+
+.comm-message.comm-lorekeeper-failure {
+    background: rgba(100, 0, 0, 0.3);
+    border-left-color: #ff6666;
+}
+
+/* Glow effect works in widget too via .lorekeeper-glow class */
+
 .comm-input-container {
     display: flex;
     gap: 4px;

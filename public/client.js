@@ -102,9 +102,15 @@ function handleMessage(data) {
         case 'loreKeeperMessage':
             displayLoreKeeperMessage(data.npcName, data.npcColor, data.message, data.messageColor, data.isSuccess, data.isFailure, data.keywordColor);
             // Add to talk history in comms widget (Lore Keepers participate in room conversation)
-            // Strip <> markers for clean history display
-            const cleanMessage = data.message.replace(/<([^>]+)>/g, '$1');
-            addToCommHistory('talk', data.npcName, cleanMessage, true);
+            // Pass the full message with <> markers and colors for styling
+            addToCommHistory('talk', data.npcName, data.message, true, null, {
+                isLoreKeeper: true,
+                npcColor: data.npcColor,
+                messageColor: data.messageColor,
+                keywordColor: data.keywordColor,
+                isSuccess: data.isSuccess,
+                isFailure: data.isFailure
+            });
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
@@ -1112,7 +1118,7 @@ function sendCommMessage() {
     commInput.value = '';
 }
 
-function addToCommHistory(mode, playerName, message, isReceived, targetPlayer = null) {
+function addToCommHistory(mode, playerName, message, isReceived, targetPlayer = null, loreKeeperStyle = null) {
     if (!commHistory[mode]) {
         commHistory[mode] = [];
     }
@@ -1122,7 +1128,8 @@ function addToCommHistory(mode, playerName, message, isReceived, targetPlayer = 
         message,
         isReceived,
         targetPlayer,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        loreKeeperStyle // Store Lore Keeper styling info if provided
     };
     
     commHistory[mode].push(entry);
@@ -1172,8 +1179,26 @@ function renderCommHistory() {
                 displayText = `You resonated <span class="comm-text">${escapeHtml(entry.message)}</span>!`;
             }
         } else {
-            // Talk mode
-            if (entry.isReceived) {
+            // Talk mode - check for Lore Keeper styling
+            if (entry.loreKeeperStyle && entry.loreKeeperStyle.isLoreKeeper) {
+                const style = entry.loreKeeperStyle;
+                const npcColor = style.npcColor || '#00ffff';
+                const msgColor = style.messageColor || '#cccccc';
+                const keywordColor = style.keywordColor || npcColor;
+                
+                // Apply glow effect to <text> markers
+                const parsedMessage = parseLoreKeeperGlow(entry.message, keywordColor);
+                
+                // Add success/failure classes
+                if (style.isSuccess) {
+                    msgDiv.classList.add('comm-lorekeeper-success');
+                } else if (style.isFailure) {
+                    msgDiv.classList.add('comm-lorekeeper-failure');
+                }
+                msgDiv.classList.add('comm-lorekeeper');
+                
+                displayText = `<span class="comm-player" style="color: ${npcColor}">${escapeHtml(entry.playerName)}</span> says "<span style="color: ${msgColor}">${parsedMessage}</span>"`;
+            } else if (entry.isReceived) {
                 displayText = `<span class="comm-player">${escapeHtml(entry.playerName)}</span>: ${escapeHtml(entry.message)}`;
             } else {
                 displayText = `You: ${escapeHtml(entry.message)}`;
