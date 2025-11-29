@@ -9,6 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon --ext js,json,css,html server.js",
+    "dev:stable": "node scripts/restart-stable.js",
+    "dev:both": "concurrently \"npm run dev\" \"npm run dev:stable\"",
     "migrate": "node scripts/migrate.js",
     "migrate-data": "node scripts/migrate-data.js"
   },
@@ -26,6 +28,8 @@
   },
   "devDependencies": {
     "better-sqlite3": "^11.7.0",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3"
   }
 }

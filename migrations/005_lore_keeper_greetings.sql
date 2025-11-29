@@ -12,3 +12,4 @@ CREATE TABLE IF NOT EXISTS lore_keeper_greetings (
 CREATE INDEX IF NOT EXISTS idx_lore_keeper_greetings_player_npc ON lore_keeper_greetings(player_id, npc_id);
 
 
+

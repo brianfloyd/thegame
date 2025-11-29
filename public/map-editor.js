@@ -33,9 +33,11 @@ let allItemsData = []; // For item placement in rooms
 let playerCurrentRoom = null; // Player's current room coordinates for centering
 let roomTypeColors = { // Default colors
     normal: '#00ff00',
-    shop: '#0088ff',
-    factory: '#ff8800'
+    merchant: '#0088ff',
+    factory: '#ff8800',
+    warehouse: '#00ffff'
 };
+let allRoomTypes = []; // All available room types from database
 let mapEditorTooltip = null; // Tooltip element for room hover info in editor
 
 // Non-blocking notification for editor errors
@@ -118,9 +120,25 @@ function handleMessage(data) {
             if (data.roomTypeColors) {
                 roomTypeColors = { ...roomTypeColors, ...data.roomTypeColors };
             }
+            if (data.roomTypes) {
+                allRoomTypes = data.roomTypes;
+            }
             currentEditorMapId = data.mapId;
             renderMapEditor();
             updateSidePanel();
+            break;
+        case 'allRoomTypes':
+            if (data.roomTypes) {
+                allRoomTypes = data.roomTypes;
+                console.log('Loaded room types from database:', allRoomTypes);
+                // Refresh any open dialogs that use room types
+                const dialog = document.getElementById('roomTypeColorsDialog');
+                if (dialog && !dialog.classList.contains('hidden')) {
+                    showRoomTypeColorsDialog();
+                }
+                // Always refresh side panel when room types are loaded (to update dropdowns)
+                updateSidePanel();
+            }
             break;
         case 'roomTypeColors':
             if (data.colors) {
@@ -298,6 +316,10 @@ function loadMapForEditor(mapId) {
     }
     
     ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
+    // Also request room types if we don't have them yet
+    if (allRoomTypes.length === 0) {
+        ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
+    }
 }
 
 // Show create map dialog
@@ -331,12 +353,24 @@ function showRoomTypeColorsDialog() {
         content.appendChild(description);
     }
     
-    // Room types to show
-    const roomTypes = [
-        { type: 'normal', label: 'Normal' },
-        { type: 'shop', label: 'Shop' },
-        { type: 'factory', label: 'Factory' }
-    ];
+    // If we don't have room types yet, request them
+    if (allRoomTypes.length === 0) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
+        }
+        // Show message and return - will refresh when room types arrive
+        const message = document.createElement('div');
+        message.textContent = 'Loading room types...';
+        message.style.color = '#00ff00';
+        content.appendChild(message);
+        return;
+    }
+    
+    // Room types to show - dynamically from database
+    const roomTypes = allRoomTypes.map(type => ({
+        type: type,
+        label: type.charAt(0).toUpperCase() + type.slice(1)
+    }));
     
     // Create color picker for each room type
     roomTypes.forEach(rt => {
@@ -407,6 +441,32 @@ function hideRoomTypeColorsDialog() {
     if (dialog) {
         dialog.classList.add('hidden');
     }
+}
+
+// Generate room type options HTML for dropdowns
+// Load dynamically from database (room_type_colors table)
+function generateRoomTypeOptions(selectedType) {
+    // If we don't have room types yet, request them and use defaults as fallback
+    if (allRoomTypes.length === 0) {
+        // Request room types from server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
+        }
+        // Use defaults as fallback until database responds
+        const defaults = ['normal', 'merchant', 'factory', 'warehouse'];
+        return defaults.map(type => {
+            const label = type.charAt(0).toUpperCase() + type.slice(1);
+            const selected = type === selectedType ? 'selected' : '';
+            return `<option value="${type}" ${selected}>${label}</option>`;
+        }).join('');
+    }
+    
+    // Use room types from database
+    return allRoomTypes.map(type => {
+        const label = type.charAt(0).toUpperCase() + type.slice(1);
+        const selected = type === selectedType ? 'selected' : '';
+        return `<option value="${type}" ${selected}>${label}</option>`;
+    }).join('');
 }
 
 // Create new map
@@ -1006,9 +1066,7 @@ function updateSidePanel() {
             <textarea id="newRoomDescription" placeholder="Enter room description" style="min-height: 60px; margin-bottom: 8px;"></textarea>
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="newRoomType" style="margin-bottom: 8px;">
-                <option value="normal">Normal</option>
-                <option value="shop">Shop</option>
-                <option value="factory">Factory</option>
+                ${generateRoomTypeOptions('normal')}
             </select>
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <label style="margin: 0; min-width: 20px;">X:</label>
@@ -1043,9 +1101,7 @@ function updateSidePanel() {
             <textarea id="editRoomDescription" style="min-height: 60px; margin-bottom: 8px;" placeholder="Set description for all rooms">${firstRoom.description || ''}</textarea>
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="editRoomType" style="margin-bottom: 8px;">
-                <option value="normal" ${firstRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
-                <option value="shop" ${firstRoom.roomType === 'shop' || firstRoom.roomType === 'merchant' ? 'selected' : ''}>Shop</option>
-                <option value="factory" ${firstRoom.roomType === 'factory' ? 'selected' : ''}>Factory</option>
+                ${generateRoomTypeOptions(firstRoom.roomType || 'normal')}
             </select>
             <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button id="updateRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Update All Rooms</button>
@@ -1120,9 +1176,7 @@ function updateSidePanel() {
             <textarea id="editRoomDescription" style="min-height: 60px; margin-bottom: 8px;">${selectedRoom.description || ''}</textarea>
             <label style="margin-top: 8px;">Room Type:</label>
             <select id="editRoomType" style="margin-bottom: 8px;">
-                <option value="normal" ${selectedRoom.roomType === 'normal' ? 'selected' : ''}>Normal</option>
-                <option value="shop" ${selectedRoom.roomType === 'shop' || selectedRoom.roomType === 'merchant' ? 'selected' : ''}>Shop</option>
-                <option value="factory" ${selectedRoom.roomType === 'factory' ? 'selected' : ''}>Factory</option>
+                ${generateRoomTypeOptions(selectedRoom.roomType || 'normal')}
             </select>
             
             <!-- Room Items Section -->
@@ -1546,9 +1600,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (roomTypeColorsBtn) {
         roomTypeColorsBtn.addEventListener('click', () => {
             showRoomTypeColorsDialog();
-            // Request current room type colors from server
+            // Request current room type colors and room types from server
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'getAllRoomTypeColors' }));
+                ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
             }
         });
     }

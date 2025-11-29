@@ -9,6 +9,10 @@ const wsUrl = wsProtocol + location.host;
 // Item Editor State
 let allItems = [];
 let selectedItemId = null;
+let allItemTypes = []; // All available item types from database
+let warehouseRooms = []; // All warehouse rooms for deed configuration
+let merchantRooms = []; // All merchant rooms for item configuration
+let merchantItems = []; // Merchant items for currently selected item
 
 // Non-blocking notification for editor errors
 function showEditorNotification(message, type = 'info') {
@@ -48,6 +52,10 @@ function connectWebSocket() {
         // Authenticate with session
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'authenticateSession' }));
+            // Request items and item types
+            ws.send(JSON.stringify({ type: 'getAllItems' }));
+            ws.send(JSON.stringify({ type: 'getAllItemTypes' }));
+            ws.send(JSON.stringify({ type: 'getMerchantRooms' }));
         }
     };
 
@@ -71,8 +79,81 @@ function handleMessage(data) {
     switch (data.type) {
         case 'itemList':
             allItems = data.items;
+            if (data.itemTypes) {
+                allItemTypes = data.itemTypes;
+            }
+            if (data.warehouseRooms) {
+                warehouseRooms = data.warehouseRooms;
+            }
+            if (data.merchantRooms) {
+                merchantRooms = data.merchantRooms;
+            }
             renderItemList();
             updateItemSelector();
+            // Refresh form if item is selected to update dropdown
+            if (selectedItemId) {
+                const item = allItems.find(i => i.id === selectedItemId);
+                if (item) {
+                    showItemForm(item);
+                }
+            }
+            break;
+        case 'merchantRooms':
+            if (data.rooms) {
+                merchantRooms = data.rooms;
+                // Refresh form if item is selected
+                if (selectedItemId) {
+                    const item = allItems.find(i => i.id === selectedItemId);
+                    if (item) {
+                        showItemForm(item);
+                    }
+                }
+            }
+            break;
+        case 'merchantItems':
+            if (data.merchantItems) {
+                merchantItems = data.merchantItems;
+                // Refresh form to show updated merchant items
+                if (selectedItemId) {
+                    const item = allItems.find(i => i.id === selectedItemId);
+                    if (item) {
+                        showItemForm(item);
+                    }
+                }
+            }
+            break;
+        case 'merchantItemAdded':
+        case 'merchantItemUpdated':
+        case 'merchantItemRemoved':
+            // Reload merchant items for the current item
+            if (selectedItemId && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'getMerchantItems', itemId: selectedItemId }));
+            }
+            break;
+        case 'warehouseRooms':
+            if (data.rooms) {
+                warehouseRooms = data.rooms;
+                // Refresh form if item is selected and is a deed
+                if (selectedItemId) {
+                    const item = allItems.find(i => i.id === selectedItemId);
+                    if (item && item.item_type === 'deed') {
+                        showItemForm(item);
+                    }
+                }
+            }
+            break;
+        case 'allItemTypes':
+            if (data.itemTypes) {
+                allItemTypes = data.itemTypes;
+                console.log('Loaded item types from database:', allItemTypes);
+                // Refresh form if item is selected to update dropdown
+                if (selectedItemId) {
+                    const item = allItems.find(i => i.id === selectedItemId);
+                    if (item) {
+                        showItemForm(item);
+                    }
+                }
+            }
             break;
         case 'itemCreated':
             allItems.push(data.item);
@@ -146,6 +227,10 @@ function selectItem(itemId) {
     const item = allItems.find(i => i.id === itemId);
     if (item) {
         showItemForm(item);
+        // Load merchant items for this item
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getMerchantItems', itemId: itemId }));
+        }
     }
 }
 
@@ -168,12 +253,7 @@ function showItemForm(item = null) {
             <div class="item-form-group">
                 <label for="itemType">Type</label>
                 <select id="itemType" class="item-form-select">
-                    <option value="sundries" ${item?.item_type === 'sundries' ? 'selected' : ''}>Sundries</option>
-                    <option value="weapon" ${item?.item_type === 'weapon' ? 'selected' : ''}>Weapon</option>
-                    <option value="armor" ${item?.item_type === 'armor' ? 'selected' : ''}>Armor</option>
-                    <option value="consumable" ${item?.item_type === 'consumable' ? 'selected' : ''}>Consumable</option>
-                    <option value="material" ${item?.item_type === 'material' ? 'selected' : ''}>Material</option>
-                    <option value="quest" ${item?.item_type === 'quest' ? 'selected' : ''}>Quest</option>
+                    ${generateItemTypeOptions(item?.item_type || 'ingredient')}
                 </select>
             </div>
             
@@ -207,6 +287,65 @@ function showItemForm(item = null) {
                        placeholder="Enter item weight">
             </div>
             
+            <div data-deed-config class="item-form-group" style="border-top: 2px solid #00ff00; margin-top: 20px; padding-top: 15px; display: ${item?.item_type === 'deed' ? 'block' : 'none'};">
+                <h4 style="color: #ffff00; margin-bottom: 15px;">Deed Configuration</h4>
+                
+                <div class="item-form-group">
+                    <label for="deedWarehouseRoom">Warehouse Room</label>
+                    <select id="deedWarehouseRoom" class="item-form-select">
+                        <option value="">-- Select Warehouse Room --</option>
+                        ${generateWarehouseRoomOptions(item?.deed_warehouse_location_key || '')}
+                    </select>
+                </div>
+                
+                <div class="item-form-group">
+                    <label for="deedMaxItemTypes">Max Item Types</label>
+                    <input type="number" id="deedMaxItemTypes" class="item-form-input" 
+                           value="${item ? (item.deed_base_max_item_types || 1) : 1}" 
+                           min="1" step="1"
+                           placeholder="Number of different item types that can be stored">
+                </div>
+                
+                <div class="item-form-group">
+                    <label for="deedMaxTotalItems">Max Total Items</label>
+                    <input type="number" id="deedMaxTotalItems" class="item-form-input" 
+                           value="${item ? (item.deed_max_total_items || 100) : 100}" 
+                           min="1" step="1"
+                           placeholder="Total number of items that can be stored">
+                </div>
+                
+                <div class="item-form-group">
+                    <label>
+                        <input type="checkbox" id="deedAutomation" 
+                               ${item && item.deed_automation_enabled ? 'checked' : ''}>
+                        Enable Warehouse Automation
+                    </label>
+                    <div style="font-size: 0.85em; color: #888; margin-top: 5px;">
+                        (Feature coming soon - currently for configuration only)
+                    </div>
+                </div>
+            </div>
+            
+            <div data-merchant-config class="item-form-group" style="border-top: 2px solid #00ff00; margin-top: 20px; padding-top: 15px; display: ${item ? 'block' : 'none'};">
+                <h4 style="color: #ffff00; margin-bottom: 15px;">Merchant Configuration</h4>
+                <p style="font-size: 0.9em; color: #888; margin-bottom: 15px;">
+                    Configure which merchant rooms sell this item and their inventory settings.
+                </p>
+                
+                <div class="item-form-group">
+                    <label for="merchantRoomSelect">Add to Merchant Room</label>
+                    <select id="merchantRoomSelect" class="item-form-select">
+                        <option value="">-- Select Merchant Room --</option>
+                        ${generateMerchantRoomOptions('')}
+                    </select>
+                    <button id="addMerchantRoomBtn" class="editor-btn" style="margin-top: 10px; width: 100%;">Add to Merchant</button>
+                </div>
+                
+                <div id="merchantItemsList" class="merchant-items-list" style="margin-top: 20px;">
+                    ${renderMerchantItemsList()}
+                </div>
+            </div>
+            
             <div class="item-form-actions">
                 <button id="saveItemBtn" class="editor-btn item-save-btn">${isNew ? 'Create Item' : 'Save Item'}</button>
             </div>
@@ -216,6 +355,110 @@ function showItemForm(item = null) {
     // Add save handler
     document.getElementById('saveItemBtn').addEventListener('click', () => {
         saveItem(item ? item.id : null);
+    });
+    
+    // Add item type change handler to show/hide deed fields
+    const itemTypeSelect = document.getElementById('itemType');
+    if (itemTypeSelect) {
+        itemTypeSelect.addEventListener('change', () => {
+            // Re-render form to show/hide deed fields
+            const currentItem = item || {};
+            currentItem.item_type = itemTypeSelect.value;
+            showItemForm(currentItem);
+        });
+    }
+    
+    // Add merchant room handlers
+    const addMerchantRoomBtn = document.getElementById('addMerchantRoomBtn');
+    if (addMerchantRoomBtn) {
+        addMerchantRoomBtn.addEventListener('click', () => {
+            const roomSelect = document.getElementById('merchantRoomSelect');
+            const roomId = parseInt(roomSelect.value);
+            if (!roomId) {
+                showEditorNotification('Please select a merchant room', 'error');
+                return;
+            }
+            if (!item || !item.id) {
+                showEditorNotification('Item must be saved before adding to merchant', 'error');
+                return;
+            }
+            
+            // Add with default unlimited=true
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
+                    type: 'addItemToMerchant', 
+                    itemId: item.id, 
+                    roomId: roomId,
+                    unlimited: true,
+                    maxQty: null,
+                    regenHours: null
+                }));
+            }
+        });
+    }
+    
+    // Add handlers for merchant item configuration
+    setupMerchantItemHandlers();
+}
+
+// Setup event handlers for merchant items
+function setupMerchantItemHandlers() {
+    // Handle unlimited checkbox changes
+    document.querySelectorAll('.merchant-unlimited').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const merchantItemId = parseInt(e.target.dataset.merchantItemId);
+            const entry = e.target.closest('.merchant-item-entry');
+            const inventoryConfig = entry.querySelector('.merchant-inventory-config');
+            if (e.target.checked) {
+                inventoryConfig.style.display = 'none';
+            } else {
+                inventoryConfig.style.display = 'block';
+            }
+        });
+    });
+    
+    // Handle save merchant item buttons
+    document.querySelectorAll('.save-merchant-item-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const merchantItemId = parseInt(e.target.dataset.merchantItemId);
+            const entry = e.target.closest('.merchant-item-entry');
+            const unlimited = entry.querySelector('.merchant-unlimited').checked;
+            const maxQtyInput = entry.querySelector('.merchant-max-qty');
+            const regenHoursInput = entry.querySelector('.merchant-regen-hours');
+            
+            const maxQty = unlimited ? null : (maxQtyInput.value ? parseInt(maxQtyInput.value) : null);
+            const regenHours = regenHoursInput.value ? parseFloat(regenHoursInput.value) : null;
+            
+            if (!unlimited && !maxQty) {
+                showEditorNotification('Max quantity is required when unlimited is disabled', 'error');
+                return;
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
+                    type: 'updateMerchantItem', 
+                    merchantItemId: merchantItemId,
+                    unlimited: unlimited,
+                    maxQty: maxQty,
+                    regenHours: regenHours
+                }));
+            }
+        });
+    });
+    
+    // Handle remove merchant item buttons
+    document.querySelectorAll('.remove-merchant-item-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const merchantItemId = parseInt(e.target.dataset.merchantItemId);
+            if (confirm('Remove this item from the merchant room?')) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ 
+                        type: 'removeItemFromMerchant', 
+                        merchantItemId: merchantItemId
+                    }));
+                }
+            }
+        });
     });
 }
 
@@ -242,6 +485,27 @@ function saveItem(itemId) {
         encumbrance
     };
     
+    // Add deed configuration if item type is deed
+    if (itemType === 'deed') {
+        const warehouseRoomSelect = document.getElementById('deedWarehouseRoom');
+        const maxItemTypesInput = document.getElementById('deedMaxItemTypes');
+        const maxTotalItemsInput = document.getElementById('deedMaxTotalItems');
+        const automationCheckbox = document.getElementById('deedAutomation');
+        
+        if (warehouseRoomSelect) {
+            item.deed_warehouse_location_key = warehouseRoomSelect.value || null;
+        }
+        if (maxItemTypesInput) {
+            item.deed_base_max_item_types = parseInt(maxItemTypesInput.value) || 1;
+        }
+        if (maxTotalItemsInput) {
+            item.deed_max_total_items = parseInt(maxTotalItemsInput.value) || 100;
+        }
+        if (automationCheckbox) {
+            item.deed_automation_enabled = automationCheckbox.checked;
+        }
+    }
+    
     if (itemId) {
         // Update existing
         item.id = itemId;
@@ -266,6 +530,134 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Generate item type options HTML for dropdowns
+// Load dynamically from database (item_types table)
+function generateItemTypeOptions(selectedType) {
+    // If we don't have item types yet, request them and use defaults as fallback
+    if (allItemTypes.length === 0) {
+        // Request item types from server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getAllItemTypes' }));
+        }
+        // Use defaults as fallback until database responds
+        const defaults = ['ingredient', 'rune', 'deed'];
+        return defaults.map(type => {
+            const label = type.charAt(0).toUpperCase() + type.slice(1);
+            const selected = type === selectedType ? 'selected' : '';
+            return `<option value="${type}" ${selected}>${label}</option>`;
+        }).join('');
+    }
+    
+    // Use item types from database
+    return allItemTypes.map(type => {
+        const label = type.charAt(0).toUpperCase() + type.slice(1);
+        const selected = type === selectedType ? 'selected' : '';
+        return `<option value="${type}" ${selected}>${label}</option>`;
+    }).join('');
+}
+
+// Generate warehouse room options HTML for dropdowns
+function generateWarehouseRoomOptions(selectedLocationKey) {
+    // If we don't have warehouse rooms yet, request them
+    if (warehouseRooms.length === 0) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getWarehouseRooms' }));
+        }
+        return '<option value="">Loading warehouse rooms...</option>';
+    }
+    
+    // Use warehouse rooms from database
+    return warehouseRooms.map(room => {
+        const locationKey = room.id.toString();
+        const label = `${room.map_name} - ${room.name} (${room.x}, ${room.y})`;
+        const selected = locationKey === selectedLocationKey ? 'selected' : '';
+        return `<option value="${locationKey}" ${selected}>${label}</option>`;
+    }).join('');
+}
+
+// Generate merchant room options HTML for dropdowns
+function generateMerchantRoomOptions(selectedRoomId) {
+    // If we don't have merchant rooms yet, request them
+    if (merchantRooms.length === 0) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getMerchantRooms' }));
+        }
+        return '<option value="">Loading merchant rooms...</option>';
+    }
+    
+    // Filter out rooms that already have this item
+    const existingRoomIds = merchantItems.map(mi => mi.room_id);
+    const availableRooms = merchantRooms.filter(room => !existingRoomIds.includes(room.id));
+    
+    // Use merchant rooms from database
+    return availableRooms.map(room => {
+        const roomId = room.id.toString();
+        const label = `${room.map_name} - ${room.name} (${room.x}, ${room.y})`;
+        const selected = roomId === selectedRoomId ? 'selected' : '';
+        return `<option value="${roomId}" ${selected}>${label}</option>`;
+    }).join('');
+}
+
+// Render merchant items list
+function renderMerchantItemsList() {
+    if (!merchantItems || merchantItems.length === 0) {
+        return '<p style="color: #888; font-size: 0.9em;">No merchant rooms configured for this item.</p>';
+    }
+    
+    return merchantItems.map(mi => {
+        const roomLabel = `${mi.map_name} - ${mi.room_name} (${mi.x}, ${mi.y})`;
+        const unlimitedChecked = mi.unlimited ? 'checked' : '';
+        const maxQtyValue = mi.max_qty || '';
+        const regenHoursValue = mi.regen_hours || '';
+        const currentQtyDisplay = mi.unlimited ? '∞' : `${mi.current_qty}${mi.max_qty ? ` / ${mi.max_qty}` : ''}`;
+        
+        return `
+            <div class="merchant-item-entry" data-merchant-item-id="${mi.id}" style="border: 1px solid #00ff00; padding: 15px; margin-bottom: 15px; background: #001100;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <strong style="color: #ffff00;">${roomLabel}</strong>
+                    <button class="remove-merchant-item-btn editor-btn" data-merchant-item-id="${mi.id}" style="background: #660000; border-color: #ff0000; color: #ff6666; padding: 5px 10px; font-size: 0.85em;">Remove</button>
+                </div>
+                
+                <div class="item-form-group" style="margin-bottom: 10px;">
+                    <label>
+                        <input type="checkbox" class="merchant-unlimited" data-merchant-item-id="${mi.id}" ${unlimitedChecked}>
+                        Unlimited (shop never runs out)
+                    </label>
+                </div>
+                
+                <div class="merchant-inventory-config" style="display: ${mi.unlimited ? 'none' : 'block'};">
+                    <div class="item-form-group" style="margin-bottom: 10px;">
+                        <label>Current Inventory: <strong style="color: #00ff00;">${currentQtyDisplay}</strong></label>
+                    </div>
+                    
+                    <div class="item-form-group" style="margin-bottom: 10px;">
+                        <label for="merchantMaxQty_${mi.id}">Max Quantity</label>
+                        <input type="number" id="merchantMaxQty_${mi.id}" class="item-form-input merchant-max-qty" 
+                               data-merchant-item-id="${mi.id}"
+                               value="${maxQtyValue}" 
+                               min="1" step="1"
+                               placeholder="Maximum quantity the room can carry">
+                    </div>
+                    
+                    <div class="item-form-group" style="margin-bottom: 10px;">
+                        <label for="merchantRegenHours_${mi.id}">Regeneration (hours)</label>
+                        <input type="number" id="merchantRegenHours_${mi.id}" class="item-form-input merchant-regen-hours" 
+                               data-merchant-item-id="${mi.id}"
+                               value="${regenHoursValue}" 
+                               min="0" step="0.1"
+                               placeholder="Hours to regenerate (e.g., 1.5 = 90 minutes)">
+                        <div style="font-size: 0.85em; color: #888; margin-top: 5px;">
+                            Leave empty for no regeneration. Set to hours (e.g., 1.5 = 90 minutes).
+                        </div>
+                    </div>
+                </div>
+                
+                <button class="save-merchant-item-btn editor-btn" data-merchant-item-id="${mi.id}" style="width: 100%; margin-top: 10px;">Save Configuration</button>
+            </div>
+        `;
+    }).join('');
 }
 
 // Initialize

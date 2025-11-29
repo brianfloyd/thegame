@@ -4,11 +4,16 @@ let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
 
 // Widget system state
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms'];
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode'];
 let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets (stats always first when present)
+let restartRequested = false; // Track if server restart was requested
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
 let factoryWidgetState = { slots: [null, null], textInput: '' }; // Factory widget state
+let warehouseWidgetVisible = false; // Warehouse widget visibility (toggleable)
+let warehouseWidgetState = null; // Warehouse widget state
+let hasWarehouseDeed = false; // Track if player has any warehouse deeds
+let isInWarehouseRoom = false; // Track if player is currently in a warehouse room
 
 // Communication widget state
 let commMode = 'talk'; // 'talk', 'resonate', 'telepath'
@@ -86,6 +91,14 @@ function connectWebSocket() {
 
     ws.onclose = () => {
         console.log('WebSocket disconnected');
+        
+        // If restart was requested, redirect to character selection
+        if (restartRequested) {
+            restartRequested = false; // Clear flag
+            window.location.href = '/';
+            return;
+        }
+        
         // Attempt to reconnect after 3 seconds
         setTimeout(connectWebSocket, 3000);
     };
@@ -96,6 +109,8 @@ function handleMessage(data) {
     switch (data.type) {
         case 'roomUpdate':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            // Track if we're in a warehouse room
+            isInWarehouseRoom = data.room.roomType === 'warehouse';
             // Handle factory widget state
             if (data.factoryWidgetState !== undefined) {
                 if (data.room.roomType === 'factory') {
@@ -105,9 +120,28 @@ function handleMessage(data) {
                     hideFactoryWidget();
                 }
             }
+            // Handle warehouse widget state (only if widget is toggled on)
+            if (data.hasWarehouseDeed !== undefined) {
+                hasWarehouseDeed = data.hasWarehouseDeed;
+                updateWidgetDisplay(); // Update icon visibility
+            }
+            if (data.warehouseWidgetState !== undefined && activeWidgets.includes('warehouse')) {
+                if (data.room.roomType === 'warehouse' && data.warehouseWidgetState !== null) {
+                    warehouseWidgetState = data.warehouseWidgetState;
+                    updateWarehouseWidget(warehouseWidgetState);
+                } else {
+                    // Not in warehouse room - show read-only view
+                    updateWarehouseWidget(null);
+                }
+            }
             break;
         case 'inventoryList':
             displayInventory(data.items);
+            // Check if player has warehouse deeds
+            if (data.hasWarehouseDeed !== undefined) {
+                hasWarehouseDeed = data.hasWarehouseDeed;
+                updateWidgetDisplay(); // Update icon visibility
+            }
             break;
         case 'playerJoined':
             addPlayerToTerminal(data.playerName, data.direction);
@@ -153,6 +187,8 @@ function handleMessage(data) {
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            // Track if we're in a warehouse room
+            isInWarehouseRoom = data.room.roomType === 'warehouse';
             // Handle factory widget state
             if (data.factoryWidgetState !== undefined) {
                 if (data.room.roomType === 'factory') {
@@ -160,6 +196,20 @@ function handleMessage(data) {
                     showFactoryWidget(factoryWidgetState);
                 } else {
                     hideFactoryWidget();
+                }
+            }
+            // Handle warehouse widget state (only if widget is toggled on)
+            if (data.hasWarehouseDeed !== undefined) {
+                hasWarehouseDeed = data.hasWarehouseDeed;
+                updateWidgetDisplay(); // Update icon visibility
+            }
+            if (data.warehouseWidgetState !== undefined && activeWidgets.includes('warehouse')) {
+                if (data.room.roomType === 'warehouse' && data.warehouseWidgetState !== null) {
+                    warehouseWidgetState = data.warehouseWidgetState;
+                    updateWarehouseWidget(warehouseWidgetState);
+                } else {
+                    // Not in warehouse room - show read-only view
+                    updateWarehouseWidget(null);
                 }
             }
             break;
@@ -186,6 +236,10 @@ function handleMessage(data) {
             break;
         case 'mapUpdate':
             updateMapPosition(data.currentRoom, data.mapId);
+            break;
+        case 'warehouseWidgetState':
+            warehouseWidgetState = data.state;
+            updateWarehouseWidget(warehouseWidgetState);
             break;
         case 'error':
             addToTerminal(data.message, 'error');
@@ -608,6 +662,11 @@ const COMMAND_REGISTRY = [
     // Item commands
     { name: 'take', abbrev: 't, get, pickup', description: 'Pick up an item (take <item>)', category: 'Items' },
     { name: 'drop', abbrev: null, description: 'Drop an item (drop <item>)', category: 'Items' },
+    
+    // Warehouse commands
+    { name: 'warehouse', abbrev: 'wh', description: 'Open warehouse widget (if in warehouse room)', category: 'Warehouse' },
+    { name: 'store', abbrev: 'st', description: 'Store item to warehouse (store <item> [quantity])', category: 'Warehouse' },
+    { name: 'withdraw', abbrev: 'wd', description: 'Withdraw item from warehouse (withdraw <item> [quantity])', category: 'Warehouse' },
     
     // NPC interaction commands
     { name: 'harvest', abbrev: 'h/p', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
@@ -1238,7 +1297,7 @@ function escapeHtml(text) {
 
 // Communication Widget Functions
 function initCommunicationWidget() {
-    const commWidget = document.getElementById('widget-communication');
+    const commWidget = document.getElementById('widget-comms');
     if (!commWidget) return;
     
     // Mode selector buttons
@@ -1833,6 +1892,99 @@ function executeCommand(command) {
         }
         
         ws.send(JSON.stringify({ type: 'clue', target }));
+        return;
+    }
+    
+    // WAREHOUSE / WH - open warehouse widget
+    if (base === 'warehouse' || base === 'wh') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'warehouse' }));
+        return;
+    }
+    
+    // STORE / ST [quantity|all] <item> - store item to warehouse
+    if (base === 'store' || base === 'st') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Store what?', 'error');
+            return;
+        }
+        
+        // Check if first word is a quantity (number or "all")
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        if (rest.length > 1) {
+            const firstWord = rest[0].toLowerCase();
+            if (firstWord === 'all') {
+                quantity = 'all';
+                itemNameParts = rest.slice(1);
+            } else {
+                const parsedQty = parseInt(firstWord, 10);
+                if (!isNaN(parsedQty) && parsedQty > 0) {
+                    quantity = parsedQty;
+                    itemNameParts = rest.slice(1);
+                }
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Store what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'store', itemName, quantity }));
+        return;
+    }
+    
+    // WITHDRAW / WD [quantity|all] <item> - withdraw item from warehouse
+    if (base === 'withdraw' || base === 'wd') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Withdraw what?', 'error');
+            return;
+        }
+        
+        // Check if first word is a quantity (number or "all")
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        if (rest.length > 1) {
+            const firstWord = rest[0].toLowerCase();
+            if (firstWord === 'all') {
+                quantity = 'all';
+                itemNameParts = rest.slice(1);
+            } else {
+                const parsedQty = parseInt(firstWord, 10);
+                if (!isNaN(parsedQty) && parsedQty > 0) {
+                    quantity = parsedQty;
+                    itemNameParts = rest.slice(1);
+                }
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Withdraw what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'withdraw', itemName, quantity }));
         return;
     }
 
@@ -2436,7 +2588,6 @@ connectWebSocket();
 
 // God Mode Variables
 let godMode = false;
-let godModeBar = null;
 
 // Map Editor Variables
 let mapEditor = null;
@@ -3082,31 +3233,23 @@ function saveNpc() {
 // Update god mode UI
 function updateGodModeUI(hasGodMode) {
     godMode = hasGodMode;
-    godModeBar = document.getElementById('godModeBar');
-    if (godModeBar) {
+    
+    // Show/hide god mode widget icon based on god mode
+    const godmodeIcon = document.getElementById('godmode-widget-icon');
+    if (godmodeIcon) {
         if (hasGodMode) {
-            godModeBar.classList.remove('hidden');
+            godmodeIcon.classList.remove('hidden');
         } else {
-            godModeBar.classList.add('hidden');
+            godmodeIcon.classList.add('hidden');
+            // Also hide the widget if it's visible
+            const widget = document.getElementById('widget-godmode');
+            if (widget) {
+                widget.classList.add('hidden');
+            }
+            // Remove from active widgets
+            activeWidgets = activeWidgets.filter(w => w !== 'godmode');
+            updateWidgetDisplay();
         }
-    }
-
-    // Enable NPC editor button when in god mode
-    const npcBtn = document.querySelector('.god-mode-btn[data-action="npc"]');
-    if (npcBtn) {
-        npcBtn.disabled = !hasGodMode;
-    }
-    
-    // Enable Items editor button when in god mode
-    const itemsBtn = document.querySelector('.god-mode-btn[data-action="items"]');
-    if (itemsBtn) {
-        itemsBtn.disabled = !hasGodMode;
-    }
-    
-    // Enable Player editor button when in god mode
-    const playerBtn = document.querySelector('.god-mode-btn[data-action="player"]');
-    if (playerBtn) {
-        playerBtn.disabled = !hasGodMode;
     }
 }
 
@@ -3136,24 +3279,43 @@ function toggleWidget(widgetName) {
         const maxToggleableWidgets = 4 - automaticWidgetCount;
         
         if (activeWidgets.length >= maxToggleableWidgets) {
-            // At max capacity, remove the last widget (but keep stats if it exists)
-            if (activeWidgets.includes('stats') && activeWidgets.length > 1) {
-                // Remove last widget that's not stats
-                const nonStatsWidgets = activeWidgets.filter(w => w !== 'stats');
-                if (nonStatsWidgets.length > 0) {
-                    activeWidgets = ['stats', ...nonStatsWidgets.slice(0, -1)];
+            // At max capacity - automatically remove stats and put new widget in top-left
+            if (activeWidgets.includes('stats')) {
+                // Remove stats and add new widget at the beginning (top-left position)
+                activeWidgets = activeWidgets.filter(w => w !== 'stats');
+                if (widgetName === 'stats') {
+                    // If adding stats back, put it first
+                    activeWidgets = ['stats', ...activeWidgets];
+                } else {
+                    // Put new widget first (top-left position)
+                    activeWidgets = [widgetName, ...activeWidgets];
                 }
-            } else if (!activeWidgets.includes('stats')) {
-                // No stats, just remove last
+            } else {
+                // No stats in list, just remove last widget
                 activeWidgets.pop();
+                if (widgetName === 'stats') {
+                    // If adding stats, put it first
+                    activeWidgets = ['stats', ...activeWidgets];
+                } else {
+                    activeWidgets.push(widgetName);
+                }
+            }
+        } else {
+            // Have space, just add the widget
+            if (widgetName === 'stats') {
+                // Stats always goes first
+                activeWidgets = ['stats', ...activeWidgets.filter(w => w !== 'stats')];
+            } else {
+                activeWidgets.push(widgetName);
             }
         }
         
-        // Add widget, ensuring stats is always first if it's being added
-        if (widgetName === 'stats') {
-            activeWidgets = ['stats', ...activeWidgets.filter(w => w !== 'stats')];
-        } else {
-            activeWidgets.push(widgetName);
+        // If toggling warehouse widget on, request warehouse data
+        if (widgetName === 'warehouse' && hasWarehouseDeed) {
+            // Request warehouse widget state (will show read-only if not in warehouse room)
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'warehouse' }));
+            }
         }
     }
     
@@ -3165,11 +3327,50 @@ function updateWidgetDisplay() {
     const slots = document.querySelectorAll('.widget-slot');
     const toggleBar = document.querySelector('.widget-toggle-bar');
     
-    // Update toggle bar icons
+    // FIRST: Sync activeWidgets with actually visible widgets BEFORE we start hiding/showing
+    // This catches widgets that are visible but not in activeWidgets
     TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        if (widgetName === 'godmode' && !godMode) return;
+        if (widgetName === 'warehouse' && !hasWarehouseDeed) return;
+        
+        const widget = document.getElementById(`widget-${widgetName}`);
+        if (widget) {
+            const isVisible = !widget.classList.contains('hidden');
+            const isInActiveWidgets = activeWidgets.includes(widgetName);
+            
+            // If widget is visible but not in activeWidgets, add it
+            if (isVisible && !isInActiveWidgets) {
+                activeWidgets.push(widgetName);
+            }
+        }
+    });
+    
+    // Update toggle bar icons based on current activeWidgets
+    TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        // Skip godmode widget if not in god mode
+        if (widgetName === 'godmode' && !godMode) {
+            return;
+        }
+        // Skip warehouse widget if player doesn't have a deed
+        if (widgetName === 'warehouse' && !hasWarehouseDeed) {
+            const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
+            if (icon) {
+                icon.classList.add('hidden');
+            }
+            return;
+        }
+        // Show warehouse icon if player has a deed
+        if (widgetName === 'warehouse' && hasWarehouseDeed) {
+            const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
+            if (icon) {
+                icon.classList.remove('hidden');
+            }
+        }
+        
         const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
         if (icon) {
-            if (activeWidgets.includes(widgetName)) {
+            const isActive = activeWidgets.includes(widgetName);
+            if (isActive) {
                 icon.classList.add('active');
             } else {
                 icon.classList.remove('active');
@@ -3178,7 +3379,7 @@ function updateWidgetDisplay() {
     });
     
     // Build list of widgets to show
-    // Priority: Factory widget in slot 0 (top-left), then NPC widget, then toggleable widgets
+    // Priority: Factory widget in slot 0 (top-left), then NPC widget, then warehouse widget, then toggleable widgets
     let widgetsToShow = [];
     
     // Slot 0: Factory widget (if in factory room) - always top left when visible
@@ -3191,36 +3392,67 @@ function updateWidgetDisplay() {
         widgetsToShow.push('npc');
     }
     
-    // Remaining slots: Toggleable widgets (stats, compass, map, communication)
-    widgetsToShow.push(...activeWidgets);
+    // Warehouse widget is now toggleable (not auto-managed)
+    // It will be shown if in activeWidgets and player has a deed
+    
+    // Remaining slots: Toggleable widgets (stats, compass, map, communication, warehouse, godmode)
+    // Filter out godmode widget if not in god mode
+    // Filter out warehouse widget if player doesn't have a deed
+    const filteredActiveWidgets = activeWidgets.filter(w => {
+        if (w === 'godmode' && !godMode) {
+            return false;
+        }
+        if (w === 'warehouse' && !hasWarehouseDeed) {
+            return false;
+        }
+        return true;
+    });
+    widgetsToShow.push(...filteredActiveWidgets);
     
     // Assign widgets to slots
     slots.forEach((slot, index) => {
-        // Hide all widgets in this slot first
+        // Hide all widgets in this slot first (including any that shouldn't be visible)
         const widgets = slot.querySelectorAll('.widget');
         widgets.forEach(w => w.classList.add('hidden'));
+        
+        // Also ensure all widgets in other slots that aren't in widgetsToShow are hidden
+        // This catches cases where widgets might be in wrong slots
+        if (index === 0) { // Only do this once, on first slot iteration
+            TOGGLEABLE_WIDGETS.forEach(wName => {
+                if (wName === 'godmode' && !godMode) return;
+                if (!widgetsToShow.includes(wName)) {
+                    const w = document.getElementById(`widget-${wName}`);
+                    if (w) {
+                        w.classList.add('hidden');
+                    }
+                }
+            });
+        }
         
         // Show the appropriate widget for this slot
         if (index < widgetsToShow.length) {
             const widgetName = widgetsToShow[index];
-            const widget = slot.querySelector(`[data-widget="${widgetName}"]`);
+            
+            // First try to find widget in current slot
+            let widget = slot.querySelector(`[data-widget="${widgetName}"]`);
+            
+            // If not found in current slot, search all slots or by ID
+            if (!widget) {
+                const widgetId = `widget-${widgetName}`;
+                // Try by ID first, then search all slots by data-widget
+                widget = document.getElementById(widgetId) || document.querySelector(`[data-widget="${widgetName}"]`);
+            }
+            
             if (widget) {
+                // If widget is in a different slot, move it to this slot
+                if (widget.parentElement !== slot) {
+                    slot.appendChild(widget);
+                }
                 widget.classList.remove('hidden');
                 // Make widget draggable if it's a toggleable widget
                 if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
                     widget.draggable = true;
                     widget.dataset.widgetName = widgetName;
-                }
-            } else {
-                // Widget doesn't exist in this slot, need to move it
-                const existingWidget = document.getElementById(`widget-${widgetName}`);
-                if (existingWidget) {
-                    existingWidget.classList.remove('hidden');
-                    if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
-                        existingWidget.draggable = true;
-                        existingWidget.dataset.widgetName = widgetName;
-                    }
-                    slot.appendChild(existingWidget);
                 }
             }
         } else {
@@ -3228,6 +3460,52 @@ function updateWidgetDisplay() {
             const emptyWidget = slot.querySelector('.widget-empty');
             if (emptyWidget) {
                 emptyWidget.classList.remove('hidden');
+            }
+        }
+    });
+    
+    // Sync activeWidgets with actually visible widgets (ensure consistency)
+    // Check all toggleable widgets and ensure activeWidgets matches what's visible
+    const updatedActiveWidgets = [...activeWidgets];
+    
+    TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        if (widgetName === 'godmode' && !godMode) return;
+        
+        const widget = document.getElementById(`widget-${widgetName}`);
+        if (widget) {
+            const isVisible = !widget.classList.contains('hidden');
+            const isInActiveWidgets = updatedActiveWidgets.includes(widgetName);
+            
+            // If widget is visible but not in activeWidgets, add it
+            if (isVisible && !isInActiveWidgets) {
+                updatedActiveWidgets.push(widgetName);
+            }
+            // If widget is hidden but in activeWidgets, remove it
+            else if (!isVisible && isInActiveWidgets) {
+                const index = updatedActiveWidgets.indexOf(widgetName);
+                if (index > -1) {
+                    updatedActiveWidgets.splice(index, 1);
+                }
+            }
+        }
+    });
+    
+    // Update activeWidgets if it changed
+    if (updatedActiveWidgets.length !== activeWidgets.length || 
+        !updatedActiveWidgets.every((w, i) => w === activeWidgets[i])) {
+        activeWidgets = updatedActiveWidgets;
+    }
+    
+    // Update icons based on synced activeWidgets
+    TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        if (widgetName === 'godmode' && !godMode) return;
+        
+        const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
+        if (icon) {
+            if (activeWidgets.includes(widgetName)) {
+                icon.classList.add('active');
+            } else {
+                icon.classList.remove('active');
             }
         }
     });
@@ -3317,8 +3595,8 @@ function initWidgetDragDrop() {
 
 // Reorder widgets based on drag and drop
 function reorderWidget(widgetName, targetSlotIndex) {
-    // Don't allow reordering automatic widgets (NPC/Factory) or stats to slot 0
-    if (widgetName === 'npc' || widgetName === 'factory') {
+    // Don't allow reordering automatic widgets (NPC/Factory/Warehouse) or stats to slot 0
+    if (widgetName === 'npc' || widgetName === 'factory' || widgetName === 'warehouse') {
         return; // Automatic widgets can't be reordered
     }
     
@@ -3335,6 +3613,11 @@ function reorderWidget(widgetName, targetSlotIndex) {
         widgetsToShow.push('npc');
     }
     
+    // Slot 2: Warehouse widget (if in warehouse room)
+    if (warehouseWidgetVisible) {
+        widgetsToShow.push('warehouse');
+    }
+    
     // Remaining slots: Toggleable widgets
     widgetsToShow.push(...activeWidgets);
     
@@ -3342,23 +3625,27 @@ function reorderWidget(widgetName, targetSlotIndex) {
     const currentIndex = widgetsToShow.indexOf(widgetName);
     if (currentIndex === -1) return; // Widget not in list
     
-    // Can't move to slot 0 (reserved for factory widget) or slot 1 (reserved for NPC widget)
+    // Can't move to reserved slots
     if (targetSlotIndex === 0 && factoryWidgetVisible) {
         return; // Slot 0 is for factory widget
     }
     if (targetSlotIndex === 1 && npcWidgetVisible) {
         return; // Slot 1 is for NPC widget
     }
+    if (targetSlotIndex === 2 && warehouseWidgetVisible) {
+        return; // Slot 2 is for warehouse widget
+    }
     
     // Remove from current position
     widgetsToShow.splice(currentIndex, 1);
     
     // Adjust target index to account for automatic widgets
-    // Factory is slot 0, NPC is slot 1, then toggleable widgets
+    // Factory is slot 0, NPC is slot 1, Warehouse is slot 2, then toggleable widgets
     let adjustedTargetIndex = targetSlotIndex;
     const factoryOffset = factoryWidgetVisible ? 1 : 0;
     const npcOffset = npcWidgetVisible ? 1 : 0;
-    adjustedTargetIndex = targetSlotIndex - factoryOffset - npcOffset;
+    const warehouseOffset = warehouseWidgetVisible ? 1 : 0;
+    adjustedTargetIndex = targetSlotIndex - factoryOffset - npcOffset - warehouseOffset;
     // Clamp to valid range for toggleable widgets
     adjustedTargetIndex = Math.max(0, Math.min(adjustedTargetIndex, widgetsToShow.length));
     
@@ -3548,6 +3835,215 @@ if (document.readyState === 'loading') {
 function handleFactoryWidgetState(state) {
     factoryWidgetState = state;
     updateFactoryWidgetSlots(factoryWidgetState);
+}
+
+// Warehouse widget is now toggleable - these functions are no longer used for auto-show/hide
+// Keeping for backwards compatibility but widget visibility is controlled by toggleWidget()
+
+// Update warehouse widget display
+function updateWarehouseWidget(state) {
+    const warehouseWidget = document.getElementById('widget-warehouse');
+    if (!warehouseWidget) return;
+    
+    warehouseWidgetState = state;
+    
+    // If not in warehouse room, disable interactions but show data
+    const storeBtn = document.getElementById('warehouse-store-btn');
+    const withdrawBtn = document.getElementById('warehouse-withdraw-btn');
+    const storeItemInput = document.getElementById('warehouse-store-item');
+    const storeQuantityInput = document.getElementById('warehouse-store-quantity');
+    const withdrawItemInput = document.getElementById('warehouse-withdraw-item');
+    const withdrawQuantityInput = document.getElementById('warehouse-withdraw-quantity');
+    
+    if (!isInWarehouseRoom || !state) {
+        // Read-only mode: disable all inputs and buttons
+        if (storeBtn) storeBtn.disabled = true;
+        if (withdrawBtn) withdrawBtn.disabled = true;
+        if (storeItemInput) storeItemInput.disabled = true;
+        if (storeQuantityInput) storeQuantityInput.disabled = true;
+        if (withdrawItemInput) withdrawItemInput.disabled = true;
+        if (withdrawQuantityInput) withdrawQuantityInput.disabled = true;
+        
+        // Show read-only message
+        const infoNote = warehouseWidget.querySelector('.warehouse-info-note');
+        if (infoNote) {
+            infoNote.textContent = 'You must be in a warehouse room to interact with your storage.';
+            infoNote.style.color = '#ffaa00';
+        }
+        
+        // Still show data if available
+        if (state) {
+            // Update displays with state data
+            const capacityDisplay = document.getElementById('warehouse-capacity-display');
+            if (capacityDisplay && state.capacity) {
+                capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} item types, ${state.capacity.maxQuantityPerType} qty per type`;
+            }
+            
+            const storedDisplay = document.getElementById('warehouse-stored-display');
+            if (storedDisplay && state.items) {
+                const totalItems = state.items.reduce((sum, item) => sum + item.quantity, 0);
+                storedDisplay.textContent = `${state.items.length} types, ${totalItems} total items`;
+            }
+            
+            const deedsList = document.getElementById('warehouse-deeds-list');
+            if (deedsList) {
+                if (state.deeds && state.deeds.length > 0) {
+                    deedsList.innerHTML = state.deeds.map(deed => 
+                        `<div>${deed.item_name} (Tier ${deed.upgrade_tier})</div>`
+                    ).join('');
+                } else {
+                    deedsList.innerHTML = '<div style="color: #666;">No deeds</div>';
+                }
+            }
+            
+            const itemsList = document.getElementById('warehouse-items-list');
+            if (itemsList) {
+                if (state.items && state.items.length > 0) {
+                    itemsList.innerHTML = state.items.map(item => 
+                        `<div><span>${item.item_name}</span><span>${item.quantity}</span></div>`
+                    ).join('');
+                } else {
+                    itemsList.innerHTML = '<div style="color: #666;">Empty</div>';
+                }
+            }
+        }
+        return;
+    }
+    
+    // Interactive mode: enable all inputs and buttons
+    if (storeBtn) storeBtn.disabled = false;
+    if (withdrawBtn) withdrawBtn.disabled = false;
+    if (storeItemInput) storeItemInput.disabled = false;
+    if (storeQuantityInput) storeQuantityInput.disabled = false;
+    if (withdrawItemInput) withdrawItemInput.disabled = false;
+    if (withdrawQuantityInput) withdrawQuantityInput.disabled = false;
+    
+    // Update info note
+    const infoNote = warehouseWidget.querySelector('.warehouse-info-note');
+    if (infoNote) {
+        infoNote.textContent = 'You are in a shared warehouse building. Storage shown here is yours alone.';
+        infoNote.style.color = '#00ffff';
+    }
+    
+    // Interactive mode: show full widget with actions
+    if (!state) return;
+    
+    // Update capacity display
+    const capacityDisplay = document.getElementById('warehouse-capacity-display');
+    if (capacityDisplay && state.capacity) {
+        capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} item types, ${state.capacity.maxQuantityPerType} qty per type`;
+    }
+    
+    // Update stored display
+    const storedDisplay = document.getElementById('warehouse-stored-display');
+    if (storedDisplay && state.items) {
+        const totalItems = state.items.reduce((sum, item) => sum + item.quantity, 0);
+        storedDisplay.textContent = `${state.items.length} types, ${totalItems} total items`;
+    }
+    
+    // Update deeds list
+    const deedsList = document.getElementById('warehouse-deeds-list');
+    if (deedsList) {
+        if (state.deeds && state.deeds.length > 0) {
+            deedsList.innerHTML = state.deeds.map(deed => 
+                `<div>${deed.item_name} (Tier ${deed.upgrade_tier})</div>`
+            ).join('');
+        } else {
+            deedsList.innerHTML = '<div style="color: #666;">No deeds</div>';
+        }
+    }
+    
+    // Update items list
+    const itemsList = document.getElementById('warehouse-items-list');
+    if (itemsList) {
+        if (state.items && state.items.length > 0) {
+            itemsList.innerHTML = state.items.map(item => 
+                `<div><span>${item.item_name}</span><span>${item.quantity}</span></div>`
+            ).join('');
+        } else {
+            itemsList.innerHTML = '<div style="color: #666;">Empty</div>';
+        }
+    }
+}
+
+// Initialize warehouse widget button handlers
+function initWarehouseWidgetHandlers() {
+    const storeBtn = document.getElementById('warehouse-store-btn');
+    const withdrawBtn = document.getElementById('warehouse-withdraw-btn');
+    const storeItemInput = document.getElementById('warehouse-store-item');
+    const storeQuantityInput = document.getElementById('warehouse-store-quantity');
+    const withdrawItemInput = document.getElementById('warehouse-withdraw-item');
+    const withdrawQuantityInput = document.getElementById('warehouse-withdraw-quantity');
+    
+    if (storeBtn) {
+        storeBtn.addEventListener('click', () => {
+            const itemName = storeItemInput ? storeItemInput.value.trim() : '';
+            const quantity = storeQuantityInput ? storeQuantityInput.value.trim() : '1';
+            
+            if (!itemName) {
+                addToTerminal('Store what?', 'error');
+                return;
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'store',
+                    itemName: itemName,
+                    quantity: quantity === '' ? 1 : quantity
+                }));
+            }
+            
+            if (storeItemInput) storeItemInput.value = '';
+            if (storeQuantityInput) storeQuantityInput.value = '';
+        });
+    }
+    
+    if (withdrawBtn) {
+        withdrawBtn.addEventListener('click', () => {
+            const itemName = withdrawItemInput ? withdrawItemInput.value.trim() : '';
+            const quantity = withdrawQuantityInput ? withdrawQuantityInput.value.trim() : '1';
+            
+            if (!itemName) {
+                addToTerminal('Withdraw what?', 'error');
+                return;
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'withdraw',
+                    itemName: itemName,
+                    quantity: quantity === '' ? 1 : quantity
+                }));
+            }
+            
+            if (withdrawItemInput) withdrawItemInput.value = '';
+            if (withdrawQuantityInput) withdrawQuantityInput.value = '';
+        });
+    }
+    
+    // Allow Enter key to submit
+    if (storeItemInput) {
+        storeItemInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && storeBtn) {
+                storeBtn.click();
+            }
+        });
+    }
+    
+    if (withdrawItemInput) {
+        withdrawItemInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && withdrawBtn) {
+                withdrawBtn.click();
+            }
+        });
+    }
+}
+
+// Initialize warehouse widget handlers when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initWarehouseWidgetHandlers);
+} else {
+    initWarehouseWidgetHandlers();
 }
 
 // Initialize widget toggle bar click handlers
@@ -3780,26 +4276,48 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize widget toggle bar
         initWidgetToggleBar();
         updateWidgetDisplay();
+        
+        // Run a delayed sync to catch any widgets that might be visible but not in activeWidgets
+        // This fixes cases where widgets are shown by default or by other code
+        setTimeout(() => {
+            updateWidgetDisplay();
+        }, 100);
+        
+        // Add restart server button click handler
+        const restartBtn = document.getElementById('restartServerBtn');
+        if (restartBtn) {
+            restartBtn.addEventListener('click', () => {
+                if (!godMode) {
+                    addToTerminal('This action requires god mode.', 'error');
+                    return;
+                }
+                
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    addToTerminal('Not connected to server.', 'error');
+                    return;
+                }
+                
+                // Restart server immediately
+                restartRequested = true;
+                ws.send(JSON.stringify({ type: 'restartServer' }));
+            });
+        }
     }
     
-    const godModeButtons = document.querySelectorAll('.god-mode-btn');
-    godModeButtons.forEach(btn => {
+    // God Mode widget editor buttons
+    const godModeEditorButtons = document.querySelectorAll('.godmode-editor-btn');
+    godModeEditorButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const action = btn.getAttribute('data-action');
             if (action === 'map') {
-                // Navigate to map editor route (session-based, no URL params needed)
                 window.location.href = '/map';
             } else if (action === 'npc') {
-                // Navigate to NPC editor route (session-based, no URL params needed)
                 window.location.href = '/npc';
             } else if (action === 'items') {
-                // Navigate to Item editor route (session-based, no URL params needed)
                 window.location.href = '/items';
             } else if (action === 'player') {
-                // Navigate to Player editor route (session-based, no URL params needed)
                 window.location.href = '/player';
             }
-            // Other actions (spells, craft) will be implemented later
         });
     });
 

@@ -21,15 +21,6 @@
                         <span class="room-status-label">On the ground:</span>
                         <span id="roomItemsDisplay" class="room-items-display">Nothing</span>
                     </div>
-                    <!-- God Mode Button Bar -->
-                    <div id="godModeBar" class="god-mode-bar hidden">
-                        <button class="god-mode-btn" data-action="map">Map</button>
-                        <button class="god-mode-btn" data-action="npc" disabled>NPC</button>
-                        <button class="god-mode-btn" data-action="items" disabled>Items</button>
-                        <button class="god-mode-btn" data-action="player" disabled>Player</button>
-                        <button class="god-mode-btn" data-action="spells" disabled>Spells</button>
-                        <button class="god-mode-btn" data-action="craft" disabled>Craft</button>
-                    </div>
                     <div class="command-line">
                         <span class="prompt">&gt;</span>
                         <input type="text" id="commandInput" class="command-input" autocomplete="off" spellcheck="false" placeholder="Type a command...">
@@ -52,6 +43,12 @@
                     </button>
                     <button class="widget-icon" data-widget="comms" title="Comms">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+                    </button>
+                    <button class="widget-icon hidden" id="warehouse-widget-icon" data-widget="warehouse" title="Warehouse">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 20v-6H4v6h6zm8 0v-6h-6v6h6zm-10-8H2V4h6v8zm8 0h-6V4h6v8zm-10 2h6v4H4v-4zm8 0h6v4h-6v-4z"/></svg>
+                    </button>
+                    <button class="widget-icon hidden" id="godmode-widget-icon" data-widget="godmode" title="God Mode">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
                     </button>
                 </div>
                 
@@ -144,8 +141,80 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- Warehouse Widget (hidden by default, auto-shows in warehouse rooms) -->
+                        <div class="widget hidden" id="widget-warehouse" data-widget="warehouse">
+                            <div class="widget-header">Warehouse: Shared Building / Private Storage Locker Active</div>
+                            <div class="widget-content">
+                                <div class="warehouse-info-note">You are in a shared warehouse building. Storage shown here is yours alone.</div>
+                                <div class="warehouse-capacity">
+                                    <div class="warehouse-capacity-row">
+                                        <span class="warehouse-capacity-label">Capacity:</span>
+                                        <span id="warehouse-capacity-display">-</span>
+                                    </div>
+                                    <div class="warehouse-capacity-row">
+                                        <span class="warehouse-capacity-label">Stored:</span>
+                                        <span id="warehouse-stored-display">-</span>
+                                    </div>
+                                </div>
+                                <div class="warehouse-deeds">
+                                    <div class="warehouse-deeds-label">Owned Deeds:</div>
+                                    <div id="warehouse-deeds-list"></div>
+                                </div>
+                                <div class="warehouse-items">
+                                    <div class="warehouse-items-label">Your Storage:</div>
+                                    <div id="warehouse-items-list"></div>
+                                </div>
+                                <div class="warehouse-actions">
+                                    <div class="warehouse-action-row">
+                                        <input type="text" id="warehouse-store-item" placeholder="Item name" />
+                                        <input type="text" id="warehouse-store-quantity" placeholder="Qty" />
+                                        <button id="warehouse-store-btn">Store</button>
+                                    </div>
+                                    <div class="warehouse-action-row">
+                                        <input type="text" id="warehouse-withdraw-item" placeholder="Item name" />
+                                        <input type="text" id="warehouse-withdraw-quantity" placeholder="Qty" />
+                                        <button id="warehouse-withdraw-btn">Withdraw</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- God Mode Widget (God Mode only) -->
+                        <div class="widget hidden" id="widget-godmode" data-widget="godmode">
+                            <div class="widget-header godmode-header">God Mode</div>
+                            <div class="widget-content godmode-content">
+                                <div class="godmode-section">
+                                    <div class="godmode-section-title">Editors</div>
+                                    <div class="godmode-editor-grid">
+                                        <button class="godmode-editor-btn" data-action="map">
+                                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg>
+                                            <span>Map</span>
+                                        </button>
+                                        <button class="godmode-editor-btn" data-action="npc">
+                                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                                            <span>NPC</span>
+                                        </button>
+                                        <button class="godmode-editor-btn" data-action="items">
+                                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/></svg>
+                                            <span>Items</span>
+                                        </button>
+                                        <button class="godmode-editor-btn" data-action="player">
+                                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                            <span>Player</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="godmode-section godmode-server-section">
+                                    <div class="godmode-section-title">Server Control</div>
+                                    <div class="godmode-server-info">Port 3535 only</div>
+                                    <button id="restartServerBtn" class="godmode-restart-btn">
+                                        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                                        Restart Server
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         <!-- Comms Widget -->
-                        <div class="widget hidden" id="widget-communication" data-widget="comms">
+                        <div class="widget hidden" id="widget-comms" data-widget="comms">
                             <div class="widget-header">Comms</div>
                             <div class="widget-content">
                                 <div class="comm-mode-selector">

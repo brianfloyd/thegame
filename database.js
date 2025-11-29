@@ -832,15 +832,20 @@ async function getItemByName(name) {
 
 async function createItem(item) {
   const result = await query(
-    `INSERT INTO items (name, description, item_type, active, poofable, encumbrance, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    `INSERT INTO items (name, description, item_type, active, poofable, encumbrance, 
+     deed_warehouse_location_key, deed_base_max_item_types, deed_max_total_items, deed_automation_enabled, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
     [
       item.name,
       item.description || '',
-      item.item_type || 'sundries',
+      item.item_type || 'ingredient',
       item.active !== undefined ? item.active : true,
       item.poofable !== undefined ? item.poofable : false,
       item.encumbrance !== undefined ? item.encumbrance : 1,
+      item.deed_warehouse_location_key || null,
+      item.deed_base_max_item_types || (item.item_type === 'deed' ? 1 : null),
+      item.deed_max_total_items || (item.item_type === 'deed' ? 100 : null),
+      item.deed_automation_enabled || false,
       Date.now()
     ]
   );
@@ -849,15 +854,21 @@ async function createItem(item) {
 
 async function updateItem(item) {
   await query(
-    `UPDATE items SET name = $1, description = $2, item_type = $3, active = $4, poofable = $5, encumbrance = $6 WHERE id = $7`,
+    `UPDATE items SET name = $1, description = $2, item_type = $3, active = $4, poofable = $5, encumbrance = $6,
+     deed_warehouse_location_key = $8, deed_base_max_item_types = $9, deed_max_total_items = $10, deed_automation_enabled = $11
+     WHERE id = $7`,
     [
       item.name,
       item.description || '',
-      item.item_type || 'sundries',
+      item.item_type || 'ingredient',
       item.active !== undefined ? item.active : true,
       item.poofable !== undefined ? item.poofable : false,
       item.encumbrance !== undefined ? item.encumbrance : 1,
-      item.id
+      item.id,
+      item.deed_warehouse_location_key || null,
+      item.deed_base_max_item_types || (item.item_type === 'deed' ? 1 : null),
+      item.deed_max_total_items || (item.item_type === 'deed' ? 100 : null),
+      item.deed_automation_enabled || false
     ]
   );
   return getItemById(item.id);
@@ -879,6 +890,122 @@ async function getRoomTypeColor(roomType) {
 
 async function getAllRoomTypeColors() {
   return getAll('SELECT * FROM room_type_colors ORDER BY room_type');
+}
+
+async function getAllRoomTypes() {
+  // Get all room types from room_type_colors table
+  return getAll('SELECT room_type FROM room_type_colors ORDER BY room_type', []);
+}
+
+async function getAllItemTypes() {
+  // Get all item types from item_types table
+  return getAll('SELECT item_type FROM item_types ORDER BY item_type', []);
+}
+
+async function getWarehouseRooms() {
+  // Get all rooms with room_type = 'warehouse' for deed configuration
+  return getAll(
+    `SELECT r.id, r.name, r.map_id, m.name as map_name, r.x, r.y 
+     FROM rooms r 
+     JOIN maps m ON r.map_id = m.id 
+     WHERE r.room_type = 'warehouse' 
+     ORDER BY m.name, r.name`,
+    []
+  );
+}
+
+// ============================================================
+// Merchant Items Functions
+// ============================================================
+
+async function getMerchantRooms() {
+  // Get all rooms with room_type = 'merchant' for item configuration
+  return getAll(
+    `SELECT r.id, r.name, r.map_id, m.name as map_name, r.x, r.y 
+     FROM rooms r 
+     JOIN maps m ON r.map_id = m.id 
+     WHERE r.room_type = 'merchant' 
+     ORDER BY m.name, r.name`,
+    []
+  );
+}
+
+async function getMerchantItems(itemId) {
+  // Get all merchant room configurations for a specific item
+  return getAll(
+    `SELECT mi.id, mi.item_id, mi.room_id, mi.unlimited, mi.max_qty, 
+            mi.current_qty, mi.regen_hours, mi.last_regen_time,
+            r.name as room_name, r.map_id, m.name as map_name, r.x, r.y
+     FROM merchant_items mi
+     JOIN rooms r ON mi.room_id = r.id
+     JOIN maps m ON r.map_id = m.id
+     WHERE mi.item_id = $1
+     ORDER BY m.name, r.name`,
+    [itemId]
+  );
+}
+
+async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null, regenHours = null) {
+  // Validate room is merchant type
+  const room = await getRoomById(roomId);
+  if (!room) {
+    throw new Error('Room not found');
+  }
+  if (room.room_type !== 'merchant') {
+    throw new Error('Only merchant rooms can sell items');
+  }
+  
+  // Insert or update merchant item
+  const result = await query(
+    `INSERT INTO merchant_items (item_id, room_id, unlimited, max_qty, current_qty, regen_hours, last_regen_time, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (item_id, room_id) 
+     DO UPDATE SET unlimited = $3, max_qty = $4, regen_hours = $6
+     RETURNING id`,
+    [itemId, roomId, unlimited, maxQty, 0, regenHours, null, Date.now()]
+  );
+  
+  return getMerchantItemById(result.rows[0].id);
+}
+
+async function getMerchantItemById(id) {
+  return getOne(
+    `SELECT mi.*, r.name as room_name, r.map_id, m.name as map_name, r.x, r.y
+     FROM merchant_items mi
+     JOIN rooms r ON mi.room_id = r.id
+     JOIN maps m ON r.map_id = m.id
+     WHERE mi.id = $1`,
+    [id]
+  );
+}
+
+async function updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours) {
+  await query(
+    `UPDATE merchant_items 
+     SET unlimited = $1, max_qty = $2, regen_hours = $3
+     WHERE id = $4`,
+    [unlimited, maxQty, regenHours, merchantItemId]
+  );
+  return getMerchantItemById(merchantItemId);
+}
+
+async function removeItemFromMerchant(merchantItemId) {
+  await query('DELETE FROM merchant_items WHERE id = $1', [merchantItemId]);
+  return true;
+}
+
+async function getMerchantItemsForRoom(roomId) {
+  // Get all items sold in a specific merchant room
+  return getAll(
+    `SELECT mi.id, mi.item_id, mi.room_id, mi.unlimited, mi.max_qty, 
+            mi.current_qty, mi.regen_hours, mi.last_regen_time,
+            i.name as item_name, i.description as item_description, i.item_type
+     FROM merchant_items mi
+     JOIN items i ON mi.item_id = i.id
+     WHERE mi.room_id = $1
+     ORDER BY i.name`,
+    [roomId]
+  );
 }
 
 async function setRoomTypeColor(roomType, color) {
@@ -1019,6 +1146,153 @@ async function getPlayerCurrentEncumbrance(playerId) {
 }
 
 // ============================================================
+// Warehouse Functions
+// ============================================================
+
+async function getWarehouseItems(playerId, warehouseLocationKey) {
+  return getAll(
+    'SELECT item_name, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 ORDER BY item_name',
+    [playerId, warehouseLocationKey]
+  );
+}
+
+async function addWarehouseItem(playerId, warehouseLocationKey, itemName, quantity) {
+  const existing = await getOne(
+    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
+    [playerId, warehouseLocationKey, itemName]
+  );
+  
+  if (existing) {
+    await query(
+      'UPDATE warehouse_items SET quantity = quantity + $1 WHERE id = $2',
+      [quantity, existing.id]
+    );
+  } else {
+    await query(
+      'INSERT INTO warehouse_items (player_id, warehouse_location_key, item_name, quantity, created_at) VALUES ($1, $2, $3, $4, $5)',
+      [playerId, warehouseLocationKey, itemName, quantity, Date.now()]
+    );
+  }
+}
+
+async function removeWarehouseItem(playerId, warehouseLocationKey, itemName, quantity) {
+  const existing = await getOne(
+    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
+    [playerId, warehouseLocationKey, itemName]
+  );
+  
+  if (!existing) return false;
+  
+  if (existing.quantity <= quantity) {
+    await query('DELETE FROM warehouse_items WHERE id = $1', [existing.id]);
+  } else {
+    await query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id = $2', [quantity, existing.id]);
+  }
+  return true;
+}
+
+async function getPlayerWarehouseCapacity(playerId, warehouseLocationKey) {
+  return getOne(
+    'SELECT * FROM player_warehouses WHERE player_id = $1 AND warehouse_location_key = $2',
+    [playerId, warehouseLocationKey]
+  );
+}
+
+async function initializePlayerWarehouse(playerId, warehouseLocationKey, deedItemId) {
+  // Get deed configuration
+  const deed = await getItemById(deedItemId);
+  if (!deed || deed.item_type !== 'deed') {
+    throw new Error('Invalid deed item');
+  }
+  
+  const maxItemTypes = deed.deed_base_max_item_types || 1;
+  const maxQuantityPerType = deed.deed_base_max_quantity_per_type || 100;
+  const upgradeTier = deed.deed_upgrade_tier || 1;
+  
+  // Check if warehouse already exists
+  const existing = await getPlayerWarehouseCapacity(playerId, warehouseLocationKey);
+  if (existing) {
+    return existing;
+  }
+  
+  // Create new warehouse capacity record
+  const result = await query(
+    `INSERT INTO player_warehouses (player_id, warehouse_location_key, deed_item_id, upgrade_tier, max_item_types, max_quantity_per_type, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [playerId, warehouseLocationKey, deedItemId, upgradeTier, maxItemTypes, maxQuantityPerType, Date.now()]
+  );
+  
+  return result.rows[0];
+}
+
+async function getWarehouseItemTypeCount(playerId, warehouseLocationKey) {
+  const result = await getOne(
+    'SELECT COUNT(DISTINCT item_name) as count FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2',
+    [playerId, warehouseLocationKey]
+  );
+  return result ? parseInt(result.count) : 0;
+}
+
+async function getWarehouseItemQuantity(playerId, warehouseLocationKey, itemName) {
+  const result = await getOne(
+    'SELECT quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
+    [playerId, warehouseLocationKey, itemName]
+  );
+  return result ? parseInt(result.quantity) : 0;
+}
+
+async function hasPlayerWarehouseDeed(playerId) {
+  // Check if player has any deed items in inventory
+  const playerItems = await getPlayerItems(playerId);
+  
+  for (const item of playerItems) {
+    const itemDef = await getItemByName(item.item_name);
+    if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+async function checkWarehouseAccess(playerId, warehouseLocationKey) {
+  // Check if player has a deed item in inventory that matches this warehouse location
+  const playerItems = await getPlayerItems(playerId);
+  const warehouseLocationKeyStr = warehouseLocationKey.toString();
+  
+  for (const item of playerItems) {
+    const itemDef = await getItemByName(item.item_name);
+    if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key === warehouseLocationKeyStr) {
+      return { hasAccess: true, deedItem: itemDef };
+    }
+  }
+  
+  return { hasAccess: false, deedItem: null };
+}
+
+async function getPlayerWarehouseDeeds(playerId, warehouseLocationKey) {
+  // Get all deed items player owns for this warehouse location
+  const playerItems = await getPlayerItems(playerId);
+  const warehouseLocationKeyStr = warehouseLocationKey.toString();
+  const deeds = [];
+  
+  for (const item of playerItems) {
+    const itemDef = await getItemByName(item.item_name);
+    if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key === warehouseLocationKeyStr) {
+      deeds.push({
+        item_name: itemDef.name,
+        item_id: itemDef.id,
+        max_item_types: itemDef.deed_base_max_item_types || 1,
+        max_quantity_per_type: itemDef.deed_base_max_quantity_per_type || 100,
+        upgrade_tier: itemDef.deed_upgrade_tier || 1
+      });
+    }
+  }
+  
+  return deeds;
+}
+
+// ============================================================
 // Connection Pool Management
 // ============================================================
 
@@ -1114,6 +1388,21 @@ module.exports = {
   getRoomTypeColor,
   getAllRoomTypeColors,
   setRoomTypeColor,
+  getAllRoomTypes,
+  
+  // Item Types
+  getAllItemTypes,
+  
+  // Warehouse Rooms
+  getWarehouseRooms,
+  
+  // Merchant Items
+  getMerchantRooms,
+  getMerchantItems,
+  addItemToMerchant,
+  updateMerchantItem,
+  removeItemFromMerchant,
+  getMerchantItemsForRoom,
   
   // Room Items
   getRoomItems,
@@ -1125,5 +1414,17 @@ module.exports = {
   getPlayerItems,
   addPlayerItem,
   removePlayerItem,
-  getPlayerCurrentEncumbrance
+  getPlayerCurrentEncumbrance,
+  
+  // Warehouse
+  getWarehouseItems,
+  addWarehouseItem,
+  removeWarehouseItem,
+  getPlayerWarehouseCapacity,
+  initializePlayerWarehouse,
+  getWarehouseItemTypeCount,
+  getWarehouseItemQuantity,
+  hasPlayerWarehouseDeed,
+  checkWarehouseAccess,
+  getPlayerWarehouseDeeds
 };

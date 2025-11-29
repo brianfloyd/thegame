@@ -8,11 +8,12 @@ INSERT INTO maps (name, width, height, description) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- Room type colors
+-- Only 4 valid room types: normal, merchant, factory, warehouse
 INSERT INTO room_type_colors (room_type, color) VALUES
     ('normal', '#00ff00'),
-    ('shop', '#0088ff'),
     ('merchant', '#0088ff'),
-    ('factory', '#ff8800')
+    ('factory', '#ff8800'),
+    ('warehouse', '#00ffff')
 ON CONFLICT (room_type) DO NOTHING;
 
 -- Items

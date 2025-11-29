@@ -30,6 +30,10 @@ const handlerMap = {
   solve: gameHandlers.solve,
   clue: gameHandlers.clue,
   greet: gameHandlers.greet,
+  restartServer: gameHandlers.restartServer,
+  warehouse: gameHandlers.warehouse,
+  store: gameHandlers.store,
+  withdraw: gameHandlers.withdraw,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,
@@ -41,6 +45,7 @@ const handlerMap = {
   connectMaps: mapEditorHandlers.connectMaps,
   disconnectMap: mapEditorHandlers.disconnectMap,
   getAllRoomTypeColors: mapEditorHandlers.getAllRoomTypeColors,
+  getAllRoomTypes: mapEditorHandlers.getAllRoomTypes,
   setRoomTypeColor: mapEditorHandlers.setRoomTypeColor,
   getJumpMaps: mapEditorHandlers.getJumpMaps,
   getJumpRooms: mapEditorHandlers.getJumpRooms,
@@ -62,6 +67,13 @@ const handlerMap = {
   
   // Item editor handlers
   getAllItems: itemEditorHandlers.getAllItems,
+  getAllItemTypes: itemEditorHandlers.getAllItemTypes,
+  getWarehouseRooms: itemEditorHandlers.getWarehouseRooms,
+  getMerchantRooms: itemEditorHandlers.getMerchantRooms,
+  getMerchantItems: itemEditorHandlers.getMerchantItems,
+  addItemToMerchant: itemEditorHandlers.addItemToMerchant,
+  updateMerchantItem: itemEditorHandlers.updateMerchantItem,
+  removeItemFromMerchant: itemEditorHandlers.removeItemFromMerchant,
   createItem: itemEditorHandlers.createItem,
   updateItem: itemEditorHandlers.updateItem,
   

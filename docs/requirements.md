@@ -715,6 +715,93 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 - Items displayed in gold/yellow color (#ffcc00)
 - Inventory command shows "You are carrying: ..." or "Your inventory is empty."
 
+## Merchant Items System
+
+### Overview
+The merchant items system allows items to be sold in merchant rooms with configurable inventory management. Items can be assigned to multiple merchant rooms, and each room can have different inventory settings for the same item.
+
+### Database Schema
+
+#### `merchant_items` Table
+| Column | Type | Description |
+|--------|------|-------------|
+| id | SERIAL | Primary key |
+| item_id | INTEGER | Foreign key to items(id) |
+| room_id | INTEGER | Foreign key to rooms(id) - must be merchant type |
+| unlimited | BOOLEAN | Whether item is unlimited (default TRUE) |
+| max_qty | INTEGER | Maximum quantity room can carry (nullable, only used if unlimited = FALSE) |
+| current_qty | INTEGER | Current inventory quantity (default 0) |
+| regen_hours | NUMERIC | Hours to regenerate item once depleted (nullable, e.g., 1.5 = 90 minutes) |
+| last_regen_time | BIGINT | Timestamp of last regeneration (nullable) |
+| created_at | BIGINT | Creation timestamp |
+| UNIQUE(item_id, room_id) | | One item per room constraint |
+
+### Merchant Item Configuration
+
+#### Unlimited Items (Default)
+- **Default Behavior**: Items are unlimited by default - shops never run out of inventory
+- **No Configuration Needed**: Unlimited items require no additional setup
+- **Use Case**: Common items that should always be available
+
+#### Limited Inventory Items
+- **Max Quantity**: Rooms can have a maximum quantity they can carry
+- **Current Quantity**: Tracks current inventory that increments/decrements as items are bought/sold
+- **Use Case**: Rare items or items with limited supply
+
+#### Item Regeneration
+- **Regen Hours**: Items can be set to regenerate after being depleted
+- **Format**: Hours as decimal (e.g., 1.5 = 90 minutes, 2.0 = 2 hours)
+- **Behavior**: Once current_qty reaches 0, item regenerates after the specified hours
+- **Use Case**: Items that restock over time
+
+### Item Editor Integration
+
+#### Merchant Configuration Section
+- **Location**: Appears in item editor for all items (not just deeds)
+- **Add to Merchant**: Dropdown to select merchant room and add item
+- **Merchant Items List**: Shows all merchant rooms that sell the item
+- **Per-Room Configuration**: Each merchant room entry can be configured independently:
+  - Unlimited checkbox (default checked)
+  - Max quantity input (shown when unlimited is unchecked)
+  - Regeneration hours input (optional)
+  - Current inventory display
+  - Save/Remove buttons
+
+#### Room Selection
+- **Merchant Rooms Only**: Only rooms with `room_type = 'merchant'` appear in dropdown
+- **Multiple Merchants**: Same item can be added to multiple merchant rooms
+- **Duplicate Prevention**: Rooms already selling the item are filtered from dropdown
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'getMerchantRooms' }` - Get all merchant rooms
+- `{ type: 'getMerchantItems', itemId: 123 }` - Get merchant items for specific item
+- `{ type: 'addItemToMerchant', itemId: 123, roomId: 456, unlimited: true, maxQty: null, regenHours: null }` - Add item to merchant room
+- `{ type: 'updateMerchantItem', merchantItemId: 789, unlimited: false, maxQty: 100, regenHours: 1.5 }` - Update merchant item configuration
+- `{ type: 'removeItemFromMerchant', merchantItemId: 789 }` - Remove item from merchant room
+
+#### Server → Client
+- `{ type: 'merchantRooms', rooms: [...] }` - List of merchant rooms
+- `{ type: 'merchantItems', merchantItems: [...] }` - List of merchant items for item
+- `{ type: 'merchantItemAdded', merchantItem: {...} }` - Item added to merchant
+- `{ type: 'merchantItemUpdated', merchantItem: {...} }` - Merchant item updated
+- `{ type: 'merchantItemRemoved', merchantItemId: 789 }` - Item removed from merchant
+
+### Database Functions
+- `getMerchantRooms()` - Get all rooms with room_type = 'merchant'
+- `getMerchantItems(itemId)` - Get all merchant room configurations for an item
+- `addItemToMerchant(itemId, roomId, unlimited, maxQty, regenHours)` - Add item to merchant room
+- `updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours)` - Update merchant item configuration
+- `removeItemFromMerchant(merchantItemId)` - Remove item from merchant room
+- `getMerchantItemsForRoom(roomId)` - Get all items sold in a merchant room
+
+### Validation Rules
+- Only merchant rooms (`room_type = 'merchant'`) can sell items
+- Each item can only be added once per merchant room (UNIQUE constraint)
+- Max quantity is required when unlimited is disabled
+- Regeneration hours is optional (can be null for no regeneration)
+
 ### WebSocket Messages
 
 #### Client → Server
@@ -803,6 +890,128 @@ Factory widgets appear automatically when players enter rooms with type "factory
 - **Drag Feedback**: Visual feedback when dragging items over slots (yellow highlight)
 - **Inventory Dragging**: Inventory table rows are draggable with grab cursor
 - **Item Display**: Item names displayed in filled slots with green text
+
+## Warehouse System
+
+### Overview
+The warehouse system allows players to store items in private storage lockers within shared warehouse buildings. Multiple players can be in the same warehouse room simultaneously, see each other, and interact normally, but each player has completely private storage that only they can access.
+
+### Database Schema
+
+#### `warehouse_items` Table
+- `id`: SERIAL PRIMARY KEY
+- `player_id`: INTEGER REFERENCES players(id)
+- `warehouse_location_key`: TEXT (stores room_id as string)
+- `item_name`: TEXT
+- `quantity`: INTEGER DEFAULT 1
+- `created_at`: BIGINT
+- INDEX on (player_id, warehouse_location_key)
+
+#### `player_warehouses` Table
+- `id`: SERIAL PRIMARY KEY
+- `player_id`: INTEGER REFERENCES players(id)
+- `warehouse_location_key`: TEXT
+- `deed_item_id`: INTEGER REFERENCES items(id)
+- `upgrade_tier`: INTEGER DEFAULT 1
+- `max_item_types`: INTEGER DEFAULT 1 (how many different item types can be stored)
+- `max_quantity_per_type`: INTEGER DEFAULT 100 (max quantity per item type)
+- `created_at`: BIGINT
+- UNIQUE(player_id, warehouse_location_key)
+
+#### Items Table Extensions
+Items with `item_type = 'deed'` have additional configuration fields:
+- `deed_warehouse_location_key`: TEXT (room_id as string - the warehouse room this deed is attached to)
+- `deed_base_max_item_types`: INTEGER DEFAULT 1 (base item type limit)
+- `deed_base_max_quantity_per_type`: INTEGER DEFAULT 100 (base quantity limit per type)
+- `deed_upgrade_tier`: INTEGER DEFAULT 1 (tier level of this deed configuration)
+
+### Warehouse Deed System
+
+#### Deed Items
+- Deeds are items with `item_type = 'deed'`
+- Deeds are sold at shops (like other items)
+- Each deed item is configured with:
+  - The warehouse room it grants access to (`deed_warehouse_location_key`)
+  - Base capacity limits (`deed_base_max_item_types`, `deed_base_max_quantity_per_type`)
+  - Upgrade tier (`deed_upgrade_tier`)
+- The attached room must have `room_type = 'warehouse'`
+
+#### Capacity Limits
+- **Tier 1 (Base)**: 1 item type, 100 quantity per type (configurable per deed)
+- **Upgrades**: Can increase both `max_item_types` and `max_quantity_per_type` indefinitely
+- Upgrade mechanics not yet implemented (prepared for future expansion)
+- Current capacity is stored in `player_warehouses` table, initialized from deed configuration
+
+#### Access Control
+- Players must have a deed item in their inventory to access a warehouse location
+- When player first uses a warehouse with a deed, their capacity record is initialized from the deed configuration
+- Multiple players can own the same deed type for the same location (each has separate private locker)
+
+### Commands
+
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `warehouse` | `wh` | Open warehouse widget (if in warehouse room) |
+| `store <item> [quantity]` | `st <item> [quantity]` | Store item to warehouse |
+| `withdraw <item> [quantity]` | `wd <item> [quantity]` | Withdraw item from warehouse |
+
+### Warehouse Widget
+
+#### Automatic Display
+- Widget appears automatically when entering warehouse-type rooms
+- Widget shows only the player's own private storage
+- Widget is hidden when leaving warehouse rooms
+
+#### Widget Features
+- **Header**: "Warehouse: Shared Building / Private Storage Locker Active"
+- **Info Note**: "You are in a shared warehouse building. Storage shown here is yours alone."
+- **Capacity Display**: Shows current item types vs max, and quantity limits
+- **Deeds List**: Shows owned deeds for this warehouse location
+- **Items List**: Shows player's private locker contents
+- **Store/Withdraw Actions**: Input fields and buttons for storing/withdrawing items
+
+#### Privacy Guarantees
+- All warehouse operations are private to the requesting player
+- Warehouse inventory updates sent only to the requesting player's WebSocket (not broadcast)
+- No other players receive warehouse inventory changes
+- Each player's locker is completely isolated (player_id + warehouse_location_key)
+
+### Server-Side Validation
+
+All warehouse operations:
+1. Validate player is in a room with `room_type = "warehouse"`
+2. Validate player has a deed item in inventory for this warehouse location
+3. Use `warehouse_location_key = room.id.toString()` (room_id as string)
+4. Query/update only the requesting player's data (player_id filtering)
+5. Send messages only to the requesting player (not broadcast to room)
+6. Enforce capacity limits (max_item_types, max_quantity_per_type)
+
+### Storage Validation
+
+When storing items:
+- Check if adding new item type would exceed `max_item_types`
+- Check if quantity + existing quantity would exceed `max_quantity_per_type`
+- Return appropriate error messages if limits are exceeded
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'warehouse' }` - Open warehouse widget
+- `{ type: 'store', itemName: 'item_name', quantity: 1|'all'|number }` - Store item to warehouse
+- `{ type: 'withdraw', itemName: 'item_name', quantity: 1|'all'|number }` - Withdraw item from warehouse
+
+#### Server → Client
+- `{ type: 'warehouseWidgetState', state: { warehouseLocationKey, items, capacity, deeds } }` - Warehouse widget state update
+- Warehouse widget state included in `roomUpdate` and `moved` messages when in warehouse rooms
+
+### Testing Requirements
+
+Ensure the following test cases work:
+1. Two players enter same warehouse room - both see each other, both see only their own storage
+2. Player A stores items - only Player A's widget updates
+3. Player A upgrades capacity - only Player A's UI updates
+4. Player B withdraws items - only Player B's widget updates
+5. Both players can use commands simultaneously with no interference
 
 ## Documentation
 

@@ -93,6 +93,9 @@ let nextConnectionId = 1;
 // Track factory widget state per player: connectionId -> { roomId, slots, textInput }
 const factoryWidgetState = new Map();
 
+// Track warehouse widget state per player: connectionId -> { roomId, warehouseLocationKey, items, capacity, deeds }
+const warehouseWidgetState = new Map();
+
 // ============================================================
 // WebSocket Connection Handling
 // ============================================================
@@ -121,6 +124,7 @@ wss.on('connection', (ws, req) => {
         db,
         connectedPlayers,
         factoryWidgetState,
+        warehouseWidgetState,
         connectionId,
         sessionId,
         playerName,
@@ -190,7 +194,7 @@ wss.on('connection', (ws, req) => {
               if (otherPlayerData.roomId === roomId && 
                   otherPlayerData.ws.readyState === WebSocket.OPEN &&
                   otherConnId !== connId) {
-                await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, otherConnId, updatedRoom);
+                await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, updatedRoom);
               }
             }
           }
@@ -204,7 +208,7 @@ wss.on('connection', (ws, req) => {
               if (otherPlayerData.roomId === roomId && 
                   otherPlayerData.ws.readyState === WebSocket.OPEN &&
                   otherConnId !== connId) {
-                await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, otherConnId, room);
+                await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, room);
               }
             }
           }
@@ -256,7 +260,7 @@ async function startServer() {
     
     // Create wrapper function for sendRoomUpdate that includes all required parameters
     const sendRoomUpdateWrapper = async (connId, room) => {
-      await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connId, room);
+      await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connId, room);
     };
     
     // Start HTTP server

@@ -45,6 +45,10 @@ async function getMapEditorData(ctx, data) {
     colorMap[rtc.room_type] = rtc.color;
   });
   
+  // Get all room types for dropdown population
+  const roomTypes = await db.getAllRoomTypes();
+  const roomTypeList = roomTypes.map(rt => rt.room_type);
+  
   ws.send(JSON.stringify({
     type: 'mapEditorData',
     rooms: rooms.map(r => ({
@@ -61,6 +65,7 @@ async function getMapEditorData(ctx, data) {
       connection_direction: r.connection_direction
     })),
     roomTypeColors: colorMap,
+    roomTypes: roomTypeList,
     mapId: map.id,
     mapName: map.name
   }));
@@ -114,6 +119,22 @@ async function createRoom(ctx, data) {
     return;
   }
 
+  // Validate room type - must be one of the 4 allowed types
+  const validRoomType = roomType || 'normal';
+  const allowedTypes = ['normal', 'merchant', 'factory', 'warehouse'];
+  if (!allowedTypes.includes(validRoomType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid room type: ${validRoomType}. Valid types: ${allowedTypes.join(', ')}` }));
+    return;
+  }
+  
+  // Also verify it exists in room_type_colors table
+  const allRoomTypes = await db.getAllRoomTypes();
+  const dbTypes = allRoomTypes.map(rt => rt.room_type);
+  if (!dbTypes.includes(validRoomType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Room type ${validRoomType} not found in database. Please add it to room_type_colors first.` }));
+    return;
+  }
+
   // Check if room already exists at these coordinates
   const existing = await db.getRoomByCoords(mapId, x, y);
   if (existing) {
@@ -122,7 +143,7 @@ async function createRoom(ctx, data) {
   }
 
   try {
-    const roomId = await db.createRoom(name, description || '', x, y, mapId, roomType || 'normal');
+    const roomId = await db.createRoom(name, description || '', x, y, mapId, validRoomType);
     const room = await db.getRoomById(roomId);
     
     // Update map size based on new room
@@ -215,8 +236,24 @@ async function updateRoom(ctx, data) {
     return;
   }
 
+  // Validate room type - must be one of the 4 allowed types
+  const validRoomType = roomType || 'normal';
+  const allowedTypes = ['normal', 'merchant', 'factory', 'warehouse'];
+  if (!allowedTypes.includes(validRoomType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid room type: ${validRoomType}. Valid types: ${allowedTypes.join(', ')}` }));
+    return;
+  }
+  
+  // Also verify it exists in room_type_colors table
+  const allRoomTypes = await db.getAllRoomTypes();
+  const dbTypes = allRoomTypes.map(rt => rt.room_type);
+  if (!dbTypes.includes(validRoomType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Room type ${validRoomType} not found in database. Please add it to room_type_colors first.` }));
+    return;
+  }
+
   try {
-    await db.updateRoom(roomId, name, description || '', roomType || 'normal');
+    await db.updateRoom(roomId, name, description || '', validRoomType);
     const room = await db.getRoomById(roomId);
     
     ws.send(JSON.stringify({
@@ -411,6 +448,42 @@ async function getAllRoomTypeColors(ctx, data) {
     colorMap[rtc.room_type] = rtc.color;
   });
   ws.send(JSON.stringify({ type: 'roomTypeColors', colors: colorMap }));
+}
+
+/**
+ * Get all room types (for dropdown population)
+ */
+async function getAllRoomTypes(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  // Ensure warehouse exists in database (in case migration hasn't run)
+  try {
+    await db.setRoomTypeColor('warehouse', '#00ffff');
+  } catch (err) {
+    // Ignore errors - warehouse may already exist
+    console.log('Note: Could not ensure warehouse room type exists:', err.message);
+  }
+
+  // Remove 'shop' if it exists (consolidate to 'merchant')
+  try {
+    // First convert any rooms with 'shop' type to 'merchant'
+    await db.query('UPDATE rooms SET room_type = $1 WHERE room_type = $2', ['merchant', 'shop']);
+    // Then delete 'shop' from room_type_colors
+    await db.query('DELETE FROM room_type_colors WHERE room_type = $1', ['shop']);
+  } catch (err) {
+    // Ignore errors - shop may not exist
+    console.log('Note: Could not remove shop room type:', err.message);
+  }
+
+  const roomTypes = await db.getAllRoomTypes();
+  const roomTypeList = roomTypes.map(rt => rt.room_type);
+  ws.send(JSON.stringify({ type: 'allRoomTypes', roomTypes: roomTypeList }));
 }
 
 /**
@@ -797,6 +870,7 @@ module.exports = {
   connectMaps,
   disconnectMap,
   getAllRoomTypeColors,
+  getAllRoomTypes,
   setRoomTypeColor,
   getJumpMaps,
   getJumpRooms,

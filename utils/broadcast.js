@@ -158,12 +158,13 @@ async function getExits(db, room) {
  * Send room update to a player
  * @param {Map} connectedPlayers - Map of connectionId -> player data
  * @param {Map} factoryWidgetState - Map of connectionId -> factory state
+ * @param {Map} warehouseWidgetState - Map of connectionId -> warehouse state
  * @param {object} db - Database module
  * @param {string} connectionId - Connection ID to send update to
  * @param {object} room - Room object
  * @param {boolean} showFullInfo - Whether to show full room info
  */
-async function sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connectionId, room, showFullInfo = false) {
+async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, room, showFullInfo = false) {
   const playerData = connectedPlayers.get(connectionId);
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
@@ -238,6 +239,58 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connecti
     factoryWidgetState.delete(connectionId);
   }
 
+  // Check if player has any warehouse deeds
+  let hasWarehouseDeed = false;
+  if (playerData && playerData.playerId) {
+    hasWarehouseDeed = await db.hasPlayerWarehouseDeed(playerData.playerId);
+  }
+
+  // Get warehouse widget state if room is warehouse type
+  let warehouseState = null;
+  if (room.room_type === 'warehouse') {
+    const warehouseLocationKey = room.id.toString();
+    
+    if (playerData && playerData.playerId) {
+      // Check if player has access via deed
+      const accessCheck = await db.checkWarehouseAccess(playerData.playerId, warehouseLocationKey);
+      
+      if (accessCheck.hasAccess) {
+        // Initialize warehouse if first time
+        let capacity = await db.getPlayerWarehouseCapacity(playerData.playerId, warehouseLocationKey);
+        if (!capacity) {
+          capacity = await db.initializePlayerWarehouse(playerData.playerId, warehouseLocationKey, accessCheck.deedItem.id);
+        }
+        
+        // Get warehouse items
+        const items = await db.getWarehouseItems(playerData.playerId, warehouseLocationKey);
+        const itemTypeCount = await db.getWarehouseItemTypeCount(playerData.playerId, warehouseLocationKey);
+        
+        // Get owned deeds for this location
+        const deeds = await db.getPlayerWarehouseDeeds(playerData.playerId, warehouseLocationKey);
+        
+        warehouseState = {
+          warehouseLocationKey: warehouseLocationKey,
+          items: items,
+          capacity: {
+            maxItemTypes: capacity.max_item_types,
+            maxQuantityPerType: capacity.max_quantity_per_type,
+            currentItemTypes: itemTypeCount,
+            upgradeTier: capacity.upgrade_tier
+          },
+          deeds: deeds
+        };
+        
+        // Store in warehouseWidgetState
+        warehouseWidgetState.set(connectionId, {
+          roomId: room.id,
+          warehouseLocationKey: warehouseLocationKey
+        });
+      }
+    }
+  } else {
+    warehouseWidgetState.delete(connectionId);
+  }
+
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
     room: {
@@ -254,7 +307,9 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connecti
     roomItems: roomItems,
     exits: exits,
     showFullInfo: showFullInfo,
-    factoryWidgetState: factoryState
+    factoryWidgetState: factoryState,
+    warehouseWidgetState: warehouseState,
+    hasWarehouseDeed: hasWarehouseDeed
   }));
 }
 

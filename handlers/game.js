@@ -16,6 +16,7 @@ const {
   sendRoomUpdate 
 } = require('../utils/broadcast');
 const { findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
+const { verifyGodMode } = require('../utils/broadcast');
 
 // Track Lore Keeper engagement timers per connectionId
 const loreKeeperEngagementTimers = new Map();
@@ -179,7 +180,7 @@ async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, r
  * Authenticate a WebSocket session
  */
 async function authenticateSession(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, session, sessionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, playerName } = ctx;
   
   // Validate session
   if (!session || !sessionId) {
@@ -210,7 +211,7 @@ async function authenticateSession(ctx, data) {
   });
 
   // Send initial room update (with full info for first display)
-  await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connectionId, room, true);
+  await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, room, true);
 
   // Send player stats (dynamically extracted using configuration)
   const playerStats = db.getPlayerStats(player);
@@ -276,7 +277,7 @@ async function authenticateSession(ctx, data) {
  * Handle player movement
  */
 async function move(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, connectionId, sessionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, sessionId, playerName } = ctx;
   
   if (!sessionId || !playerName) {
     ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
@@ -446,7 +447,7 @@ async function move(ctx, data) {
           if (otherPlayerData.roomId === oldRoomId && 
               otherPlayerData.ws.readyState === WebSocket.OPEN &&
               otherConnId !== connectionId) {
-            await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, otherConnId, updatedOldRoom);
+            await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, updatedOldRoom);
           }
         }
       }
@@ -462,7 +463,7 @@ async function move(ctx, data) {
         if (otherPlayerData.roomId === oldRoomId && 
             otherPlayerData.ws.readyState === WebSocket.OPEN &&
             otherConnId !== connectionId) {
-          await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, otherConnId, oldRoom);
+          await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, oldRoom);
         }
       }
     }
@@ -615,7 +616,7 @@ async function move(ctx, data) {
  * Handle look command
  */
 async function look(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, connectionId } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId } = ctx;
   
   if (!connectionId || !connectedPlayers.has(connectionId)) {
     ws.send(JSON.stringify({ type: 'error', message: 'Player not selected' }));
@@ -638,7 +639,7 @@ async function look(ctx, data) {
   const target = (data.target || '').trim();
   if (!target) {
     // No specific target: send full room update (same as entering room)
-    await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connectionId, currentRoom, true);
+    await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, true);
     return;
   }
 
@@ -682,14 +683,15 @@ async function inventory(ctx, data) {
   }
   
   const items = await db.getPlayerItems(player.id);
-  ws.send(JSON.stringify({ type: 'inventoryList', items }));
+  const hasWarehouseDeed = await db.hasPlayerWarehouseDeed(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items, hasWarehouseDeed }));
 }
 
 /**
  * Handle take command
  */
 async function take(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, connectionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
   
   const player = await db.getPlayerByName(playerName);
   if (!player) {
@@ -801,7 +803,7 @@ async function take(ctx, data) {
  * Handle drop command
  */
 async function drop(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, connectionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
   
   const player = await db.getPlayerByName(playerName);
   if (!player) {
@@ -871,7 +873,7 @@ async function drop(ctx, data) {
     ws.send(JSON.stringify({ type: 'message', message }));
     
     // Send updated room to player to refresh items on ground
-    await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connectionId, currentRoom);
+    await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom);
     
     // Send updated player stats (encumbrance changed)
     await sendPlayerStats(connectedPlayers, db, connectionId);
@@ -882,7 +884,7 @@ async function drop(ctx, data) {
  * Handle factory widget add item
  */
 async function factoryWidgetAddItem(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, connectionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
   
   const player = await db.getPlayerByName(playerName);
   if (!player) {
@@ -1883,6 +1885,415 @@ function cleanupLoreKeeperEngagement(connectionId) {
   activeGlowCodexPuzzles.delete(connectionId);
 }
 
+/**
+ * Restart the server (only works on port 3535, god mode required)
+ */
+async function restartServer(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  // Verify god mode
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+  
+  // Check if server is running on port 3535
+  const currentPort = process.env.PORT || '3434';
+  if (currentPort !== '3535') {
+    ws.send(JSON.stringify({ 
+      type: 'error', 
+      message: 'Server restart is only available on the stable server (port 3535).' 
+    }));
+    return;
+  }
+  
+  // Send confirmation message to client
+  ws.send(JSON.stringify({ 
+    type: 'message', 
+    message: 'Restarting server... You will be disconnected.' 
+  }));
+  
+  // Give client a moment to receive the message, then exit
+  setTimeout(() => {
+    console.log('Server restart requested by god mode user');
+    process.exit(0);
+  }, 500);
+}
+
+/**
+ * Handle warehouse command - open warehouse widget
+ */
+async function warehouse(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  // Validate player is in warehouse room
+  if (currentRoom.room_type !== 'warehouse') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse room to access storage.' }));
+    return;
+  }
+  
+  const warehouseLocationKey = currentRoom.id.toString();
+  
+  // Check if player has access via deed
+  const accessCheck = await db.checkWarehouseAccess(player.id, warehouseLocationKey);
+  if (!accessCheck.hasAccess) {
+    ws.send(JSON.stringify({ type: 'error', message: 'You need a warehouse deed to access this storage.' }));
+    return;
+  }
+  
+  // Initialize warehouse if first time
+  let capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
+  if (!capacity) {
+    capacity = await db.initializePlayerWarehouse(player.id, warehouseLocationKey, accessCheck.deedItem.id);
+  }
+  
+  // Get warehouse items
+  const items = await db.getWarehouseItems(player.id, warehouseLocationKey);
+  const itemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+  
+  // Get owned deeds for this location
+  const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
+  
+  ws.send(JSON.stringify({
+    type: 'warehouseWidgetState',
+    state: {
+      warehouseLocationKey: warehouseLocationKey,
+      items: items,
+      capacity: {
+        maxItemTypes: capacity.max_item_types,
+        maxQuantityPerType: capacity.max_quantity_per_type,
+        currentItemTypes: itemTypeCount,
+        upgradeTier: capacity.upgrade_tier
+      },
+      deeds: deeds
+    }
+  }));
+}
+
+/**
+ * Handle store command - store items from inventory to warehouse
+ */
+async function store(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  // Validate player is in warehouse room
+  if (currentRoom.room_type !== 'warehouse') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse room to store items.' }));
+    return;
+  }
+  
+  const warehouseLocationKey = currentRoom.id.toString();
+  
+  // Check if player has access via deed
+  const accessCheck = await db.checkWarehouseAccess(player.id, warehouseLocationKey);
+  if (!accessCheck.hasAccess) {
+    ws.send(JSON.stringify({ type: 'error', message: 'You need a warehouse deed to access this storage.' }));
+    return;
+  }
+  
+  // Initialize warehouse if first time
+  let capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
+  if (!capacity) {
+    capacity = await db.initializePlayerWarehouse(player.id, warehouseLocationKey, accessCheck.deedItem.id);
+  }
+  
+  const query = (data.itemName || '').toLowerCase().trim();
+  if (!query) {
+    ws.send(JSON.stringify({ type: 'message', message: 'Store what?' }));
+    return;
+  }
+  
+  // Parse quantity (default to 1, or "all", or a number)
+  let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
+  const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
+  
+  // Get player inventory
+  const playerItems = await db.getPlayerItems(player.id);
+  const matches = playerItems.filter(i => i.item_name.toLowerCase().includes(query));
+  
+  if (matches.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `You don't have "${query}".` }));
+    return;
+  }
+  
+  if (matches.length > 1) {
+    const names = matches.map(i => i.item_name).join(', ');
+    ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
+  }
+  
+  const item = matches[0];
+  const availableQuantity = item.quantity;
+  
+  // Determine how many to store
+  let quantityToStore;
+  if (isAll) {
+    quantityToStore = availableQuantity;
+  } else {
+    quantityToStore = parseInt(requestedQuantity, 10);
+    if (isNaN(quantityToStore) || quantityToStore < 1) {
+      ws.send(JSON.stringify({ type: 'message', message: 'Invalid quantity.' }));
+      return;
+    }
+    
+    if (quantityToStore > availableQuantity) {
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: `You only have ${availableQuantity} ${item.item_name}.` 
+      }));
+      return;
+    }
+  }
+  
+  // Check capacity limits
+  const existingQuantity = await db.getWarehouseItemQuantity(player.id, warehouseLocationKey, item.item_name);
+  const itemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+  
+  // Check if adding new item type
+  if (existingQuantity === 0) {
+    if (itemTypeCount >= capacity.max_item_types) {
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: `Warehouse capacity limit reached. You can only store ${capacity.max_item_types} different item type(s).` 
+      }));
+      return;
+    }
+  }
+  
+  // Check quantity limit per type
+  const newTotalQuantity = existingQuantity + quantityToStore;
+  if (newTotalQuantity > capacity.max_quantity_per_type) {
+    const canStore = capacity.max_quantity_per_type - existingQuantity;
+    if (canStore <= 0) {
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: `Quantity limit reached for ${item.item_name}. Maximum ${capacity.max_quantity_per_type} per item type.` 
+      }));
+      return;
+    }
+    quantityToStore = canStore;
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: `You can only store ${canStore} more ${item.item_name} (limit: ${capacity.max_quantity_per_type} per type).` 
+    }));
+  }
+  
+  // Remove from player inventory and add to warehouse
+  await db.removePlayerItem(player.id, item.item_name, quantityToStore);
+  await db.addWarehouseItem(player.id, warehouseLocationKey, item.item_name, quantityToStore);
+  
+  // Send feedback message
+  let message;
+  if (quantityToStore === 1) {
+    message = `You store ${item.item_name} in the warehouse.`;
+  } else {
+    message = `You store ${quantityToStore} ${item.item_name} in the warehouse.`;
+  }
+  ws.send(JSON.stringify({ type: 'message', message }));
+  
+  // Send updated warehouse widget state
+  const updatedItems = await db.getWarehouseItems(player.id, warehouseLocationKey);
+  const updatedItemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+  const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
+  
+  ws.send(JSON.stringify({
+    type: 'warehouseWidgetState',
+    state: {
+      warehouseLocationKey: warehouseLocationKey,
+      items: updatedItems,
+      capacity: {
+        maxItemTypes: capacity.max_item_types,
+        maxQuantityPerType: capacity.max_quantity_per_type,
+        currentItemTypes: updatedItemTypeCount,
+        upgradeTier: capacity.upgrade_tier
+      },
+      deeds: deeds
+    }
+  }));
+  
+  // Send updated inventory
+  const updatedInventory = await db.getPlayerItems(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items: updatedInventory }));
+  
+  // Send updated player stats (encumbrance changed)
+  await sendPlayerStats(connectedPlayers, db, connectionId);
+}
+
+/**
+ * Handle withdraw command - withdraw items from warehouse to inventory
+ */
+async function withdraw(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  // Validate player is in warehouse room
+  if (currentRoom.room_type !== 'warehouse') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse room to withdraw items.' }));
+    return;
+  }
+  
+  const warehouseLocationKey = currentRoom.id.toString();
+  
+  // Check if player has access via deed
+  const accessCheck = await db.checkWarehouseAccess(player.id, warehouseLocationKey);
+  if (!accessCheck.hasAccess) {
+    ws.send(JSON.stringify({ type: 'error', message: 'You need a warehouse deed to access this storage.' }));
+    return;
+  }
+  
+  const query = (data.itemName || '').toLowerCase().trim();
+  if (!query) {
+    ws.send(JSON.stringify({ type: 'message', message: 'Withdraw what?' }));
+    return;
+  }
+  
+  // Parse quantity (default to 1, or "all", or a number)
+  let requestedQuantity = data.quantity !== undefined ? data.quantity : 1;
+  const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
+  
+  // Get warehouse items
+  const warehouseItems = await db.getWarehouseItems(player.id, warehouseLocationKey);
+  const matches = warehouseItems.filter(i => i.item_name.toLowerCase().includes(query));
+  
+  if (matches.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `You don't have "${query}" stored here.` }));
+    return;
+  }
+  
+  if (matches.length > 1) {
+    const names = matches.map(i => i.item_name).join(', ');
+    ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
+  }
+  
+  const item = matches[0];
+  const availableQuantity = item.quantity;
+  
+  // Determine how many to withdraw
+  let quantityToWithdraw;
+  if (isAll) {
+    quantityToWithdraw = availableQuantity;
+  } else {
+    quantityToWithdraw = parseInt(requestedQuantity, 10);
+    if (isNaN(quantityToWithdraw) || quantityToWithdraw < 1) {
+      ws.send(JSON.stringify({ type: 'message', message: 'Invalid quantity.' }));
+      return;
+    }
+    
+    if (quantityToWithdraw > availableQuantity) {
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: `You only have ${availableQuantity} ${item.item_name} stored.` 
+      }));
+      return;
+    }
+  }
+  
+  // Check encumbrance limits
+  const currentEncumbrance = await db.getPlayerCurrentEncumbrance(player.id);
+  const maxEncumbrance = player.resource_max_encumbrance || 100;
+  const remainingCapacity = maxEncumbrance - currentEncumbrance;
+  const itemEncumbrance = await db.getItemEncumbrance(item.item_name);
+  
+  // How many can fit in remaining capacity?
+  const maxCanCarry = Math.floor(remainingCapacity / itemEncumbrance);
+  
+  if (maxCanCarry <= 0) {
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: `You can't carry any more. You're at ${currentEncumbrance}/${maxEncumbrance} encumbrance.` 
+    }));
+    return;
+  }
+  
+  // Limit by encumbrance if needed
+  if (quantityToWithdraw > maxCanCarry) {
+    quantityToWithdraw = maxCanCarry;
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: `You can only carry ${maxCanCarry} ${item.item_name} (encumbrance limit).` 
+    }));
+  }
+  
+  // Remove from warehouse and add to player inventory
+  await db.removeWarehouseItem(player.id, warehouseLocationKey, item.item_name, quantityToWithdraw);
+  await db.addPlayerItem(player.id, item.item_name, quantityToWithdraw);
+  
+  // Send feedback message
+  let message;
+  const newEncumbrance = currentEncumbrance + (quantityToWithdraw * itemEncumbrance);
+  if (quantityToWithdraw === 1) {
+    message = `You withdraw ${item.item_name} from the warehouse. (${newEncumbrance}/${maxEncumbrance})`;
+  } else {
+    message = `You withdraw ${quantityToWithdraw} ${item.item_name} from the warehouse. (${newEncumbrance}/${maxEncumbrance})`;
+  }
+  ws.send(JSON.stringify({ type: 'message', message }));
+  
+  // Send updated warehouse widget state
+  const capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
+  const updatedItems = await db.getWarehouseItems(player.id, warehouseLocationKey);
+  const updatedItemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+  const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
+  
+  ws.send(JSON.stringify({
+    type: 'warehouseWidgetState',
+    state: {
+      warehouseLocationKey: warehouseLocationKey,
+      items: updatedItems,
+      capacity: {
+        maxItemTypes: capacity.max_item_types,
+        maxQuantityPerType: capacity.max_quantity_per_type,
+        currentItemTypes: updatedItemTypeCount,
+        upgradeTier: capacity.upgrade_tier
+      },
+      deeds: deeds
+    }
+  }));
+  
+  // Send updated inventory
+  const updatedInventory = await db.getPlayerItems(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items: updatedInventory }));
+  
+  // Send updated player stats (encumbrance changed)
+  await sendPlayerStats(connectedPlayers, db, connectionId);
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -1899,6 +2310,10 @@ module.exports = {
   solve,
   clue,
   greet,
-  cleanupLoreKeeperEngagement
+  restartServer,
+  cleanupLoreKeeperEngagement,
+  warehouse,
+  store,
+  withdraw
 };
 

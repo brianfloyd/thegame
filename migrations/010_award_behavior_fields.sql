@@ -14,3 +14,4 @@ ADD COLUMN IF NOT EXISTS puzzle_award_after_delay BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS puzzle_award_delay_seconds INTEGER DEFAULT NULL,
 ADD COLUMN IF NOT EXISTS puzzle_award_delay_response TEXT DEFAULT NULL;
 
+
