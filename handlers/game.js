@@ -1084,7 +1084,8 @@ async function talk(ctx, data) {
           npcName: lk.name,
           npcColor: lk.displayColor,
           message: response,
-          messageColor: lk.initialMessageColor
+          messageColor: lk.initialMessageColor,
+          keywordColor: lk.keywordColor
         });
         foundKeyword = true;
         break; // Only respond once per Lore Keeper
@@ -1102,7 +1103,8 @@ async function talk(ctx, data) {
           npcName: lk.name,
           npcColor: lk.displayColor,
           message: lk.incorrectResponse,
-          messageColor: lk.initialMessageColor
+          messageColor: lk.initialMessageColor,
+          keywordColor: lk.keywordColor
         });
       }
     }
@@ -1235,6 +1237,7 @@ async function solve(ctx, data) {
       npcColor: lk.displayColor,
       message: successMessage,
       messageColor: '#00ff00', // Green for success
+      keywordColor: lk.keywordColor,
       isSuccess: true
     });
     
@@ -1248,6 +1251,7 @@ async function solve(ctx, data) {
       npcColor: lk.displayColor,
       message: failureMessage,
       messageColor: '#ff6666', // Red for failure
+      keywordColor: lk.keywordColor,
       isFailure: true
     }));
   }
@@ -1316,7 +1320,8 @@ async function clue(ctx, data) {
     npcName: lk.name,
     npcColor: lk.displayColor,
     message: clueText,
-    messageColor: lk.keywordColor || '#ffff00'
+    messageColor: lk.keywordColor || '#ffff00',
+    keywordColor: lk.keywordColor
   }));
 }
 

@@ -100,9 +100,11 @@ function handleMessage(data) {
             displaySystemMessage(data.message);
             break;
         case 'loreKeeperMessage':
-            displayLoreKeeperMessage(data.npcName, data.npcColor, data.message, data.messageColor, data.isSuccess, data.isFailure);
+            displayLoreKeeperMessage(data.npcName, data.npcColor, data.message, data.messageColor, data.isSuccess, data.isFailure, data.keywordColor);
             // Add to talk history in comms widget (Lore Keepers participate in room conversation)
-            addToCommHistory('talk', data.npcName, data.message, true);
+            // Strip <> markers for clean history display
+            const cleanMessage = data.message.replace(/<([^>]+)>/g, '$1');
+            addToCommHistory('talk', data.npcName, cleanMessage, true);
             break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
@@ -976,8 +978,17 @@ function displaySystemMessage(message) {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
+// Parse Lore Keeper message text and make <text> glow
+function parseLoreKeeperGlow(text, keywordColor) {
+    // First escape HTML to prevent XSS
+    const escaped = escapeHtml(text);
+    // Then replace <text> with glowing span (using &lt; and &gt; after escaping)
+    const glowColor = keywordColor || '#ff00ff';
+    return escaped.replace(/&lt;([^&]+)&gt;/g, `<span class="lorekeeper-glow" style="color: ${glowColor}">$1</span>`);
+}
+
 // Display Lore Keeper message (narrative NPC speech)
-function displayLoreKeeperMessage(npcName, npcColor, message, messageColor, isSuccess, isFailure) {
+function displayLoreKeeperMessage(npcName, npcColor, message, messageColor, isSuccess, isFailure, keywordColor) {
     const terminalContent = document.getElementById('terminalContent');
     if (!terminalContent) return;
     
@@ -991,11 +1002,12 @@ function displayLoreKeeperMessage(npcName, npcColor, message, messageColor, isSu
         messageDiv.classList.add('lorekeeper-failure');
     }
     
-    // Build the message HTML
+    // Build the message HTML with glow effect for <text>
     const npcColorStyle = npcColor || '#00ffff';
     const msgColorStyle = messageColor || '#cccccc';
+    const parsedMessage = parseLoreKeeperGlow(message, keywordColor || npcColor);
     
-    messageDiv.innerHTML = `<span class="lorekeeper-name" style="color: ${npcColorStyle}">${escapeHtml(npcName)}</span> says "<span class="lorekeeper-text" style="color: ${msgColorStyle}">${escapeHtml(message)}</span>"`;
+    messageDiv.innerHTML = `<span class="lorekeeper-name" style="color: ${npcColorStyle}">${escapeHtml(npcName)}</span> says "<span class="lorekeeper-text" style="color: ${msgColorStyle}">${parsedMessage}</span>"`;
     
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;

@@ -281,6 +281,35 @@ body {
     color: #ff6666;
 }
 
+/* Lore Keeper glowing text for <keywords> */
+.lorekeeper-glow {
+    font-weight: bold;
+    text-shadow: 
+        0 0 5px currentColor,
+        0 0 10px currentColor,
+        0 0 15px currentColor,
+        0 0 20px currentColor;
+    animation: lorekeeper-pulse 2s ease-in-out infinite;
+}
+
+@keyframes lorekeeper-pulse {
+    0%, 100% {
+        text-shadow: 
+            0 0 5px currentColor,
+            0 0 10px currentColor,
+            0 0 15px currentColor;
+        opacity: 1;
+    }
+    50% {
+        text-shadow: 
+            0 0 10px currentColor,
+            0 0 20px currentColor,
+            0 0 30px currentColor,
+            0 0 40px currentColor;
+        opacity: 0.9;
+    }
+}
+
 /* Communication Widget Styles */
 #widget-communication {
     background: #0a0a0a;
