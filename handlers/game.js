@@ -24,6 +24,49 @@ const loreKeeperEngagementTimers = new Map();
 const activeGlowCodexPuzzles = new Map();
 
 /**
+ * Check if a player should receive an award based on award behavior settings
+ * Returns { shouldAward: boolean, delayMessage: string | null }
+ */
+async function checkAwardEligibility(db, playerId, npcId, itemName, awardOnceOnly, awardAfterDelay, delaySeconds) {
+  // If no restrictions, award every time
+  if (!awardOnceOnly && !awardAfterDelay) {
+    return { shouldAward: true, delayMessage: null };
+  }
+  
+  // Check if player has been awarded before
+  const lastAwardTime = await db.getLastLoreKeeperItemAwardTime(playerId, npcId, itemName);
+  
+  if (!lastAwardTime) {
+    // Never awarded before, can award
+    return { shouldAward: true, delayMessage: null };
+  }
+  
+  // If award_once_only is true, don't award again
+  if (awardOnceOnly) {
+    return { shouldAward: false, delayMessage: null };
+  }
+  
+  // If award_after_delay is true, check if enough time has passed
+  if (awardAfterDelay && delaySeconds) {
+    const now = new Date();
+    const lastAward = new Date(lastAwardTime);
+    const secondsSinceAward = Math.floor((now - lastAward) / 1000);
+    
+    if (secondsSinceAward >= delaySeconds) {
+      // Enough time has passed, can award
+      return { shouldAward: true, delayMessage: null };
+    } else {
+      // Not enough time has passed, return delay message
+      const remainingSeconds = delaySeconds - secondsSinceAward;
+      return { shouldAward: false, delayMessage: `You must wait ${remainingSeconds} more seconds before receiving this reward again.` };
+    }
+  }
+  
+  // Default: don't award
+  return { shouldAward: false, delayMessage: null };
+}
+
+/**
  * Extract letters from glow codex clues based on extraction pattern
  * Helper function for debugging/validation (backend only)
  * @param {Array<string>} glowClues - Array of clue strings with <glowword> markers
@@ -1131,10 +1174,19 @@ async function talk(ctx, data) {
           isSuccess: true
         });
         
-        // Grant reward item if specified and not already awarded
+        // Grant reward item if specified and eligible
         if (puzzleNpc.puzzleRewardItem) {
-          const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, puzzleNpc.npcId, puzzleNpc.puzzleRewardItem);
-          if (!alreadyAwarded) {
+          const eligibility = await checkAwardEligibility(
+            db, 
+            player.id, 
+            puzzleNpc.npcId, 
+            puzzleNpc.puzzleRewardItem,
+            puzzleNpc.puzzleAwardOnceOnly || false,
+            puzzleNpc.puzzleAwardAfterDelay || false,
+            puzzleNpc.puzzleAwardDelaySeconds
+          );
+          
+          if (eligibility.shouldAward) {
             await db.addPlayerItem(player.id, puzzleNpc.puzzleRewardItem, 1);
             await db.recordLoreKeeperItemAward(player.id, puzzleNpc.npcId, puzzleNpc.puzzleRewardItem);
             ws.send(JSON.stringify({
@@ -1146,6 +1198,13 @@ async function talk(ctx, data) {
             const updatedItems = await db.getPlayerItems(player.id);
             ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
             await sendPlayerStats(connectedPlayers, db, connectionId);
+          } else if (eligibility.delayMessage || puzzleNpc.puzzleAwardDelayResponse) {
+            // Show delay response message
+            const delayMessage = puzzleNpc.puzzleAwardDelayResponse || eligibility.delayMessage;
+            ws.send(JSON.stringify({
+              type: 'message',
+              message: delayMessage
+            }));
           }
         }
         
@@ -1396,10 +1455,19 @@ async function talk(ctx, data) {
           isSuccess: true
         });
         
-        // Award reward item if specified and not already awarded
+        // Award reward item if specified and eligible
         if (lk.puzzleRewardItem) {
-          const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, lk.npcId, lk.puzzleRewardItem);
-          if (!alreadyAwarded) {
+          const eligibility = await checkAwardEligibility(
+            db, 
+            player.id, 
+            lk.npcId, 
+            lk.puzzleRewardItem,
+            lk.puzzleAwardOnceOnly || false,
+            lk.puzzleAwardAfterDelay || false,
+            lk.puzzleAwardDelaySeconds
+          );
+          
+          if (eligibility.shouldAward) {
             await db.addPlayerItem(player.id, lk.puzzleRewardItem, 1);
             await db.recordLoreKeeperItemAward(player.id, lk.npcId, lk.puzzleRewardItem);
             ws.send(JSON.stringify({
@@ -1411,6 +1479,13 @@ async function talk(ctx, data) {
             const updatedItems = await db.getPlayerItems(player.id);
             ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
             await sendPlayerStats(connectedPlayers, db, connectionId);
+          } else if (eligibility.delayMessage || lk.puzzleAwardDelayResponse) {
+            // Show delay response message
+            const delayMessage = lk.puzzleAwardDelayResponse || eligibility.delayMessage;
+            ws.send(JSON.stringify({
+              type: 'message',
+              message: delayMessage
+            }));
           }
         }
         
@@ -1617,10 +1692,19 @@ async function solve(ctx, data) {
       isSuccess: true
     });
     
-    // Award reward item if specified and not already awarded
+    // Award reward item if specified and eligible
     if (lk.puzzleRewardItem) {
-      const alreadyAwarded = await db.hasPlayerBeenAwardedItemByLoreKeeper(player.id, lk.npcId, lk.puzzleRewardItem);
-      if (!alreadyAwarded) {
+      const eligibility = await checkAwardEligibility(
+        db, 
+        player.id, 
+        lk.npcId, 
+        lk.puzzleRewardItem,
+        lk.puzzleAwardOnceOnly || false,
+        lk.puzzleAwardAfterDelay || false,
+        lk.puzzleAwardDelaySeconds
+      );
+      
+      if (eligibility.shouldAward) {
         await db.addPlayerItem(player.id, lk.puzzleRewardItem, 1);
         await db.recordLoreKeeperItemAward(player.id, lk.npcId, lk.puzzleRewardItem);
         ws.send(JSON.stringify({
@@ -1632,6 +1716,13 @@ async function solve(ctx, data) {
         const updatedItems = await db.getPlayerItems(player.id);
         ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
         await sendPlayerStats(connectedPlayers, db, connectionId);
+      } else if (eligibility.delayMessage || lk.puzzleAwardDelayResponse) {
+        // Show delay response message
+        const delayMessage = lk.puzzleAwardDelayResponse || eligibility.delayMessage;
+        ws.send(JSON.stringify({
+          type: 'message',
+          message: delayMessage
+        }));
       }
     }
   } else {

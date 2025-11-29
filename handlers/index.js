@@ -25,6 +25,7 @@ const handlerMap = {
   harvest: gameHandlers.harvest,
   resonate: gameHandlers.resonate,
   talk: gameHandlers.talk,
+  ask: gameHandlers.ask,
   telepath: gameHandlers.telepath,
   solve: gameHandlers.solve,
   clue: gameHandlers.clue,

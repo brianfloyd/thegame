@@ -707,20 +707,56 @@ body {
     margin-bottom: 10px;
 }
 
+.help-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.help-table-header {
+    color: #ffff00;
+    font-weight: bold;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+}
+
 .help-category {
     color: #00ffff;
     font-weight: bold;
-    margin-top: 8px;
-    margin-bottom: 4px;
+    padding: 8px 12px;
+    background: rgba(0, 255, 255, 0.1);
+    border-top: 1px solid #00ffff;
+    border-bottom: 1px solid #00ffff;
 }
 
-.help-command {
+.help-command-row {
+    border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+}
+
+.help-command-row:hover {
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.help-cmd-name-cell {
+    padding: 6px 12px;
     color: #00ff00;
-    margin-left: 10px;
+    width: 30%;
+    vertical-align: top;
+}
+
+.help-cmd-desc-cell {
+    padding: 6px 12px;
+    color: #00ff00;
+    width: 70%;
+    vertical-align: top;
 }
 
 .help-cmd-name {
     color: #ffffff;
+    font-weight: bold;
 }
 
 /* Item Editor Styles */

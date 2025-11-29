@@ -35,3 +35,4 @@ CREATE TABLE IF NOT EXISTS lore_keepers (
 -- Index for quick lookup by NPC ID
 CREATE INDEX IF NOT EXISTS idx_lore_keepers_npc_id ON lore_keepers(npc_id);
 
+

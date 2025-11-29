@@ -563,6 +563,55 @@ Lore Keepers are narrative-driven NPCs that deliver timed engagement messages, k
 - Failure messages have red highlight/border
 - Left border accent for visual distinction
 
+## Glow Codex Puzzle Dialogue System
+
+### Overview
+The Glow Codex puzzle system has been extended to support interactive dialogue flow similar to normal NPC dialogue. Players can ask questions, request hints, or attempt answers naturally through the `talk` and `ask` commands.
+
+### Database Schema Extensions
+The `scriptable_npcs` table includes the following puzzle dialogue fields (added in migration 007):
+- `puzzle_hint_responses` (TEXT): JSON array of hint responses for question-like inputs
+- `puzzle_followup_responses` (TEXT): JSON array of followup responses for general questions
+- `puzzle_incorrect_attempt_responses` (TEXT): JSON array of failure responses for incorrect answer attempts
+
+### NPC Editor Fields
+When `puzzle_type == "glow_codex"`, the NPC editor displays three additional fields:
+- **Puzzle Hint Responses**: JSON array of strings for responses to question-like inputs (help, explain, hint, what, how)
+- **Puzzle Followup Responses**: JSON array of strings for responses to general questions
+- **Puzzle Incorrect Attempt Responses**: JSON array of strings for responses to incorrect answer attempts
+
+### Puzzle State Management
+- The system maintains `activeGlowCodexPuzzles` Map per connectionId
+- Each entry tracks: `{ npcId, npcName, puzzleType, clueIndex }`
+- Puzzle state is set when player mentions NPC by name in `talk` or `ask` command
+- Puzzle state is cleared when puzzle is solved or player leaves room
+
+### Dialogue Flow
+1. **Starting a Puzzle**: When player uses `talk <npc>` or `ask <npc> <something>`:
+   - If message contains question words (help, explain, hint, what, how), returns random entry from `puzzle_hint_responses` or `puzzle_followup_responses`
+   - Otherwise, sends all glow clues in sequence
+   - Sets active puzzle state for the player
+
+2. **During Active Puzzle**: All player messages are routed through puzzle solver:
+   - **Exact Solution Match**: Sends `puzzle_success_response`, awards `puzzle_reward_item`, clears puzzle state
+   - **Question-like Input**: Returns random entry from `puzzle_hint_responses` or `puzzle_followup_responses`
+   - **Answer Attempt (contains letters)**: Returns random entry from `puzzle_incorrect_attempt_responses`
+   - **Other Input**: Defaults to `puzzle_followup_responses`
+
+3. **Graceful Fallback**: If puzzle dialogue fields are not configured, system falls back to:
+   - Generic dialogue responses
+   - Default failure message: "That is not the answer I seek."
+
+### Commands
+- `talk <message>` - Can mention NPC by name to start puzzle dialogue
+- `ask <npc> <question>` - Specifically for asking NPCs questions
+
+### Compatibility
+- Puzzle dialogue behaves exactly like normal NPC dialogue for message sequencing
+- Normal dialogue and puzzle dialogue do not conflict
+- Glowwords (`<word>`) formatting is preserved in all puzzle responses
+- Multi-line puzzle text ordering is preserved
+
 ## Inventory System
 
 ### Database Tables

@@ -77,7 +77,12 @@ async function createNPC(ctx, data) {
         puzzle_clues: npc.lorekeeper.puzzle_clues || null,
         puzzle_solution: npc.lorekeeper.puzzle_solution || null,
         puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
-        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.'
+        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.',
+        puzzle_reward_item: npc.lorekeeper.puzzle_reward_item || null,
+        puzzle_award_once_only: npc.lorekeeper.puzzle_award_once_only || false,
+        puzzle_award_after_delay: npc.lorekeeper.puzzle_award_after_delay || false,
+        puzzle_award_delay_seconds: npc.lorekeeper.puzzle_award_delay_seconds || null,
+        puzzle_award_delay_response: npc.lorekeeper.puzzle_award_delay_response || null
       };
       await db.createLoreKeeper(lkConfig);
     }
@@ -145,7 +150,12 @@ async function updateNPC(ctx, data) {
         puzzle_clues: npc.lorekeeper.puzzle_clues || null,
         puzzle_solution: npc.lorekeeper.puzzle_solution || null,
         puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
-        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.'
+        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.',
+        puzzle_reward_item: npc.lorekeeper.puzzle_reward_item || null,
+        puzzle_award_once_only: npc.lorekeeper.puzzle_award_once_only || false,
+        puzzle_award_after_delay: npc.lorekeeper.puzzle_award_after_delay || false,
+        puzzle_award_delay_seconds: npc.lorekeeper.puzzle_award_delay_seconds || null,
+        puzzle_award_delay_response: npc.lorekeeper.puzzle_award_delay_response || null
       };
       
       if (wasLoreKeeper) {

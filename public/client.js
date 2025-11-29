@@ -621,6 +621,7 @@ const COMMAND_REGISTRY = [
     
     // Communication commands
     { name: 'talk', abbrev: 'say, t', description: 'Talk to players in room (talk <message>)', category: 'Communication' },
+    { name: 'ask', abbrev: null, description: 'Ask NPC a question (ask <npc> <question>)', category: 'Communication' },
     { name: 'resonate', abbrev: 'res, r', description: 'Broadcast message to all players (resonate <message>)', category: 'Communication' },
     { name: 'telepath', abbrev: 'tele, tell, whisper', description: 'Private message to player (telepath <player> <message>)', category: 'Communication' },
 ];
@@ -654,6 +655,27 @@ function displayHelp() {
     titleDiv.textContent = '=== Available Commands ===';
     helpDiv.appendChild(titleDiv);
     
+    // Create table
+    const table = document.createElement('table');
+    table.className = 'help-table';
+    
+    // Create table header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const headerCommand = document.createElement('th');
+    headerCommand.textContent = 'Command';
+    headerCommand.className = 'help-table-header';
+    const headerDescription = document.createElement('th');
+    headerDescription.textContent = 'Description';
+    headerDescription.className = 'help-table-header';
+    headerRow.appendChild(headerCommand);
+    headerRow.appendChild(headerDescription);
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Create table body
+    const tbody = document.createElement('tbody');
+    
     // Group commands by category
     const categories = {};
     COMMAND_REGISTRY.forEach(cmd => {
@@ -665,19 +687,39 @@ function displayHelp() {
     
     // Display each category
     for (const [category, commands] of Object.entries(categories)) {
-        const categoryDiv = document.createElement('div');
-        categoryDiv.className = 'help-category';
-        categoryDiv.textContent = `[${category}]`;
-        helpDiv.appendChild(categoryDiv);
+        // Category header row
+        const categoryRow = document.createElement('tr');
+        const categoryCell = document.createElement('td');
+        categoryCell.colSpan = 2;
+        categoryCell.className = 'help-category';
+        categoryCell.textContent = `[${category}]`;
+        categoryRow.appendChild(categoryCell);
+        tbody.appendChild(categoryRow);
         
+        // Commands in this category
         commands.forEach(cmd => {
-            const cmdDiv = document.createElement('div');
-            cmdDiv.className = 'help-command';
+            const cmdRow = document.createElement('tr');
+            cmdRow.className = 'help-command-row';
+            
+            // Command name cell
+            const cmdNameCell = document.createElement('td');
+            cmdNameCell.className = 'help-cmd-name-cell';
             const abbrevStr = cmd.abbrev ? ` (${cmd.abbrev})` : '';
-            cmdDiv.innerHTML = `  <span class="help-cmd-name">${cmd.name}${abbrevStr}</span> - ${cmd.description}`;
-            helpDiv.appendChild(cmdDiv);
+            cmdNameCell.innerHTML = `<span class="help-cmd-name">${cmd.name}${abbrevStr}</span>`;
+            
+            // Description cell
+            const descCell = document.createElement('td');
+            descCell.className = 'help-cmd-desc-cell';
+            descCell.textContent = cmd.description;
+            
+            cmdRow.appendChild(cmdNameCell);
+            cmdRow.appendChild(descCell);
+            tbody.appendChild(cmdRow);
         });
     }
+    
+    table.appendChild(tbody);
+    helpDiv.appendChild(table);
     
     terminalContent.appendChild(helpDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
@@ -1030,13 +1072,22 @@ function displaySystemMessage(message) {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
-// Parse Lore Keeper message text and make <text> glow
+// Parse Lore Keeper message text and make <text> glow (purple), [text] glow (same color), and !text! glow (red)
 function parseLoreKeeperGlow(text, keywordColor) {
     // First escape HTML to prevent XSS
     const escaped = escapeHtml(text);
-    // Then replace <text> with glowing span (using &lt; and &gt; after escaping)
     const glowColor = keywordColor || '#ff00ff';
-    return escaped.replace(/&lt;([^&]+)&gt;/g, `<span class="lorekeeper-glow" style="color: ${glowColor}">$1</span>`);
+    
+    // Replace [text] with glowing span that preserves original color (inherit)
+    let result = escaped.replace(/\[([^\]]+)\]/g, `<span class="lorekeeper-glow-preserve">$1</span>`);
+    
+    // Replace <text> with glowing span that uses keyword color (purple)
+    result = result.replace(/&lt;([^&]+)&gt;/g, `<span class="lorekeeper-glow" style="color: ${glowColor}">$1</span>`);
+    
+    // Replace !text! with glowing span that uses red color
+    result = result.replace(/!([^!]+)!/g, `<span class="lorekeeper-glow" style="color: #ff0000">$1</span>`);
+    
+    return result;
 }
 
 // Display Lore Keeper message (narrative NPC speech)
@@ -1061,8 +1112,121 @@ function displayLoreKeeperMessage(npcName, npcColor, message, messageColor, isSu
     
     messageDiv.innerHTML = `<span class="lorekeeper-name" style="color: ${npcColorStyle}">${escapeHtml(npcName)}</span> says "<span class="lorekeeper-text" style="color: ${msgColorStyle}">${parsedMessage}</span>"`;
     
+    // Add resize handle
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'lorekeeper-resize-handle';
+    messageDiv.appendChild(resizeHandle);
+    
+    // Make resizable
+    makeLoreKeeperResizable(messageDiv, resizeHandle);
+    
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Make a Lore Keeper message box resizable by dragging the corner handle
+function makeLoreKeeperResizable(messageDiv, resizeHandle) {
+    let isResizing = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startHeight = 0;
+    
+    const handleMouseDown = (e) => {
+        // Only handle left mouse button
+        if (e.button !== 0) return;
+        
+        isResizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // Get current dimensions - use offsetWidth/offsetHeight for more reliable values
+        startWidth = messageDiv.offsetWidth;
+        startHeight = messageDiv.offsetHeight;
+        
+        // If dimensions are 0 or invalid, use computed style or defaults
+        if (!startWidth || startWidth < 200) {
+            const computedStyle = window.getComputedStyle(messageDiv);
+            startWidth = parseInt(computedStyle.width, 10) || messageDiv.scrollWidth || 200;
+        }
+        if (!startHeight || startHeight < 50) {
+            const computedStyle = window.getComputedStyle(messageDiv);
+            startHeight = parseInt(computedStyle.height, 10) || messageDiv.scrollHeight || 50;
+        }
+        
+        // Set explicit dimensions if not already set
+        if (!messageDiv.style.width) {
+            messageDiv.style.width = startWidth + 'px';
+        }
+        if (!messageDiv.style.height) {
+            messageDiv.style.height = startHeight + 'px';
+        }
+        
+        // Prevent default behavior and stop propagation
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        // Prevent text selection during resize
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'nwse-resize';
+        
+        // Add active class for visual feedback
+        messageDiv.classList.add('resizing');
+    };
+    
+    const handleMouseMove = (e) => {
+        if (!isResizing) return;
+        
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        const newWidth = startWidth + deltaX;
+        const newHeight = startHeight + deltaY;
+        
+        // Apply minimum size constraints
+        const minWidth = 200;
+        const minHeight = 50;
+        
+        if (newWidth >= minWidth) {
+            messageDiv.style.width = newWidth + 'px';
+        }
+        if (newHeight >= minHeight) {
+            messageDiv.style.height = newHeight + 'px';
+        }
+        
+        e.preventDefault();
+        e.stopPropagation();
+    };
+    
+    const handleMouseUp = (e) => {
+        if (isResizing) {
+            isResizing = false;
+            // Restore text selection
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+            messageDiv.classList.remove('resizing');
+        }
+    };
+    
+    // Attach event listeners with capture phase to ensure they fire
+    resizeHandle.addEventListener('mousedown', handleMouseDown, { capture: true, passive: false });
+    
+    // Use window for mousemove/mouseup to catch events even if mouse leaves element
+    window.addEventListener('mousemove', handleMouseMove, { capture: true, passive: false });
+    window.addEventListener('mouseup', handleMouseUp, { capture: true });
+    window.addEventListener('mouseleave', handleMouseUp, { capture: true });
+    
+    // Clean up on element removal (optional, but good practice)
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(messageDiv)) {
+            window.removeEventListener('mousemove', handleMouseMove, { capture: true });
+            window.removeEventListener('mouseup', handleMouseUp, { capture: true });
+            window.removeEventListener('mouseleave', handleMouseUp, { capture: true });
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 }
 
 // Escape HTML to prevent XSS
@@ -1572,6 +1736,23 @@ function executeCommand(command) {
         }
         
         ws.send(JSON.stringify({ type: 'talk', message }));
+        return;
+    }
+
+    // ASK <npc> <question> - ask NPC a question
+    if (base === 'ask') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const message = parts.slice(1).join(' ');
+        if (!message) {
+            addToTerminal('Ask what? (ask <npc> <question>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'ask', message }));
         return;
     }
 

@@ -73,13 +73,38 @@ function connectWebSocket() {
     };
 }
 
+// Restore persisted NPC selection from localStorage
+function restoreNpcSelection() {
+    const savedMode = localStorage.getItem('npcEditorMode');
+    const savedId = localStorage.getItem('npcEditorSelectedId');
+    
+    if (savedMode === 'create') {
+        // Restore create mode
+        startCreateNpc();
+    } else if (savedMode === 'edit' && savedId) {
+        // Restore selected NPC
+        const npcId = parseInt(savedId, 10);
+        if (!isNaN(npcId)) {
+            const npc = npcList.find(n => n.id === npcId);
+            if (npc) {
+                selectNpcById(npcId);
+                return true; // Successfully restored
+            }
+        }
+    }
+    return false; // Nothing to restore
+}
+
 // Handle messages from server
 function handleMessage(data) {
     switch (data.type) {
         case 'npcList':
             npcList = data.npcs || [];
             renderNpcList();
-            if (selectedNpc) {
+            // Try to restore persisted selection
+            const restored = restoreNpcSelection();
+            if (!restored && selectedNpc) {
+                // If restoration failed but we have a selected NPC, render it
                 renderNpcForm();
             }
             break;
@@ -88,6 +113,9 @@ function handleMessage(data) {
                 npcList.push(data.npc);
                 selectedNpc = data.npc;
                 npcEditorMode = 'edit';
+                // Persist the newly created NPC
+                localStorage.setItem('npcEditorSelectedId', data.npc.id.toString());
+                localStorage.setItem('npcEditorMode', 'edit');
                 renderNpcList();
                 renderNpcForm();
                 loadNpcPlacements(data.npc.id);
@@ -103,6 +131,9 @@ function handleMessage(data) {
                 }
                 selectedNpc = data.npc;
                 npcEditorMode = 'edit';
+                // Persist the updated NPC
+                localStorage.setItem('npcEditorSelectedId', data.npc.id.toString());
+                localStorage.setItem('npcEditorMode', 'edit');
                 renderNpcList();
                 renderNpcForm();
             }
@@ -207,6 +238,11 @@ function renderNpcList() {
         option.textContent = `${npc.name} [${npc.npc_type}]`;
         selector.appendChild(option);
     });
+    
+    // Set selector value if an NPC is selected
+    if (selectedNpc && selectedNpc.id) {
+        selector.value = String(selectedNpc.id);
+    }
 }
 
 function loadNpcPlacements(npcId) {
@@ -537,6 +573,33 @@ function renderNpcForm() {
                             </select>
                         </div>
                     </div>
+                    <!-- Row GC6a: Award Behavior (compact) -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <label style="margin-bottom: 4px;">Award Behavior</label>
+                            <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
+                                    <input type="checkbox" id="npcPuzzleAwardOnceOnly" ${selectedNpc.puzzle_award_once_only ? 'checked' : ''}>
+                                    <span>Once per player</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
+                                    <input type="checkbox" id="npcPuzzleAwardAfterDelay" ${selectedNpc.puzzle_award_after_delay ? 'checked' : ''}>
+                                    <span>After delay</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Row GC6b: Delay Settings (shown when "After delay" is checked) -->
+                    <div class="npc-row" id="npcPuzzleDelaySettings" style="display: ${selectedNpc.puzzle_award_after_delay ? 'flex' : 'none'};">
+                        <div class="npc-field-group npc-field-half">
+                            <label>Delay (sec)</label>
+                            <input type="number" id="npcPuzzleAwardDelaySeconds" min="1" value="${selectedNpc.puzzle_award_delay_seconds || 3600}" placeholder="3600" style="width: 100px;">
+                        </div>
+                        <div class="npc-field-group npc-field-half">
+                            <label>Delay Message</label>
+                            <input type="text" id="npcPuzzleAwardDelayResponse" value="${selectedNpc.puzzle_award_delay_response || ''}" placeholder="Wait before asking again.">
+                        </div>
+                    </div>
                     <!-- Row GC7: Puzzle Hint Responses -->
                     <div class="npc-row">
                         <div class="npc-field-group npc-field-full">
@@ -680,6 +743,33 @@ function renderNpcForm() {
                                 </select>
                             </div>
                         </div>
+                        <!-- Lore Keeper Award Behavior (compact) -->
+                        <div class="npc-row">
+                            <div class="npc-field-group npc-field-full">
+                                <label style="margin-bottom: 4px;">Award Behavior</label>
+                                <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+                                    <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
+                                        <input type="checkbox" id="lkPuzzleAwardOnceOnly" ${selectedNpc.lorekeeper?.puzzle_award_once_only ? 'checked' : ''}>
+                                        <span>Once per player</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
+                                        <input type="checkbox" id="lkPuzzleAwardAfterDelay" ${selectedNpc.lorekeeper?.puzzle_award_after_delay ? 'checked' : ''}>
+                                        <span>After delay</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Lore Keeper Delay Settings (shown when "After delay" is checked) -->
+                        <div class="npc-row" id="lkPuzzleDelaySettings" style="display: ${selectedNpc.lorekeeper?.puzzle_award_after_delay ? 'flex' : 'none'};">
+                            <div class="npc-field-group npc-field-half">
+                                <label>Delay (sec)</label>
+                                <input type="number" id="lkPuzzleAwardDelaySeconds" min="1" value="${selectedNpc.lorekeeper?.puzzle_award_delay_seconds || 3600}" placeholder="3600" style="width: 100px;">
+                            </div>
+                            <div class="npc-field-group npc-field-half">
+                                <label>Delay Message</label>
+                                <input type="text" id="lkPuzzleAwardDelayResponse" value="${selectedNpc.lorekeeper?.puzzle_award_delay_response || ''}" placeholder="Wait before asking again.">
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -750,6 +840,48 @@ function renderNpcForm() {
         puzzleTypeSelect.addEventListener('change', () => {
             const isGlowCodex = puzzleTypeSelect.value === 'glow_codex';
             glowCodexFields.style.display = isGlowCodex ? 'block' : 'none';
+        });
+    }
+
+    // Wire up Award Behavior checkboxes for Glow Codex puzzles (mutually exclusive)
+    const npcPuzzleAwardOnceOnly = document.getElementById('npcPuzzleAwardOnceOnly');
+    const npcPuzzleAwardAfterDelay = document.getElementById('npcPuzzleAwardAfterDelay');
+    const npcPuzzleDelaySettings = document.getElementById('npcPuzzleDelaySettings');
+    if (npcPuzzleAwardOnceOnly && npcPuzzleAwardAfterDelay) {
+        npcPuzzleAwardOnceOnly.addEventListener('change', () => {
+            if (npcPuzzleAwardOnceOnly.checked && npcPuzzleAwardAfterDelay.checked) {
+                npcPuzzleAwardAfterDelay.checked = false;
+                if (npcPuzzleDelaySettings) npcPuzzleDelaySettings.style.display = 'none';
+            }
+        });
+        npcPuzzleAwardAfterDelay.addEventListener('change', () => {
+            if (npcPuzzleAwardAfterDelay.checked && npcPuzzleAwardOnceOnly.checked) {
+                npcPuzzleAwardOnceOnly.checked = false;
+            }
+            if (npcPuzzleDelaySettings) {
+                npcPuzzleDelaySettings.style.display = npcPuzzleAwardAfterDelay.checked ? 'flex' : 'none';
+            }
+        });
+    }
+
+    // Wire up Award Behavior checkboxes for Lore Keeper puzzles (mutually exclusive)
+    const lkPuzzleAwardOnceOnly = document.getElementById('lkPuzzleAwardOnceOnly');
+    const lkPuzzleAwardAfterDelay = document.getElementById('lkPuzzleAwardAfterDelay');
+    const lkPuzzleDelaySettings = document.getElementById('lkPuzzleDelaySettings');
+    if (lkPuzzleAwardOnceOnly && lkPuzzleAwardAfterDelay) {
+        lkPuzzleAwardOnceOnly.addEventListener('change', () => {
+            if (lkPuzzleAwardOnceOnly.checked && lkPuzzleAwardAfterDelay.checked) {
+                lkPuzzleAwardAfterDelay.checked = false;
+                if (lkPuzzleDelaySettings) lkPuzzleDelaySettings.style.display = 'none';
+            }
+        });
+        lkPuzzleAwardAfterDelay.addEventListener('change', () => {
+            if (lkPuzzleAwardAfterDelay.checked && lkPuzzleAwardOnceOnly.checked) {
+                lkPuzzleAwardOnceOnly.checked = false;
+            }
+            if (lkPuzzleDelaySettings) {
+                lkPuzzleDelaySettings.style.display = lkPuzzleAwardAfterDelay.checked ? 'flex' : 'none';
+            }
         });
     }
 
@@ -886,6 +1018,9 @@ function enableTextareaResize() {
 function startCreateNpc() {
     npcEditorMode = 'create';
     selectedNpc = null;
+    // Persist create mode in localStorage
+    localStorage.setItem('npcEditorMode', 'create');
+    localStorage.removeItem('npcEditorSelectedId');
     renderNpcForm();
 }
 
@@ -894,6 +1029,9 @@ function selectNpcById(id) {
     if (!npc) return;
     npcEditorMode = 'edit';
     selectedNpc = { ...npc };
+    // Persist selected NPC ID in localStorage
+    localStorage.setItem('npcEditorSelectedId', id.toString());
+    localStorage.setItem('npcEditorMode', 'edit');
     renderNpcList();
     renderNpcForm();
     loadNpcPlacements(npc.id);
@@ -933,6 +1071,12 @@ function saveNpc() {
     const puzzle_hint_responses = document.getElementById('npcPuzzleHintResponses')?.value.trim() || null;
     const puzzle_followup_responses = document.getElementById('npcPuzzleFollowupResponses')?.value.trim() || null;
     const puzzle_incorrect_attempt_responses = document.getElementById('npcPuzzleIncorrectAttemptResponses')?.value.trim() || null;
+    
+    // Award behavior fields (checkboxes - if neither checked, award every time)
+    const puzzle_award_once_only = document.getElementById('npcPuzzleAwardOnceOnly')?.checked || false;
+    const puzzle_award_after_delay = document.getElementById('npcPuzzleAwardAfterDelay')?.checked || false;
+    const puzzle_award_delay_seconds = puzzle_award_after_delay ? parseInt(document.getElementById('npcPuzzleAwardDelaySeconds')?.value, 10) || 3600 : null;
+    const puzzle_award_delay_response = puzzle_award_after_delay ? (document.getElementById('npcPuzzleAwardDelayResponse')?.value.trim() || null) : null;
 
     const payloadNpc = {
         name,
@@ -956,7 +1100,11 @@ function saveNpc() {
         puzzle_reward_item,
         puzzle_hint_responses,
         puzzle_followup_responses,
-        puzzle_incorrect_attempt_responses
+        puzzle_incorrect_attempt_responses,
+        puzzle_award_once_only,
+        puzzle_award_after_delay,
+        puzzle_award_delay_seconds,
+        puzzle_award_delay_response
     };
 
     // Add Lore Keeper data if this is a lorekeeper type
@@ -980,6 +1128,12 @@ function saveNpc() {
         const lkPuzzleSuccessMessage = document.getElementById('lkPuzzleSuccessMessage')?.value.trim() || null;
         const lkPuzzleFailureMessage = document.getElementById('lkPuzzleFailureMessage')?.value.trim() || 'That is not the answer I seek.';
         const lkPuzzleRewardItem = document.getElementById('lkPuzzleRewardItem')?.value || null;
+        
+        // Lore Keeper award behavior fields (checkboxes - if neither checked, award every time)
+        const lkPuzzleAwardOnceOnly = document.getElementById('lkPuzzleAwardOnceOnly')?.checked || false;
+        const lkPuzzleAwardAfterDelay = document.getElementById('lkPuzzleAwardAfterDelay')?.checked || false;
+        const lkPuzzleAwardDelaySeconds = lkPuzzleAwardAfterDelay ? parseInt(document.getElementById('lkPuzzleAwardDelaySeconds')?.value, 10) || 3600 : null;
+        const lkPuzzleAwardDelayResponse = lkPuzzleAwardAfterDelay ? (document.getElementById('lkPuzzleAwardDelayResponse')?.value.trim() || null) : null;
 
         payloadNpc.lorekeeper = {
             lore_type: lkLoreType,
@@ -995,7 +1149,11 @@ function saveNpc() {
             puzzle_solution: lkPuzzleSolution,
             puzzle_success_message: lkPuzzleSuccessMessage,
             puzzle_failure_message: lkPuzzleFailureMessage,
-            puzzle_reward_item: lkPuzzleRewardItem
+            puzzle_reward_item: lkPuzzleRewardItem,
+            puzzle_award_once_only: lkPuzzleAwardOnceOnly,
+            puzzle_award_after_delay: lkPuzzleAwardAfterDelay,
+            puzzle_award_delay_seconds: lkPuzzleAwardDelaySeconds,
+            puzzle_award_delay_response: lkPuzzleAwardDelayResponse
         };
     }
 
