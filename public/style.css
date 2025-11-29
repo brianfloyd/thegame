@@ -242,6 +242,45 @@ body {
     font-style: italic;
 }
 
+/* Lore Keeper message styling (narrative NPC speech) */
+.lorekeeper-message {
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: rgba(0, 50, 50, 0.4);
+    border-left: 3px solid #00ffff;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.lorekeeper-message .lorekeeper-name {
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.lorekeeper-message .lorekeeper-text {
+    font-style: italic;
+}
+
+.lorekeeper-message.lorekeeper-success {
+    background: rgba(0, 100, 0, 0.4);
+    border-left-color: #00ff00;
+}
+
+.lorekeeper-message.lorekeeper-success .lorekeeper-text {
+    color: #00ff00;
+    text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
+}
+
+.lorekeeper-message.lorekeeper-failure {
+    background: rgba(100, 0, 0, 0.3);
+    border-left-color: #ff6666;
+}
+
+.lorekeeper-message.lorekeeper-failure .lorekeeper-text {
+    color: #ff6666;
+}
+
 /* Communication Widget Styles */
 #widget-communication {
     background: #0a0a0a;
@@ -1884,6 +1923,47 @@ body {
 .npc-editor-form button#saveNpcBtn:hover {
     background: #1a3a1a;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+/* Lore Keeper Section Styles */
+.lorekeeper-section {
+    margin-top: 15px;
+    padding: 15px;
+    border: 2px solid #00ffff;
+    border-radius: 4px;
+    background: rgba(0, 50, 80, 0.3);
+}
+
+.lorekeeper-section .npc-section-title {
+    font-size: 12px;
+    font-weight: bold;
+    color: #00ffff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #00ffff;
+}
+
+.lorekeeper-section .npc-row {
+    margin-bottom: 12px;
+}
+
+.lorekeeper-section label {
+    color: #00ffff;
+}
+
+.lorekeeper-section input,
+.lorekeeper-section select,
+.lorekeeper-section textarea {
+    border-color: #00ffff;
+}
+
+.lorekeeper-section input:focus,
+.lorekeeper-section select:focus,
+.lorekeeper-section textarea:focus {
+    border-color: #00ffff;
+    box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
 }
 
 .npc-placement-section {

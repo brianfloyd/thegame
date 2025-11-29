@@ -26,6 +26,8 @@ const handlerMap = {
   resonate: gameHandlers.resonate,
   talk: gameHandlers.talk,
   telepath: gameHandlers.telepath,
+  solve: gameHandlers.solve,
+  clue: gameHandlers.clue,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

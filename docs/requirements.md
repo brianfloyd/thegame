@@ -486,6 +486,83 @@ The following 10 NPCs have been added to the database:
   - NPC definitions editable globally
   - Actual room placement (`room_npcs`) remains restricted to rooms in the **Moonless Meadow** map
 
+## Lore Keeper System
+
+### Overview
+Lore Keepers are narrative-driven NPCs that deliver timed engagement messages, keyword-triggered dialogue, and puzzle interactions. They participate in room conversations through the existing `talk` command.
+
+### Database Schema
+
+#### `lore_keepers` Table
+| Column | Type | Description |
+|--------|------|-------------|
+| id | SERIAL | Primary key |
+| npc_id | INTEGER | Foreign key to scriptable_npcs (UNIQUE, CASCADE delete) |
+| lore_type | TEXT | Either 'dialogue' or 'puzzle' |
+| engagement_enabled | BOOLEAN | Whether to send initial message on room entry |
+| engagement_delay | INTEGER | Delay in ms before sending initial message (default 3000) |
+| initial_message | TEXT | Message sent when player enters room |
+| initial_message_color | TEXT | Color for initial message (default #00ffff) |
+| keywords_responses | TEXT | JSON object: { "keyword": "response", ... } |
+| keyword_color | TEXT | Color for keywords (default #ff00ff) |
+| incorrect_response | TEXT | Response when no keyword matched |
+| puzzle_mode | TEXT | 'word', 'combination', or 'cipher' |
+| puzzle_clues | TEXT | JSON array of clue strings |
+| puzzle_solution | TEXT | The answer to the puzzle |
+| puzzle_success_message | TEXT | Message on correct solution |
+| puzzle_failure_message | TEXT | Message on incorrect solution |
+
+### Lore Keeper Types
+
+#### Dialogue Type
+- **Engagement**: When player enters room, after configurable delay, sends initial message
+- **Keyword Interaction**: When player uses `talk` command containing a keyword, responds with configured response
+- **Incorrect Response**: If player mentions the NPC by name but no keyword matches, sends incorrect response
+- **Case-Insensitive**: Keyword matching is case-insensitive
+
+#### Puzzle Type
+- **Engagement**: Same as dialogue type - sends initial message on room entry
+- **Clue Command**: `clue <npc>` - Get a hint from the puzzle Lore Keeper
+- **Solve Command**: `solve <npc> <answer>` - Attempt to solve the puzzle
+- **Puzzle Modes**: word (text answer), combination (sequence), cipher (decode)
+- **Success/Failure**: Different messages for correct and incorrect answers
+
+### Commands
+
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `solve <npc> <answer>` | `sol` | Attempt to solve a puzzle Lore Keeper |
+| `clue <npc>` | `cl` | Get a clue from a puzzle Lore Keeper |
+| `talk <message>` | `say`, `t` | Talk in room (triggers Lore Keeper keyword responses) |
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'solve', target: 'npc_name', answer: 'solution' }` - Attempt puzzle solution
+- `{ type: 'clue', target: 'npc_name' }` - Request clue from puzzle NPC
+
+#### Server → Client
+- `{ type: 'loreKeeperMessage', npcName, npcColor, message, messageColor, isSuccess?, isFailure? }` - Lore Keeper speech
+
+### NPC Editor Integration
+- **Type Selection**: `lorekeeper` option in NPC type dropdown
+- **Dynamic Form**: When `lorekeeper` type selected, shows Lore Keeper-specific fields
+- **Lore Keeper Fields**:
+  - Lore Type selector (dialogue/puzzle)
+  - Engagement toggle and delay
+  - Initial message and colors
+  - Dialogue-specific: Keywords/Responses JSON, Incorrect Response
+  - Puzzle-specific: Mode, Clues, Solution, Success/Failure messages
+- **Type Transitions**: Changing NPC type from/to lorekeeper automatically creates/deletes lore_keepers record
+
+### Display Styling
+- Lore Keeper messages appear in terminal with distinctive styling
+- NPC name displayed in configured color
+- Message text in configured message color
+- Success messages have green highlight/border
+- Failure messages have red highlight/border
+- Left border accent for visual distinction
+
 ## Inventory System
 
 ### Database Tables

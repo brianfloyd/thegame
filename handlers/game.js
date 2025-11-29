@@ -2,7 +2,7 @@
  * Game Handlers
  * 
  * WebSocket handlers for core gameplay
- * Handles: authenticateSession, move, look, inventory, take, drop, harvest, factoryWidgetAddItem, resonate, talk, telepath
+ * Handles: authenticateSession, move, look, inventory, take, drop, harvest, factoryWidgetAddItem, resonate, talk, telepath, solve, clue
  */
 
 const WebSocket = require('ws');
@@ -16,6 +16,76 @@ const {
   sendRoomUpdate 
 } = require('../utils/broadcast');
 const { findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
+
+// Track Lore Keeper engagement timers per connectionId
+const loreKeeperEngagementTimers = new Map();
+
+/**
+ * Cancel any pending Lore Keeper engagement for a connection
+ */
+function cancelLoreKeeperEngagement(connectionId) {
+  const timers = loreKeeperEngagementTimers.get(connectionId);
+  if (timers) {
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
+    loreKeeperEngagementTimers.delete(connectionId);
+  }
+}
+
+/**
+ * Trigger Lore Keeper engagement for a player entering a room
+ */
+async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, roomId) {
+  // Cancel any existing engagement timers
+  cancelLoreKeeperEngagement(connectionId);
+  
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || playerData.ws.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  
+  // Get Lore Keepers in the room
+  const loreKeepers = await db.getLoreKeepersInRoom(roomId);
+  if (!loreKeepers || loreKeepers.length === 0) {
+    return;
+  }
+  
+  const timers = [];
+  
+  for (const lk of loreKeepers) {
+    if (!lk.engagementEnabled || !lk.initialMessage) {
+      continue;
+    }
+    
+    // Set up delayed engagement
+    const timer = setTimeout(() => {
+      // Verify player is still in the room and connected
+      const currentPlayerData = connectedPlayers.get(connectionId);
+      if (!currentPlayerData || 
+          currentPlayerData.ws.readyState !== WebSocket.OPEN ||
+          currentPlayerData.roomId !== roomId) {
+        return;
+      }
+      
+      // Send engagement message to the player only
+      currentPlayerData.ws.send(JSON.stringify({
+        type: 'loreKeeperMessage',
+        npcName: lk.name,
+        npcColor: lk.displayColor,
+        message: lk.initialMessage,
+        messageColor: lk.initialMessageColor,
+        keywordColor: lk.keywordColor
+      }));
+    }, lk.engagementDelay);
+    
+    timers.push(timer);
+  }
+  
+  if (timers.length > 0) {
+    loreKeeperEngagementTimers.set(connectionId, timers);
+  }
+}
 
 /**
  * Authenticate a WebSocket session
@@ -106,6 +176,9 @@ async function authenticateSession(ctx, data) {
     type: 'playerJoined',
     playerName: playerName
   }, connectionId);
+
+  // Trigger Lore Keeper engagement for entering this room
+  await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, room.id);
 
   console.log(`Player ${playerName} connected (${connectionId}) in room ${room.name}`);
   return { authenticated: true, connectionId };
@@ -443,6 +516,9 @@ async function move(ctx, data) {
     playerName: playerName,
     direction: enteredFrom
   }, connectionId);
+
+  // Trigger Lore Keeper engagement for entering the new room
+  await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, targetRoom.id);
 
   console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
 }
@@ -959,6 +1035,7 @@ async function resonate(ctx, data) {
 
 /**
  * Handle talk command - broadcast message to players in same room
+ * Also checks for Lore Keeper keyword triggers
  */
 async function talk(ctx, data) {
   const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
@@ -987,6 +1064,49 @@ async function talk(ctx, data) {
     playerName: player.name,
     message: message
   });
+  
+  // Check for Lore Keeper keyword triggers
+  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  const messageLower = message.toLowerCase();
+  
+  for (const lk of loreKeepers) {
+    if (lk.loreType !== 'dialogue' || !lk.keywordsResponses) {
+      continue;
+    }
+    
+    // Check each keyword
+    let foundKeyword = false;
+    for (const [keyword, response] of Object.entries(lk.keywordsResponses)) {
+      if (messageLower.includes(keyword.toLowerCase())) {
+        // Found matching keyword - send response to room
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'loreKeeperMessage',
+          npcName: lk.name,
+          npcColor: lk.displayColor,
+          message: response,
+          messageColor: lk.initialMessageColor
+        });
+        foundKeyword = true;
+        break; // Only respond once per Lore Keeper
+      }
+    }
+    
+    // If player spoke but no keyword matched, send incorrect response
+    // (only if the Lore Keeper was mentioned by name in the message)
+    if (!foundKeyword && lk.incorrectResponse) {
+      const npcNameLower = lk.name.toLowerCase();
+      if (messageLower.includes(npcNameLower) || 
+          npcNameLower.split(' ').some(part => messageLower.includes(part))) {
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'loreKeeperMessage',
+          npcName: lk.name,
+          npcColor: lk.displayColor,
+          message: lk.incorrectResponse,
+          messageColor: lk.initialMessageColor
+        });
+      }
+    }
+  }
 }
 
 /**
@@ -1045,6 +1165,168 @@ async function telepath(ctx, data) {
   }));
 }
 
+/**
+ * Handle solve command - attempt to solve a Lore Keeper puzzle
+ */
+async function solve(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  const target = (data.target || '').trim().toLowerCase();
+  if (!target) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Solve what? (solve <npc> <answer>)' }));
+    return;
+  }
+  
+  const answer = (data.answer || '').trim();
+  if (!answer) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Solve with what answer? (solve <npc> <answer>)' }));
+    return;
+  }
+  
+  // Get Lore Keepers in the room
+  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  
+  // Find puzzle-type Lore Keeper by partial name match
+  const puzzleKeepers = loreKeepers.filter(lk => 
+    lk.loreType === 'puzzle' && 
+    lk.name.toLowerCase().includes(target)
+  );
+  
+  if (puzzleKeepers.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `You don't see "${target}" here to solve.` }));
+    return;
+  }
+  
+  if (puzzleKeepers.length > 1) {
+    const names = puzzleKeepers.map(lk => lk.name).join(', ');
+    ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
+  }
+  
+  const lk = puzzleKeepers[0];
+  
+  // Check if puzzle has a solution configured
+  if (!lk.puzzleSolution) {
+    ws.send(JSON.stringify({ type: 'message', message: `${lk.name} has no puzzle to solve.` }));
+    return;
+  }
+  
+  // Compare answer (case-insensitive)
+  const isCorrect = answer.toLowerCase() === lk.puzzleSolution.toLowerCase();
+  
+  if (isCorrect) {
+    // Success - broadcast to room
+    const successMessage = lk.puzzleSuccessMessage || 'Correct! The puzzle is solved.';
+    broadcastToRoom(connectedPlayers, currentRoom.id, {
+      type: 'loreKeeperMessage',
+      npcName: lk.name,
+      npcColor: lk.displayColor,
+      message: successMessage,
+      messageColor: '#00ff00', // Green for success
+      isSuccess: true
+    });
+    
+    // Future: Could update puzzle_solved state, trigger events, grant items, etc.
+  } else {
+    // Failure - send only to the player
+    const failureMessage = lk.puzzleFailureMessage || 'That is not the answer I seek.';
+    ws.send(JSON.stringify({
+      type: 'loreKeeperMessage',
+      npcName: lk.name,
+      npcColor: lk.displayColor,
+      message: failureMessage,
+      messageColor: '#ff6666', // Red for failure
+      isFailure: true
+    }));
+  }
+}
+
+/**
+ * Handle clue command - get a clue from a Lore Keeper puzzle
+ */
+async function clue(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  const target = (data.target || '').trim().toLowerCase();
+  if (!target) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Get clue from whom? (clue <npc>)' }));
+    return;
+  }
+  
+  // Get Lore Keepers in the room
+  const loreKeepers = await db.getLoreKeepersInRoom(currentRoom.id);
+  
+  // Find puzzle-type Lore Keeper by partial name match
+  const puzzleKeepers = loreKeepers.filter(lk => 
+    lk.loreType === 'puzzle' && 
+    lk.name.toLowerCase().includes(target)
+  );
+  
+  if (puzzleKeepers.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `You don't see "${target}" here.` }));
+    return;
+  }
+  
+  if (puzzleKeepers.length > 1) {
+    const names = puzzleKeepers.map(lk => lk.name).join(', ');
+    ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
+  }
+  
+  const lk = puzzleKeepers[0];
+  
+  // Check if puzzle has clues configured
+  if (!lk.puzzleClues || lk.puzzleClues.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: `${lk.name} offers no clues.` }));
+    return;
+  }
+  
+  // Get clue index from player data or room_npcs state (for now just cycle through)
+  // Simple implementation: cycle through clues based on a hash of player+npc+time
+  const clueIndex = Math.floor(Date.now() / 30000) % lk.puzzleClues.length;
+  const clueText = lk.puzzleClues[clueIndex];
+  
+  // Send clue to player only
+  ws.send(JSON.stringify({
+    type: 'loreKeeperMessage',
+    npcName: lk.name,
+    npcColor: lk.displayColor,
+    message: clueText,
+    messageColor: lk.keywordColor || '#ffff00'
+  }));
+}
+
+/**
+ * Cleanup function to cancel engagement timers when player disconnects
+ */
+function cleanupLoreKeeperEngagement(connectionId) {
+  cancelLoreKeeperEngagement(connectionId);
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -1056,6 +1338,9 @@ module.exports = {
   harvest,
   resonate,
   talk,
-  telepath
+  telepath,
+  solve,
+  clue,
+  cleanupLoreKeeperEngagement
 };
 

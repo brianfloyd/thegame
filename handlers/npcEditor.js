@@ -21,6 +21,14 @@ async function getAllNPCs(ctx, data) {
   }
 
   const npcs = await db.getAllScriptableNPCs();
+  
+  // Attach lorekeeper data for lorekeeper type NPCs
+  for (const npc of npcs) {
+    if (npc.npc_type === 'lorekeeper') {
+      npc.lorekeeper = await db.getLoreKeeperByNpcId(npc.id);
+    }
+  }
+  
   ws.send(JSON.stringify({
     type: 'npcList',
     npcs
@@ -52,7 +60,35 @@ async function createNPC(ctx, data) {
 
   try {
     const id = await db.createScriptableNPC(npc);
+    
+    // If this is a lorekeeper type, create the lore_keepers record
+    if (npc.npc_type === 'lorekeeper' && npc.lorekeeper) {
+      const lkConfig = {
+        npc_id: id,
+        lore_type: npc.lorekeeper.lore_type || 'dialogue',
+        engagement_enabled: npc.lorekeeper.engagement_enabled !== false,
+        engagement_delay: npc.lorekeeper.engagement_delay || 3000,
+        initial_message: npc.lorekeeper.initial_message || null,
+        initial_message_color: npc.lorekeeper.initial_message_color || '#00ffff',
+        keywords_responses: npc.lorekeeper.keywords_responses || null,
+        keyword_color: npc.lorekeeper.keyword_color || '#ff00ff',
+        incorrect_response: npc.lorekeeper.incorrect_response || 'I do not understand what you mean.',
+        puzzle_mode: npc.lorekeeper.puzzle_mode || null,
+        puzzle_clues: npc.lorekeeper.puzzle_clues || null,
+        puzzle_solution: npc.lorekeeper.puzzle_solution || null,
+        puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
+        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.'
+      };
+      await db.createLoreKeeper(lkConfig);
+    }
+    
     const created = await db.getScriptableNPCById(id);
+    
+    // Attach lorekeeper data if this is a lorekeeper
+    if (created.npc_type === 'lorekeeper') {
+      created.lorekeeper = await db.getLoreKeeperByNpcId(id);
+    }
+    
     ws.send(JSON.stringify({
       type: 'npcCreated',
       npc: created
@@ -86,8 +122,51 @@ async function updateNPC(ctx, data) {
   }
 
   try {
+    // Get the old NPC to check if type changed
+    const oldNpc = await db.getScriptableNPCById(npc.id);
+    const wasLoreKeeper = oldNpc && oldNpc.npc_type === 'lorekeeper';
+    const isLoreKeeper = npc.npc_type === 'lorekeeper';
+    
     await db.updateScriptableNPC(npc);
+    
+    // Handle lore keeper data transitions
+    if (isLoreKeeper && npc.lorekeeper) {
+      const lkConfig = {
+        npc_id: npc.id,
+        lore_type: npc.lorekeeper.lore_type || 'dialogue',
+        engagement_enabled: npc.lorekeeper.engagement_enabled !== false,
+        engagement_delay: npc.lorekeeper.engagement_delay || 3000,
+        initial_message: npc.lorekeeper.initial_message || null,
+        initial_message_color: npc.lorekeeper.initial_message_color || '#00ffff',
+        keywords_responses: npc.lorekeeper.keywords_responses || null,
+        keyword_color: npc.lorekeeper.keyword_color || '#ff00ff',
+        incorrect_response: npc.lorekeeper.incorrect_response || 'I do not understand what you mean.',
+        puzzle_mode: npc.lorekeeper.puzzle_mode || null,
+        puzzle_clues: npc.lorekeeper.puzzle_clues || null,
+        puzzle_solution: npc.lorekeeper.puzzle_solution || null,
+        puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
+        puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.'
+      };
+      
+      if (wasLoreKeeper) {
+        // Update existing lore keeper record
+        await db.updateLoreKeeper(lkConfig);
+      } else {
+        // Create new lore keeper record
+        await db.createLoreKeeper(lkConfig);
+      }
+    } else if (wasLoreKeeper && !isLoreKeeper) {
+      // NPC type changed from lorekeeper to something else - delete lore keeper record
+      await db.deleteLoreKeeperByNpcId(npc.id);
+    }
+    
     const updated = await db.getScriptableNPCById(npc.id);
+    
+    // Attach lorekeeper data if this is a lorekeeper
+    if (updated.npc_type === 'lorekeeper') {
+      updated.lorekeeper = await db.getLoreKeeperByNpcId(npc.id);
+    }
+    
     ws.send(JSON.stringify({
       type: 'npcUpdated',
       npc: updated

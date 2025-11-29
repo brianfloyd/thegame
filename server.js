@@ -35,6 +35,7 @@ const { setupRoutes } = require('./routes/api');
 
 // Handlers
 const { dispatch } = require('./handlers');
+const { cleanupLoreKeeperEngagement } = require('./handlers/game');
 
 // Services
 const { 
@@ -210,8 +211,9 @@ wss.on('connection', (ws, req) => {
         }
       }
       
-      // Clean up factory state
+      // Clean up factory state and Lore Keeper engagement timers
       factoryWidgetState.delete(connId);
+      cleanupLoreKeeperEngagement(connId);
       connectedPlayers.delete(connId);
 
       // Notify others in the room

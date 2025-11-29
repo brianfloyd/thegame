@@ -99,6 +99,9 @@ function handleMessage(data) {
         case 'systemMessage':
             displaySystemMessage(data.message);
             break;
+        case 'loreKeeperMessage':
+            displayLoreKeeperMessage(data.npcName, data.npcColor, data.message, data.messageColor, data.isSuccess, data.isFailure);
+            break;
         case 'moved':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
             // Handle factory widget state
@@ -556,6 +559,10 @@ const COMMAND_REGISTRY = [
     { name: 'collect', abbrev: 'c', description: 'Alias for harvest', category: 'NPC' },
     { name: 'gather', abbrev: 'g', description: 'Alias for harvest', category: 'NPC' },
     
+    // Lore Keeper interaction commands
+    { name: 'solve', abbrev: 'sol', description: 'Attempt puzzle solution (solve <npc> <answer>)', category: 'Lore Keeper' },
+    { name: 'clue', abbrev: 'cl', description: 'Get puzzle clue from NPC (clue <npc>)', category: 'Lore Keeper' },
+    
     // Communication commands
     { name: 'talk', abbrev: 'say, t', description: 'Talk to players in room (talk <message>)', category: 'Communication' },
     { name: 'resonate', abbrev: 'res, r', description: 'Broadcast message to all players (resonate <message>)', category: 'Communication' },
@@ -963,6 +970,31 @@ function displaySystemMessage(message) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'system-message';
     messageDiv.textContent = message;
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Display Lore Keeper message (narrative NPC speech)
+function displayLoreKeeperMessage(npcName, npcColor, message, messageColor, isSuccess, isFailure) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'lorekeeper-message';
+    
+    // Apply success/failure styling
+    if (isSuccess) {
+        messageDiv.classList.add('lorekeeper-success');
+    } else if (isFailure) {
+        messageDiv.classList.add('lorekeeper-failure');
+    }
+    
+    // Build the message HTML
+    const npcColorStyle = npcColor || '#00ffff';
+    const msgColorStyle = messageColor || '#cccccc';
+    
+    messageDiv.innerHTML = `<span class="lorekeeper-name" style="color: ${npcColorStyle}">${escapeHtml(npcName)}</span> says "<span class="lorekeeper-text" style="color: ${msgColorStyle}">${escapeHtml(message)}</span>"`;
+    
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
@@ -1492,6 +1524,46 @@ function executeCommand(command) {
         }
         
         ws.send(JSON.stringify({ type: 'telepath', targetPlayer, message }));
+        return;
+    }
+
+    // SOLVE / SOL <npc> <answer> - attempt puzzle solution
+    if (base === 'solve' || base === 'sol') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        if (parts.length < 3) {
+            addToTerminal('Solve what? (solve <npc> <answer>)', 'error');
+            return;
+        }
+        
+        const target = parts[1];
+        const answer = parts.slice(2).join(' ');
+        if (!answer) {
+            addToTerminal('Solve with what answer? (solve <npc> <answer>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'solve', target, answer }));
+        return;
+    }
+
+    // CLUE / CL <npc> - get puzzle clue
+    if (base === 'clue' || base === 'cl') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const target = parts.slice(1).join(' ');
+        if (!target) {
+            addToTerminal('Get clue from whom? (clue <npc>)', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'clue', target }));
         return;
     }
 
@@ -2269,6 +2341,7 @@ function renderNpcForm() {
                             <option value=\"farm\" ${selectedNpc.npc_type === 'farm' ? 'selected' : ''}>farm</option>
                             <option value=\"patrol\" ${selectedNpc.npc_type === 'patrol' ? 'selected' : ''}>patrol</option>
                             <option value=\"threshold\" ${selectedNpc.npc_type === 'threshold' ? 'selected' : ''}>threshold</option>
+                            <option value=\"lorekeeper\" ${selectedNpc.npc_type === 'lorekeeper' ? 'selected' : ''}>lorekeeper</option>
                         </select>
                     </div>
                     <div class=\"npc-field-group npc-field-quarter\">
@@ -2310,12 +2383,109 @@ function renderNpcForm() {
                     </div>
                 </div>
                 <!-- Row 5: Failure States (full width) -->
-                <div class=\"npc-row\">
+                <div class=\"npc-row\" id=\"npcStandardFields\">
                     <div class=\"npc-field-group npc-field-full\">
                         <label>Failure States<span class=\"npc-json-label\"> (JSON)</span></label>
                         <textarea id=\"npcFailureStates\" class=\"npc-json-textarea\">${selectedNpc.failure_states || ''}</textarea>
                     </div>
                 </div>
+                
+                <!-- Lore Keeper Specific Fields (shown when type = lorekeeper) -->
+                <div id=\"loreKeeperFields\" class=\"lorekeeper-section\" style=\"display: ${selectedNpc.npc_type === 'lorekeeper' ? 'block' : 'none'};\">
+                    <div class=\"npc-section-title\">Lore Keeper Configuration</div>
+                    <!-- Row LK1: Lore Type + Engagement Enabled + Engagement Delay -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-third\">
+                            <label>Lore Type</label>
+                            <select id=\"lkLoreType\">
+                                <option value=\"dialogue\" ${selectedNpc.lorekeeper?.lore_type === 'dialogue' ? 'selected' : ''}>dialogue</option>
+                                <option value=\"puzzle\" ${selectedNpc.lorekeeper?.lore_type === 'puzzle' ? 'selected' : ''}>puzzle</option>
+                            </select>
+                        </div>
+                        <div class=\"npc-field-group npc-field-third\">
+                            <label>Engagement</label>
+                            <select id=\"lkEngagementEnabled\">
+                                <option value=\"1\" ${selectedNpc.lorekeeper?.engagement_enabled !== false ? 'selected' : ''}>Enabled</option>
+                                <option value=\"0\" ${selectedNpc.lorekeeper?.engagement_enabled === false ? 'selected' : ''}>Disabled</option>
+                            </select>
+                        </div>
+                        <div class=\"npc-field-group npc-field-third\">
+                            <label>Delay (ms)</label>
+                            <input type=\"number\" id=\"lkEngagementDelay\" value=\"${selectedNpc.lorekeeper?.engagement_delay || 3000}\">
+                        </div>
+                    </div>
+                    <!-- Row LK2: Initial Message (full width) -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-full\">
+                            <label>Initial Message</label>
+                            <textarea id=\"lkInitialMessage\" class=\"npc-textarea\">${selectedNpc.lorekeeper?.initial_message || ''}</textarea>
+                        </div>
+                    </div>
+                    <!-- Row LK3: Initial Message Color + Keyword Color -->
+                    <div class=\"npc-row\">
+                        <div class=\"npc-field-group npc-field-half\">
+                            <label>Initial Msg Color</label>
+                            <input type=\"text\" id=\"lkInitialMessageColor\" value=\"${selectedNpc.lorekeeper?.initial_message_color || '#00ffff'}\" placeholder=\"#00ffff\">
+                        </div>
+                        <div class=\"npc-field-group npc-field-half\">
+                            <label>Keyword Color</label>
+                            <input type=\"text\" id=\"lkKeywordColor\" value=\"${selectedNpc.lorekeeper?.keyword_color || '#ff00ff'}\" placeholder=\"#ff00ff\">
+                        </div>
+                    </div>
+                    
+                    <!-- Dialogue-specific fields -->
+                    <div id=\"lkDialogueFields\" style=\"display: ${(selectedNpc.lorekeeper?.lore_type || 'dialogue') === 'dialogue' ? 'block' : 'none'};\">
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-full\">
+                                <label>Keywords/Responses<span class=\"npc-json-label\"> (JSON: {\"keyword\": \"response\", ...})</span></label>
+                                <textarea id=\"lkKeywordsResponses\" class=\"npc-json-textarea\">${selectedNpc.lorekeeper?.keywords_responses || ''}</textarea>
+                            </div>
+                        </div>
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-full\">
+                                <label>Incorrect Response</label>
+                                <input type=\"text\" id=\"lkIncorrectResponse\" value=\"${selectedNpc.lorekeeper?.incorrect_response || 'I do not understand what you mean.'}\">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Puzzle-specific fields -->
+                    <div id=\"lkPuzzleFields\" style=\"display: ${selectedNpc.lorekeeper?.lore_type === 'puzzle' ? 'block' : 'none'};\">
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-half\">
+                                <label>Puzzle Mode</label>
+                                <select id=\"lkPuzzleMode\">
+                                    <option value=\"word\" ${selectedNpc.lorekeeper?.puzzle_mode === 'word' ? 'selected' : ''}>word</option>
+                                    <option value=\"combination\" ${selectedNpc.lorekeeper?.puzzle_mode === 'combination' ? 'selected' : ''}>combination</option>
+                                    <option value=\"cipher\" ${selectedNpc.lorekeeper?.puzzle_mode === 'cipher' ? 'selected' : ''}>cipher</option>
+                                </select>
+                            </div>
+                            <div class=\"npc-field-group npc-field-half\">
+                                <label>Solution</label>
+                                <input type=\"text\" id=\"lkPuzzleSolution\" value=\"${selectedNpc.lorekeeper?.puzzle_solution || ''}\">
+                            </div>
+                        </div>
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-full\">
+                                <label>Clues<span class=\"npc-json-label\"> (JSON array: [\"clue1\", \"clue2\", ...])</span></label>
+                                <textarea id=\"lkPuzzleClues\" class=\"npc-json-textarea\">${selectedNpc.lorekeeper?.puzzle_clues || ''}</textarea>
+                            </div>
+                        </div>
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-full\">
+                                <label>Success Message</label>
+                                <textarea id=\"lkPuzzleSuccessMessage\" class=\"npc-textarea\">${selectedNpc.lorekeeper?.puzzle_success_message || ''}</textarea>
+                            </div>
+                        </div>
+                        <div class=\"npc-row\">
+                            <div class=\"npc-field-group npc-field-full\">
+                                <label>Failure Message</label>
+                                <input type=\"text\" id=\"lkPuzzleFailureMessage\" value=\"${selectedNpc.lorekeeper?.puzzle_failure_message || 'That is not the answer I seek.'}\">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Save Button -->
                 <div class=\"npc-row npc-save-row\">
                     <button id=\"saveNpcBtn\">Save NPC</button>
@@ -2339,6 +2509,31 @@ function renderNpcForm() {
     if (saveBtn) {
         saveBtn.addEventListener('click', () => {
             saveNpc();
+        });
+    }
+
+    // Wire up NPC type change to show/hide Lore Keeper fields
+    const npcTypeSelect = document.getElementById('npcType');
+    const loreKeeperFields = document.getElementById('loreKeeperFields');
+    const standardFields = document.getElementById('npcStandardFields');
+    if (npcTypeSelect && loreKeeperFields) {
+        npcTypeSelect.addEventListener('change', () => {
+            const isLoreKeeper = npcTypeSelect.value === 'lorekeeper';
+            loreKeeperFields.style.display = isLoreKeeper ? 'block' : 'none';
+            // Optionally hide standard NPC fields for Lore Keepers
+            // if (standardFields) standardFields.style.display = isLoreKeeper ? 'none' : 'block';
+        });
+    }
+
+    // Wire up Lore Type change to show/hide dialogue vs puzzle fields
+    const lkLoreTypeSelect = document.getElementById('lkLoreType');
+    const lkDialogueFields = document.getElementById('lkDialogueFields');
+    const lkPuzzleFields = document.getElementById('lkPuzzleFields');
+    if (lkLoreTypeSelect && lkDialogueFields && lkPuzzleFields) {
+        lkLoreTypeSelect.addEventListener('change', () => {
+            const isDialogue = lkLoreTypeSelect.value === 'dialogue';
+            lkDialogueFields.style.display = isDialogue ? 'block' : 'none';
+            lkPuzzleFields.style.display = isDialogue ? 'none' : 'block';
         });
     }
 
@@ -2435,6 +2630,39 @@ function saveNpc() {
         display_color,
         active
     };
+
+    // Add Lore Keeper data if this is a lorekeeper type
+    if (npc_type === 'lorekeeper') {
+        const lkLoreType = document.getElementById('lkLoreType')?.value || 'dialogue';
+        const lkEngagementEnabled = document.getElementById('lkEngagementEnabled')?.value === '1';
+        const lkEngagementDelay = parseInt(document.getElementById('lkEngagementDelay')?.value, 10) || 3000;
+        const lkInitialMessage = document.getElementById('lkInitialMessage')?.value.trim() || null;
+        const lkInitialMessageColor = document.getElementById('lkInitialMessageColor')?.value.trim() || '#00ffff';
+        const lkKeywordColor = document.getElementById('lkKeywordColor')?.value.trim() || '#ff00ff';
+        const lkKeywordsResponses = document.getElementById('lkKeywordsResponses')?.value.trim() || null;
+        const lkIncorrectResponse = document.getElementById('lkIncorrectResponse')?.value.trim() || 'I do not understand what you mean.';
+        const lkPuzzleMode = document.getElementById('lkPuzzleMode')?.value || 'word';
+        const lkPuzzleClues = document.getElementById('lkPuzzleClues')?.value.trim() || null;
+        const lkPuzzleSolution = document.getElementById('lkPuzzleSolution')?.value.trim() || null;
+        const lkPuzzleSuccessMessage = document.getElementById('lkPuzzleSuccessMessage')?.value.trim() || null;
+        const lkPuzzleFailureMessage = document.getElementById('lkPuzzleFailureMessage')?.value.trim() || 'That is not the answer I seek.';
+
+        payloadNpc.lorekeeper = {
+            lore_type: lkLoreType,
+            engagement_enabled: lkEngagementEnabled,
+            engagement_delay: lkEngagementDelay,
+            initial_message: lkInitialMessage,
+            initial_message_color: lkInitialMessageColor,
+            keyword_color: lkKeywordColor,
+            keywords_responses: lkKeywordsResponses,
+            incorrect_response: lkIncorrectResponse,
+            puzzle_mode: lkPuzzleMode,
+            puzzle_clues: lkPuzzleClues,
+            puzzle_solution: lkPuzzleSolution,
+            puzzle_success_message: lkPuzzleSuccessMessage,
+            puzzle_failure_message: lkPuzzleFailureMessage
+        };
+    }
 
     if (npcEditorMode === 'edit' && selectedNpc && selectedNpc.id) {
         payloadNpc.id = selectedNpc.id;

@@ -532,6 +532,139 @@ async function updateNPCState(roomNpcId, state, lastCycleRun) {
   await query('UPDATE room_npcs SET state = $1, last_cycle_run = $2 WHERE id = $3', [stateJson, lastCycleRun, roomNpcId]);
 }
 
+// ============================================================================
+// Lore Keeper Functions
+// ============================================================================
+
+/**
+ * Get Lore Keeper config by NPC ID
+ */
+async function getLoreKeeperByNpcId(npcId) {
+  return getOne('SELECT * FROM lore_keepers WHERE npc_id = $1', [npcId]);
+}
+
+/**
+ * Get all Lore Keepers in a room (with NPC data)
+ */
+async function getLoreKeepersInRoom(roomId) {
+  const rows = await getAll(
+    `SELECT lk.*, sn.name, sn.description, sn.display_color
+     FROM lore_keepers lk
+     JOIN scriptable_npcs sn ON lk.npc_id = sn.id
+     JOIN room_npcs rn ON rn.npc_id = sn.id
+     WHERE rn.room_id = $1 AND rn.active = TRUE AND sn.active = TRUE`,
+    [roomId]
+  );
+  
+  return rows.map(row => ({
+    id: row.id,
+    npcId: row.npc_id,
+    name: row.name,
+    description: row.description,
+    displayColor: row.display_color || '#00ffff',
+    loreType: row.lore_type,
+    engagementEnabled: row.engagement_enabled,
+    engagementDelay: row.engagement_delay,
+    initialMessage: row.initial_message,
+    initialMessageColor: row.initial_message_color,
+    keywordsResponses: row.keywords_responses ? JSON.parse(row.keywords_responses) : {},
+    keywordColor: row.keyword_color,
+    incorrectResponse: row.incorrect_response,
+    puzzleMode: row.puzzle_mode,
+    puzzleClues: row.puzzle_clues ? JSON.parse(row.puzzle_clues) : [],
+    puzzleSolution: row.puzzle_solution,
+    puzzleSuccessMessage: row.puzzle_success_message,
+    puzzleFailureMessage: row.puzzle_failure_message
+  }));
+}
+
+/**
+ * Create a new Lore Keeper config
+ */
+async function createLoreKeeper(config) {
+  const {
+    npc_id,
+    lore_type,
+    engagement_enabled = true,
+    engagement_delay = 3000,
+    initial_message = null,
+    initial_message_color = '#00ffff',
+    keywords_responses = null,
+    keyword_color = '#ff00ff',
+    incorrect_response = 'I do not understand what you mean.',
+    puzzle_mode = null,
+    puzzle_clues = null,
+    puzzle_solution = null,
+    puzzle_success_message = null,
+    puzzle_failure_message = 'That is not the answer I seek.'
+  } = config;
+
+  const result = await query(
+    `INSERT INTO lore_keepers (
+      npc_id, lore_type, engagement_enabled, engagement_delay,
+      initial_message, initial_message_color,
+      keywords_responses, keyword_color, incorrect_response,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING id`,
+    [
+      npc_id, lore_type, engagement_enabled, engagement_delay,
+      initial_message, initial_message_color,
+      keywords_responses, keyword_color, incorrect_response,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message
+    ]
+  );
+
+  return result.rows[0].id;
+}
+
+/**
+ * Update an existing Lore Keeper config
+ */
+async function updateLoreKeeper(config) {
+  const {
+    npc_id,
+    lore_type,
+    engagement_enabled = true,
+    engagement_delay = 3000,
+    initial_message = null,
+    initial_message_color = '#00ffff',
+    keywords_responses = null,
+    keyword_color = '#ff00ff',
+    incorrect_response = 'I do not understand what you mean.',
+    puzzle_mode = null,
+    puzzle_clues = null,
+    puzzle_solution = null,
+    puzzle_success_message = null,
+    puzzle_failure_message = 'That is not the answer I seek.'
+  } = config;
+
+  await query(
+    `UPDATE lore_keepers SET
+      lore_type = $1, engagement_enabled = $2, engagement_delay = $3,
+      initial_message = $4, initial_message_color = $5,
+      keywords_responses = $6, keyword_color = $7, incorrect_response = $8,
+      puzzle_mode = $9, puzzle_clues = $10, puzzle_solution = $11, 
+      puzzle_success_message = $12, puzzle_failure_message = $13,
+      updated_at = NOW()
+    WHERE npc_id = $14`,
+    [
+      lore_type, engagement_enabled, engagement_delay,
+      initial_message, initial_message_color,
+      keywords_responses, keyword_color, incorrect_response,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message,
+      npc_id
+    ]
+  );
+}
+
+/**
+ * Delete Lore Keeper config by NPC ID
+ */
+async function deleteLoreKeeperByNpcId(npcId) {
+  await query('DELETE FROM lore_keepers WHERE npc_id = $1', [npcId]);
+}
+
 // ============================================================
 // Items Functions
 // ============================================================
@@ -809,6 +942,13 @@ module.exports = {
   deleteNpcPlacement,
   getRoomsForNpcPlacement,
   updateNPCState,
+  
+  // Lore Keepers
+  getLoreKeeperByNpcId,
+  getLoreKeepersInRoom,
+  createLoreKeeper,
+  updateLoreKeeper,
+  deleteLoreKeeperByNpcId,
   
   // Items
   getAllItems,
