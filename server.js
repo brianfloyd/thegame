@@ -57,6 +57,9 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Trust proxy (required for Railway and other cloud platforms)
+app.set('trust proxy', 1);
+
 // Parse cookies and JSON bodies
 app.use(cookieParser());
 app.use(express.json());

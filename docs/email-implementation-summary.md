@@ -124,3 +124,4 @@ BASE_URL=http://localhost:3434
 4. Email change functionality
 5. Account deletion with email confirmation
 
+

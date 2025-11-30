@@ -46,7 +46,9 @@ function createSessionMiddleware() {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: 'strict'
+      // Use 'lax' in production to work with Railway's proxy and redirects
+      // 'strict' can block cookies when navigating from login to character selection
+      sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'strict'
     }
   });
 }

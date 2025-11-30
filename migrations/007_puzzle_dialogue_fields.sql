@@ -5,3 +5,4 @@ ADD COLUMN IF NOT EXISTS puzzle_followup_responses TEXT,
 ADD COLUMN IF NOT EXISTS puzzle_incorrect_attempt_responses TEXT;
 
 
+

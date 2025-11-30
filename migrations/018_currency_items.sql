@@ -12,3 +12,4 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Currency conversion rate: 100 Glimmer Shards = 1 Glimmer Crown
 
+

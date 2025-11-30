@@ -8,3 +8,4 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS deed_max_total_items INTEGER DEFAULT 
 ALTER TABLE items ADD COLUMN IF NOT EXISTS deed_automation_enabled BOOLEAN DEFAULT FALSE;
 
 
+

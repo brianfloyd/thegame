@@ -391,6 +391,30 @@ Each handler module exports functions that receive a context object with:
 - Text command system with multiple command variations for user convenience
 - Compass widget always shows all directions (unavailable ones lowlighted) for visual consistency
 - Deployment: Railway with PostgreSQL addon (DATABASE_URL automatically provided)
+  - **Custom Domain**: `thegame.brianfloyd.me` (CNAME: `t18yqfrw.up.railway.app`)
+  - **BASE_URL**: `https://thegame.brianfloyd.me` (used for email links, password resets, etc.)
+  - **Session Cookie Configuration**: 
+    - Production uses `sameSite: 'lax'` (instead of 'strict') to work with Railway's proxy and redirects
+    - Development uses `sameSite: 'strict'` for better security in local environment
+  - **Trust Proxy**: Express `trust proxy` is set to `1` to properly handle Railway's reverse proxy
+  - **Cookie Security**: 
+    - `secure: true` in production (HTTPS only)
+    - `httpOnly: true` (prevents JavaScript access)
+    - `maxAge: 24 hours`
+  - **Database Sync**: Safe dev-to-prod sync system
+    - Syncs game content (maps, rooms, NPCs, items) from dev to production
+    - **Protects user data**: Never syncs accounts, players, inventory, bank balances
+    - Dry-run mode for previewing changes
+    - Transaction-based with rollback on error
+    - See `docs/database-sync-guide.md` for detailed instructions
+    - Test scenario: `npm run test-sync-safety`
+  - **Database Management**: DBeaver setup for manual database access
+    - Automated connections to both dev and prod databases
+    - Clear visual indicators (🔵 DEV / 🔴 PROD)
+    - Auto-connect on startup
+    - Safety features and best practices
+    - See `docs/dbeaver-railway-connection-guide.md` for complete setup
+    - Helper scripts: `scripts/railway-db-proxy.ps1`, `scripts/start-dbeaver-with-proxy.ps1`
 
 ## UI/UX Features
 

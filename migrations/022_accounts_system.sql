@@ -28,3 +28,4 @@ CREATE INDEX IF NOT EXISTS idx_user_characters_player_id ON user_characters(play
 COMMENT ON TABLE accounts IS 'User accounts with email/password authentication. Ready for email verification in future.';
 COMMENT ON TABLE user_characters IS 'Links accounts to player characters. One account can have multiple characters.';
 
+

@@ -11,3 +11,4 @@ ON CONFLICT (name) DO UPDATE SET
     flag_always_first_time = 1,
     current_room_id = (SELECT id FROM rooms WHERE name = 'town square' AND map_id = 1 LIMIT 1);
 
+

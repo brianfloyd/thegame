@@ -29,3 +29,4 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_account_id ON password_rese
 COMMENT ON TABLE email_verification_tokens IS 'Tokens for email verification. Expires after 24 hours.';
 COMMENT ON TABLE password_reset_tokens IS 'Tokens for password reset. Expires after 1 hour.';
 
+

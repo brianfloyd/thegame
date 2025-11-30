@@ -25,3 +25,4 @@ CREATE INDEX IF NOT EXISTS idx_merchant_items_item_id ON merchant_items(item_id)
 -- This is enforced at the application level, but we add a comment for documentation
 COMMENT ON TABLE merchant_items IS 'Items sold in merchant rooms. Only rooms with room_type = ''merchant'' should have entries here.';
 
+

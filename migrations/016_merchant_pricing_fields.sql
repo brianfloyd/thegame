@@ -13,3 +13,4 @@ ALTER TABLE merchant_items ADD COLUMN IF NOT EXISTS sellable BOOLEAN NOT NULL DE
 -- Add config_json field (flexible JSON configuration for future extensions)
 ALTER TABLE merchant_items ADD COLUMN IF NOT EXISTS config_json TEXT DEFAULT '{}';
 
+

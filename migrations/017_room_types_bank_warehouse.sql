@@ -12,3 +12,4 @@ ON CONFLICT (room_type) DO NOTHING;
 -- Note: This migration ensures these room types exist but does NOT remove any existing types
 -- All room types in the database are preserved
 
+

@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS idx_lore_keeper_awards_player_npc ON lore_keeper_item
 CREATE INDEX IF NOT EXISTS idx_lore_keeper_awards_player_item ON lore_keeper_item_awards(player_id, item_name);
 
 
+

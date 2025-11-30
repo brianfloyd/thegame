@@ -8,3 +8,4 @@ UPDATE rooms SET room_type = 'merchant' WHERE room_type = 'shop';
 DELETE FROM room_type_colors WHERE room_type = 'shop';
 
 
+

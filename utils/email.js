@@ -17,12 +17,24 @@ function initializeEmailService() {
   const smtpHost = process.env.SMTP_HOST || 'smtpout.secureserver.net';
   const smtpPort = parseInt(process.env.SMTP_PORT || '587');
   const smtpSecure = process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465';
-  const smtpUser = process.env.SMTP_USER; // brian@brianfloyd.me
+  let smtpUser = process.env.SMTP_USER; // Should be brian@brianfloyd.me
   const smtpPassword = process.env.SMTP_PASSWORD;
   
-  // For GoDaddy, sometimes you need to use just the username (before @) instead of full email
-  // Try both formats - use SMTP_USERNAME if provided, otherwise use SMTP_USER
-  const authUser = process.env.SMTP_USERNAME || smtpUser;
+  // If SMTP_USER doesn't contain @, it's likely just the username
+  // For GoDaddy, we need the full email for "from" but username for auth
+  if (smtpUser && !smtpUser.includes('@')) {
+    // If SMTP_USER is just "brian", construct full email
+    smtpUser = `${smtpUser}@brianfloyd.me`;
+    console.log(`Email service: SMTP_USER was just username, using full email: ${smtpUser}`);
+  }
+  
+  // For GoDaddy, authentication uses just the username (before @)
+  // Use SMTP_USERNAME if provided, otherwise extract from SMTP_USER
+  let authUser = process.env.SMTP_USERNAME;
+  if (!authUser && smtpUser) {
+    // Extract username from email (part before @)
+    authUser = smtpUser.split('@')[0];
+  }
   
   if (!smtpUser || !smtpPassword) {
     console.error('Email service: SMTP_USER and SMTP_PASSWORD must be set in .env file');

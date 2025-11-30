@@ -12,3 +12,4 @@ CREATE INDEX IF NOT EXISTS idx_player_bank_player_id ON player_bank(player_id);
 
 COMMENT ON TABLE player_bank IS 'Stores player currency in bank. Bank storage does not affect encumbrance.';
 
+

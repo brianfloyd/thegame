@@ -11,11 +11,16 @@
     "dev": "nodemon --ext js,json,css,html server.js",
     "dev:stable": "node scripts/restart-stable.js",
     "dev:both": "concurrently \"npm run dev\" \"npm run dev:stable\"",
+    "kill-ports": "powershell -ExecutionPolicy Bypass -File scripts/kill-ports.ps1",
+    "create-dev-db": "node scripts/create-dev-database.js",
     "migrate": "node scripts/migrate.js",
     "migrate-data": "node scripts/migrate-data.js",
     "test-email": "node scripts/test-email.js",
     "test-email-simple": "node scripts/test-email-simple.js",
-    "test-email-auth": "node scripts/test-email-auth.js"
+    "test-email-auth": "node scripts/test-email-auth.js",
+    "sync-dev-to-prod": "node scripts/sync-dev-to-prod.js",
+    "sync-dev-to-prod:dry-run": "node scripts/sync-dev-to-prod.js --dry-run",
+    "test-sync-safety": "node scripts/test-sync-safety.js"
   },
   "keywords": [],
   "author": "",
