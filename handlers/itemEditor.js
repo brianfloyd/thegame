@@ -185,14 +185,34 @@ async function addItemToMerchant(ctx, data) {
     return;
   }
 
-  const { itemId, roomId, unlimited, maxQty, regenHours } = data;
+  const { itemId, roomId } = data;
   if (!itemId || !roomId) {
     ws.send(JSON.stringify({ type: 'error', message: 'Item ID and Room ID required' }));
     return;
   }
 
   try {
-    const merchantItem = await db.addItemToMerchant(itemId, roomId, unlimited !== false, maxQty || null, regenHours || null);
+    // Add with default values - configuration done via Map Editor
+    const defaultConfig = JSON.stringify({
+      unlimited: true,
+      max_qty: null,
+      current_qty: 0,
+      regen_hours: null,
+      buyable: true,
+      sellable: false,
+      price: 0
+    });
+    const merchantItem = await db.addItemToMerchant(
+      itemId, 
+      roomId, 
+      true,  // unlimited
+      null,  // maxQty
+      null,  // regenHours
+      0,     // price
+      true,  // buyable
+      false, // sellable
+      defaultConfig  // config_json
+    );
     ws.send(JSON.stringify({ type: 'merchantItemAdded', merchantItem }));
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to add item to merchant: ' + err.message }));

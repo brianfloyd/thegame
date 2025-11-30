@@ -194,6 +194,18 @@ async function authenticateSession(ctx, data) {
     return { authenticated: false };
   }
 
+  // If player has flag_always_first_time, reset them to town square in Newhaven
+  if (player.flag_always_first_time === 1) {
+    const townSquare = await db.getOne(
+      'SELECT id FROM rooms WHERE name = $1 AND map_id = 1 LIMIT 1',
+      ['town square']
+    );
+    if (townSquare) {
+      await db.updatePlayerRoom(townSquare.id, playerName);
+      player.current_room_id = townSquare.id;
+    }
+  }
+
   // Generate unique connection ID for this WebSocket
   const connectionId = `conn_${ctx.nextConnectionId++}`;
   
@@ -2016,9 +2028,16 @@ async function store(ctx, data) {
     return;
   }
   
-  // Initialize warehouse if first time
+  // Initialize warehouse if first time (or if player is always-first-time)
+  // For always-first-time players, always reinitialize to ensure fresh state
+  const isAlwaysFirstTime = player.flag_always_first_time === 1;
   let capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
-  if (!capacity) {
+  if (!capacity || isAlwaysFirstTime) {
+    // If always-first-time, delete existing warehouse first to ensure fresh start
+    if (isAlwaysFirstTime && capacity) {
+      await db.query('DELETE FROM player_warehouses WHERE player_id = $1 AND warehouse_location_key = $2', [player.id, warehouseLocationKey]);
+      await db.query('DELETE FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2', [player.id, warehouseLocationKey]);
+    }
     capacity = await db.initializePlayerWarehouse(player.id, warehouseLocationKey, accessCheck.deedItem.id);
   }
   
@@ -2158,13 +2177,19 @@ async function withdraw(ctx, data) {
   
   const currentRoom = await db.getRoomById(player.current_room_id);
   if (!currentRoom) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
     return;
   }
   
+  // Route to bank withdraw if in bank room
+  if (currentRoom.room_type === 'bank') {
+    return await withdrawBank(ctx, data);
+  }
+  
+  // Otherwise, handle warehouse withdraw (existing logic)
   // Validate player is in warehouse room
   if (currentRoom.room_type !== 'warehouse') {
-    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse room to withdraw items.' }));
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse or bank room to withdraw.' }));
     return;
   }
   
@@ -2294,6 +2319,591 @@ async function withdraw(ctx, data) {
   await sendPlayerStats(connectedPlayers, db, connectionId);
 }
 
+/**
+ * Handle list command - list items for sale in merchant room
+ */
+async function list(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is merchant type
+  if (currentRoom.room_type !== 'merchant') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a merchant room to list items for sale.' }));
+    return;
+  }
+  
+  // Get merchant items for this room
+  const merchantItems = await db.getMerchantItemsForList(currentRoom.id);
+  
+  if (!merchantItems || merchantItems.length === 0) {
+    ws.send(JSON.stringify({ type: 'message', message: 'This merchant has nothing for sale.' }));
+    return;
+  }
+  
+  // Format and send the merchant inventory list
+  ws.send(JSON.stringify({ 
+    type: 'merchantList', 
+    items: merchantItems.map(item => ({
+      name: item.item_name,
+      quantity: item.unlimited ? '∞' : `${item.current_qty}${item.max_qty ? '/' + item.max_qty : ''}`,
+      price: item.price,
+      inStock: item.unlimited || item.current_qty > 0
+    }))
+  }));
+}
+
+/**
+ * Handle deposit command - deposit currency to bank
+ */
+async function deposit(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is bank type
+  if (currentRoom.room_type !== 'bank') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a bank to deposit currency.' }));
+    return;
+  }
+  
+  const { currencyName, quantity } = data;
+  if (!currencyName || !quantity) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Usage: deposit <quantity> <currency> or deposit all <currency>' }));
+    return;
+  }
+  
+  try {
+    // Find currency item by partial name
+    const allItems = await db.getAllItems();
+    const currencyItems = allItems.filter(i => i.item_type === 'currency');
+    const matchedCurrency = currencyItems.find(item => 
+      item.name.toLowerCase().includes(currencyName.toLowerCase()) ||
+      currencyName.toLowerCase().includes(item.name.toLowerCase())
+    );
+    
+    if (!matchedCurrency) {
+      ws.send(JSON.stringify({ type: 'error', message: `Currency "${currencyName}" not found.` }));
+      return;
+    }
+    
+    // Get player currency
+    const playerCurrency = await db.getPlayerCurrency(player.id);
+    let amountToDeposit = 0;
+    
+    if (quantity === 'all' || quantity === 'a') {
+      if (matchedCurrency.name === 'Glimmer Shard') {
+        amountToDeposit = playerCurrency.shards;
+      } else if (matchedCurrency.name === 'Glimmer Crown') {
+        amountToDeposit = playerCurrency.crowns;
+      }
+    } else {
+      amountToDeposit = parseInt(quantity);
+      if (isNaN(amountToDeposit) || amountToDeposit <= 0) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid quantity.' }));
+        return;
+      }
+    }
+    
+    if (amountToDeposit <= 0) {
+      ws.send(JSON.stringify({ type: 'error', message: `You don't have any ${matchedCurrency.name} to deposit.` }));
+      return;
+    }
+    
+    // Check if player has enough
+    if (matchedCurrency.name === 'Glimmer Shard' && playerCurrency.shards < amountToDeposit) {
+      ws.send(JSON.stringify({ type: 'error', message: `You don't have enough ${matchedCurrency.name}.` }));
+      return;
+    }
+    if (matchedCurrency.name === 'Glimmer Crown' && playerCurrency.crowns < amountToDeposit) {
+      ws.send(JSON.stringify({ type: 'error', message: `You don't have enough ${matchedCurrency.name}.` }));
+      return;
+    }
+    
+    // Remove from inventory and deposit to bank
+    await db.removePlayerItem(player.id, matchedCurrency.name, amountToDeposit);
+    const optimal = await db.depositCurrency(player.id, matchedCurrency.name, amountToDeposit);
+    
+    let message = `Deposited `;
+    if (matchedCurrency.name === 'Glimmer Crown') {
+      message += `${amountToDeposit} Glimmer Crown${amountToDeposit !== 1 ? 's' : ''}`;
+    } else {
+      const converted = db.convertCurrencyToOptimal(amountToDeposit);
+      if (converted.crowns > 0) {
+        message += `${converted.crowns} Glimmer Crown${converted.crowns !== 1 ? 's' : ''}`;
+        if (converted.shards > 0) {
+          message += `, ${converted.shards} Glimmer Shard${converted.shards !== 1 ? 's' : ''}`;
+        }
+      } else {
+        message += `${converted.shards} Glimmer Shard${converted.shards !== 1 ? 's' : ''}`;
+      }
+    }
+    message += `. Bank balance: `;
+    const balance = await db.getPlayerBankBalance(player.id);
+    if (balance.crowns > 0) {
+      message += `${balance.crowns} Glimmer Crown${balance.crowns !== 1 ? 's' : ''}`;
+      if (balance.shards > 0) {
+        message += `, ${balance.shards} Glimmer Shard${balance.shards !== 1 ? 's' : ''}`;
+      }
+    } else {
+      message += `${balance.shards} Glimmer Shard${balance.shards !== 1 ? 's' : ''}`;
+    }
+    
+    ws.send(JSON.stringify({ type: 'message', message }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
+/**
+ * Handle withdraw command - withdraw currency from bank (called from main withdraw function)
+ */
+async function withdrawBank(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is bank type
+  if (currentRoom.room_type !== 'bank') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a bank to withdraw currency.' }));
+    return;
+  }
+  
+  // For bank withdrawals, client sends itemName (which is actually currencyName)
+  const currencyName = data.currencyName || data.itemName;
+  const quantity = data.quantity;
+  
+  if (!currencyName || !quantity) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Usage: withdraw <quantity> <currency> or withdraw all <currency>' }));
+    return;
+  }
+  
+  try {
+    // Find currency item by partial name
+    const allItems = await db.getAllItems();
+    const currencyItems = allItems.filter(i => i.item_type === 'currency');
+    const matchedCurrency = currencyItems.find(item => 
+      item.name.toLowerCase().includes(currencyName.toLowerCase()) ||
+      currencyName.toLowerCase().includes(item.name.toLowerCase())
+    );
+    
+    if (!matchedCurrency) {
+      ws.send(JSON.stringify({ type: 'error', message: `Currency "${currencyName}" not found.` }));
+      return;
+    }
+    
+    // Get bank balance
+    const bankBalance = await db.getPlayerBankBalance(player.id);
+    let amountToWithdraw = 0;
+    
+    if (quantity === 'all' || quantity === 'a') {
+      if (matchedCurrency.name === 'Glimmer Shard') {
+        amountToWithdraw = bankBalance.shards;
+      } else if (matchedCurrency.name === 'Glimmer Crown') {
+        amountToWithdraw = bankBalance.crowns;
+      }
+    } else {
+      amountToWithdraw = parseInt(quantity);
+      if (isNaN(amountToWithdraw) || amountToWithdraw <= 0) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid quantity.' }));
+        return;
+      }
+    }
+    
+    if (amountToWithdraw <= 0) {
+      ws.send(JSON.stringify({ type: 'error', message: `You don't have any ${matchedCurrency.name} in the bank.` }));
+      return;
+    }
+    
+    // Check if bank has enough
+    if (matchedCurrency.name === 'Glimmer Shard' && bankBalance.shards < amountToWithdraw) {
+      ws.send(JSON.stringify({ type: 'error', message: `Insufficient ${matchedCurrency.name} in bank.` }));
+      return;
+    }
+    if (matchedCurrency.name === 'Glimmer Crown' && bankBalance.crowns < amountToWithdraw) {
+      ws.send(JSON.stringify({ type: 'error', message: `Insufficient ${matchedCurrency.name} in bank.` }));
+      return;
+    }
+    
+    // Withdraw from bank and add to inventory
+    const withdrawn = await db.withdrawCurrency(player.id, matchedCurrency.name, amountToWithdraw);
+    
+    if (withdrawn.crowns > 0) {
+      await db.addPlayerItem(player.id, 'Glimmer Crown', withdrawn.crowns);
+    }
+    if (withdrawn.shards > 0) {
+      await db.addPlayerItem(player.id, 'Glimmer Shard', withdrawn.shards);
+    }
+    
+    let message = `Withdrew `;
+    if (matchedCurrency.name === 'Glimmer Crown') {
+      message += `${amountToWithdraw} Glimmer Crown${amountToWithdraw !== 1 ? 's' : ''}`;
+    } else {
+      if (withdrawn.crowns > 0) {
+        message += `${withdrawn.crowns} Glimmer Crown${withdrawn.crowns !== 1 ? 's' : ''}`;
+        if (withdrawn.shards > 0) {
+          message += `, ${withdrawn.shards} Glimmer Shard${withdrawn.shards !== 1 ? 's' : ''}`;
+        }
+      } else {
+        message += `${withdrawn.shards} Glimmer Shard${withdrawn.shards !== 1 ? 's' : ''}`;
+      }
+    }
+    message += `. Bank balance: `;
+    const newBalance = await db.getPlayerBankBalance(player.id);
+    if (newBalance.crowns > 0) {
+      message += `${newBalance.crowns} Glimmer Crown${newBalance.crowns !== 1 ? 's' : ''}`;
+      if (newBalance.shards > 0) {
+        message += `, ${newBalance.shards} Glimmer Shard${newBalance.shards !== 1 ? 's' : ''}`;
+      }
+    } else {
+      message += `${newBalance.shards} Glimmer Shard${newBalance.shards !== 1 ? 's' : ''}`;
+    }
+    
+    ws.send(JSON.stringify({ type: 'message', message }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
+/**
+ * Handle balance command - show bank balance
+ */
+async function balance(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is bank type
+  if (currentRoom.room_type !== 'bank') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a bank to check your balance.' }));
+    return;
+  }
+  
+  try {
+    const balance = await db.getPlayerBankBalance(player.id);
+    let message = 'Bank Balance: ';
+    if (balance.crowns > 0) {
+      message += `${balance.crowns} Glimmer Crown${balance.crowns !== 1 ? 's' : ''}`;
+      if (balance.shards > 0) {
+        message += `, ${balance.shards} Glimmer Shard${balance.shards !== 1 ? 's' : ''}`;
+      }
+    } else if (balance.shards > 0) {
+      message += `${balance.shards} Glimmer Shard${balance.shards !== 1 ? 's' : ''}`;
+    } else {
+      message += '0 Glimmer Shards';
+    }
+    
+    ws.send(JSON.stringify({ type: 'message', message }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
+/**
+ * Handle wealth command - show total wealth in Glimmer shards
+ */
+async function wealth(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  try {
+    // Get currency from inventory (wallet)
+    const walletCurrency = await db.getPlayerCurrency(player.id);
+    // walletCurrency.totalShards already includes conversion (crowns * 100 + shards)
+    const walletShards = walletCurrency.totalShards;
+    
+    // Get currency from bank
+    const bankBalance = await db.getPlayerBankBalance(player.id);
+    const bankShards = (bankBalance.crowns * 100) + bankBalance.shards;
+    
+    // Calculate total
+    const totalShards = walletShards + bankShards;
+    
+    // Format message with green emphasis on numbers
+    let message = `Total wealth: <span style="color: #00ff00;">${totalShards}</span> glimmer shard${totalShards !== 1 ? 's' : ''}<br>`;
+    message += `Wallet: <span style="color: #00ff00;">${walletShards}</span> glimmer shard${walletShards !== 1 ? 's' : ''}<br>`;
+    message += `Bank: <span style="color: #00ff00;">${bankShards}</span> glimmer shard${bankShards !== 1 ? 's' : ''}`;
+    
+    ws.send(JSON.stringify({ type: 'message', message, html: true }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
+/**
+ * Handle buy command - buy item from merchant
+ */
+async function buy(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is merchant type
+  if (currentRoom.room_type !== 'merchant') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a merchant room to buy items.' }));
+    return;
+  }
+  
+  const { itemName, quantity = 1 } = data;
+  if (!itemName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Usage: buy <item> [quantity]' }));
+    return;
+  }
+  
+  try {
+    // Get merchant items for this room
+    const merchantItems = await db.getMerchantItemsForRoom(currentRoom.id);
+    
+    // Find item by partial name matching
+    const allItems = await db.getAllItems();
+    const matchedItems = allItems.filter(item => 
+      item.name.toLowerCase().includes(itemName.toLowerCase()) ||
+      itemName.toLowerCase().includes(item.name.toLowerCase())
+    );
+    
+    if (matchedItems.length === 0) {
+      ws.send(JSON.stringify({ type: 'error', message: `Item "${itemName}" not found.` }));
+      return;
+    }
+    
+    if (matchedItems.length > 1) {
+      ws.send(JSON.stringify({ type: 'error', message: `Which did you mean: ${matchedItems.map(i => i.name).join(', ')}?` }));
+      return;
+    }
+    
+    const targetItem = matchedItems[0];
+    const merchantItem = merchantItems.find(mi => mi.item_id === targetItem.id);
+    
+    if (!merchantItem) {
+      ws.send(JSON.stringify({ type: 'error', message: `"${targetItem.name}" is not for sale here.` }));
+      return;
+    }
+    
+    // Check if item is buyable
+    if (!merchantItem.buyable) {
+      ws.send(JSON.stringify({ type: 'error', message: `"${targetItem.name}" cannot be purchased.` }));
+      return;
+    }
+    
+    // Check stock
+    if (!merchantItem.unlimited && merchantItem.current_qty < quantity) {
+      ws.send(JSON.stringify({ type: 'error', message: `Insufficient stock. Only ${merchantItem.current_qty} available.` }));
+      return;
+    }
+    
+    // Check price
+    const totalPrice = merchantItem.price * quantity;
+    if (totalPrice <= 0) {
+      ws.send(JSON.stringify({ type: 'error', message: 'This item is not priced.' }));
+      return;
+    }
+    
+    // Check player has enough currency
+    const playerCurrency = await db.getPlayerCurrency(player.id);
+    if (playerCurrency.totalShards < totalPrice) {
+      ws.send(JSON.stringify({ type: 'error', message: `Insufficient currency. You need ${totalPrice} shards worth (${db.convertCurrencyToOptimal(totalPrice).crowns} crowns, ${db.convertCurrencyToOptimal(totalPrice).shards} shards).` }));
+      return;
+    }
+    
+    // Remove currency from player (with auto-conversion)
+    await db.removePlayerCurrency(player.id, totalPrice);
+    
+    // Add item to player inventory
+    await db.addPlayerItem(player.id, targetItem.name, quantity);
+    
+    // Update merchant inventory (if not unlimited)
+    if (!merchantItem.unlimited) {
+      await db.query(
+        'UPDATE merchant_items SET current_qty = current_qty - $1 WHERE id = $2',
+        [quantity, merchantItem.id]
+      );
+    }
+    
+    const optimal = db.convertCurrencyToOptimal(totalPrice);
+    let priceMsg = '';
+    if (optimal.crowns > 0) {
+      priceMsg += `${optimal.crowns} Glimmer Crown${optimal.crowns !== 1 ? 's' : ''}`;
+      if (optimal.shards > 0) {
+        priceMsg += `, ${optimal.shards} Glimmer Shard${optimal.shards !== 1 ? 's' : ''}`;
+      }
+    } else {
+      priceMsg += `${optimal.shards} Glimmer Shard${optimal.shards !== 1 ? 's' : ''}`;
+    }
+    
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: `Purchased ${quantity} ${targetItem.name}${quantity !== 1 ? '(s)' : ''} for ${priceMsg}.` 
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
+/**
+ * Handle sell command - sell item to merchant
+ */
+async function sell(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Check if room is merchant type
+  if (currentRoom.room_type !== 'merchant') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a merchant room to sell items.' }));
+    return;
+  }
+  
+  const { itemName, quantity = 1 } = data;
+  if (!itemName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Usage: sell <item> [quantity]' }));
+    return;
+  }
+  
+  try {
+    // Get player inventory
+    const playerItems = await db.getPlayerItems(player.id);
+    
+    // Find item by partial name matching
+    const matchedItems = playerItems.filter(item => 
+      item.item_name.toLowerCase().includes(itemName.toLowerCase()) ||
+      itemName.toLowerCase().includes(item.item_name.toLowerCase())
+    );
+    
+    if (matchedItems.length === 0) {
+      ws.send(JSON.stringify({ type: 'error', message: `You don't have "${itemName}".` }));
+      return;
+    }
+    
+    if (matchedItems.length > 1) {
+      ws.send(JSON.stringify({ type: 'error', message: `Which did you mean: ${matchedItems.map(i => i.item_name).join(', ')}?` }));
+      return;
+    }
+    
+    const targetItem = matchedItems[0];
+    
+    // Check if player has enough
+    if (targetItem.quantity < quantity) {
+      ws.send(JSON.stringify({ type: 'error', message: `You only have ${targetItem.quantity} ${targetItem.item_name}.` }));
+      return;
+    }
+    
+    // Get merchant items for this room
+    const merchantItems = await db.getMerchantItemsForRoom(currentRoom.id);
+    const itemDef = await db.getItemByName(targetItem.item_name);
+    const merchantItem = merchantItems.find(mi => mi.item_id === itemDef.id);
+    
+    // Check if merchant buys this item
+    if (!merchantItem || !merchantItem.sellable) {
+      ws.send(JSON.stringify({ type: 'error', message: `This merchant does not buy "${targetItem.item_name}".` }));
+      return;
+    }
+    
+    // Calculate payment (use merchant's price)
+    const totalPayment = merchantItem.price * quantity;
+    if (totalPayment <= 0) {
+      ws.send(JSON.stringify({ type: 'error', message: 'This merchant does not pay for this item.' }));
+      return;
+    }
+    
+    // Remove item from player inventory
+    await db.removePlayerItem(player.id, targetItem.item_name, quantity);
+    
+    // Add currency to player (with auto-conversion)
+    await db.addPlayerCurrency(player.id, totalPayment);
+    
+    // Update merchant inventory (if not unlimited)
+    if (!merchantItem.unlimited) {
+      await db.query(
+        'UPDATE merchant_items SET current_qty = current_qty + $1 WHERE id = $2',
+        [quantity, merchantItem.id]
+      );
+    }
+    
+    const optimal = db.convertCurrencyToOptimal(totalPayment);
+    let paymentMsg = '';
+    if (optimal.crowns > 0) {
+      paymentMsg += `${optimal.crowns} Glimmer Crown${optimal.crowns !== 1 ? 's' : ''}`;
+      if (optimal.shards > 0) {
+        paymentMsg += `, ${optimal.shards} Glimmer Shard${optimal.shards !== 1 ? 's' : ''}`;
+      }
+    } else {
+      paymentMsg += `${optimal.shards} Glimmer Shard${optimal.shards !== 1 ? 's' : ''}`;
+    }
+    
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: `Sold ${quantity} ${targetItem.item_name}${quantity !== 1 ? '(s)' : ''} for ${paymentMsg}.` 
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+  }
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -2314,6 +2924,12 @@ module.exports = {
   cleanupLoreKeeperEngagement,
   warehouse,
   store,
-  withdraw
+  withdraw,
+  list,
+  deposit,
+  balance,
+  buy,
+  sell,
+  wealth
 };
 

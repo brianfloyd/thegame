@@ -22,7 +22,11 @@ function setupRoutes(app, options) {
     validateSession, 
     optionalSession, 
     checkGodMode,
-    characterSelectionHandler 
+    characterSelectionHandler,
+    loginHandler,
+    registerHandler,
+    logoutHandler,
+    getAccountInfoHandler
   } = options;
   
   // Health check endpoint for Railway/cloud deployments
@@ -30,22 +34,28 @@ function setupRoutes(app, options) {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
   });
   
-  // Character selection endpoint
+  // Authentication endpoints
+  app.post('/api/login', loginHandler);
+  app.post('/api/register', registerHandler);
+  app.post('/api/logout', logoutHandler);
+  app.get('/api/account', optionalSession, getAccountInfoHandler);
+  
+  // Character selection endpoint (requires account session)
   app.post('/api/select-character', characterSelectionHandler);
   
-  // Root route - landing page (character selection)
+  // Root route - landing page (login/character selection)
   app.get('/', optionalSession, (req, res) => {
-    // If already has valid session, redirect to game
+    // If already has valid player session, redirect to game
     if (req.player) {
       return res.redirect('/game');
     }
-    // Otherwise show landing page
+    // Otherwise show landing page (login or character selection)
     res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
   });
   
-  // Game route - requires valid session
+  // Game route - requires valid player session
   app.get('/game', optionalSession, (req, res) => {
-    // If no valid session, redirect to character selection
+    // If no valid player session, redirect to login
     if (!req.player) {
       return res.redirect('/');
     }

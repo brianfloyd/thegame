@@ -73,13 +73,29 @@ const validateSession = createValidateSession(db);
 const optionalSession = createOptionalSession(db);
 const characterSelectionHandler = createCharacterSelectionHandler(db);
 
+// Create authentication handlers
+const { 
+  createLoginHandler, 
+  createRegisterHandler, 
+  createLogoutHandler,
+  createGetAccountInfoHandler 
+} = require('./middleware/auth');
+const loginHandler = createLoginHandler(db);
+const registerHandler = createRegisterHandler(db);
+const logoutHandler = createLogoutHandler();
+const getAccountInfoHandler = createGetAccountInfoHandler(db);
+
 // Setup routes
 setupRoutes(app, {
   db,
   validateSession,
   optionalSession,
   checkGodMode,
-  characterSelectionHandler
+  characterSelectionHandler,
+  loginHandler,
+  registerHandler,
+  logoutHandler,
+  getAccountInfoHandler
 });
 
 // ============================================================

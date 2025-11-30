@@ -329,7 +329,7 @@ function showItemForm(item = null) {
             <div data-merchant-config class="item-form-group" style="border-top: 2px solid #00ff00; margin-top: 20px; padding-top: 15px; display: ${item ? 'block' : 'none'};">
                 <h4 style="color: #ffff00; margin-bottom: 15px;">Merchant Configuration</h4>
                 <p style="font-size: 0.9em; color: #888; margin-bottom: 15px;">
-                    Configure which merchant rooms sell this item and their inventory settings.
+                    Add this item to merchant rooms here. Configure pricing and inventory settings in the Map Editor.
                 </p>
                 
                 <div class="item-form-group">
@@ -401,51 +401,8 @@ function showItemForm(item = null) {
     setupMerchantItemHandlers();
 }
 
-// Setup event handlers for merchant items
+// Setup event handlers for merchant items (simplified - only remove button)
 function setupMerchantItemHandlers() {
-    // Handle unlimited checkbox changes
-    document.querySelectorAll('.merchant-unlimited').forEach(checkbox => {
-        checkbox.addEventListener('change', (e) => {
-            const merchantItemId = parseInt(e.target.dataset.merchantItemId);
-            const entry = e.target.closest('.merchant-item-entry');
-            const inventoryConfig = entry.querySelector('.merchant-inventory-config');
-            if (e.target.checked) {
-                inventoryConfig.style.display = 'none';
-            } else {
-                inventoryConfig.style.display = 'block';
-            }
-        });
-    });
-    
-    // Handle save merchant item buttons
-    document.querySelectorAll('.save-merchant-item-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const merchantItemId = parseInt(e.target.dataset.merchantItemId);
-            const entry = e.target.closest('.merchant-item-entry');
-            const unlimited = entry.querySelector('.merchant-unlimited').checked;
-            const maxQtyInput = entry.querySelector('.merchant-max-qty');
-            const regenHoursInput = entry.querySelector('.merchant-regen-hours');
-            
-            const maxQty = unlimited ? null : (maxQtyInput.value ? parseInt(maxQtyInput.value) : null);
-            const regenHours = regenHoursInput.value ? parseFloat(regenHoursInput.value) : null;
-            
-            if (!unlimited && !maxQty) {
-                showEditorNotification('Max quantity is required when unlimited is disabled', 'error');
-                return;
-            }
-            
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ 
-                    type: 'updateMerchantItem', 
-                    merchantItemId: merchantItemId,
-                    unlimited: unlimited,
-                    maxQty: maxQty,
-                    regenHours: regenHours
-                }));
-            }
-        });
-    });
-    
     // Handle remove merchant item buttons
     document.querySelectorAll('.remove-merchant-item-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -600,7 +557,7 @@ function generateMerchantRoomOptions(selectedRoomId) {
     }).join('');
 }
 
-// Render merchant items list
+// Render merchant items list (simplified - shows room and remove button only)
 function renderMerchantItemsList() {
     if (!merchantItems || merchantItems.length === 0) {
         return '<p style="color: #888; font-size: 0.9em;">No merchant rooms configured for this item.</p>';
@@ -608,53 +565,17 @@ function renderMerchantItemsList() {
     
     return merchantItems.map(mi => {
         const roomLabel = `${mi.map_name} - ${mi.room_name} (${mi.x}, ${mi.y})`;
-        const unlimitedChecked = mi.unlimited ? 'checked' : '';
-        const maxQtyValue = mi.max_qty || '';
-        const regenHoursValue = mi.regen_hours || '';
-        const currentQtyDisplay = mi.unlimited ? '∞' : `${mi.current_qty}${mi.max_qty ? ` / ${mi.max_qty}` : ''}`;
+        const priceDisplay = mi.price > 0 ? `${mi.price} gold` : 'Not set';
         
         return `
-            <div class="merchant-item-entry" data-merchant-item-id="${mi.id}" style="border: 1px solid #00ff00; padding: 15px; margin-bottom: 15px; background: #001100;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <strong style="color: #ffff00;">${roomLabel}</strong>
+            <div class="merchant-item-entry" data-merchant-item-id="${mi.id}" style="border: 1px solid #00ff00; padding: 10px; margin-bottom: 10px; background: #001100;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong style="color: #ffff00;">${roomLabel}</strong>
+                        <div style="font-size: 0.85em; color: #888; margin-top: 4px;">Price: ${priceDisplay}</div>
+                    </div>
                     <button class="remove-merchant-item-btn editor-btn" data-merchant-item-id="${mi.id}" style="background: #660000; border-color: #ff0000; color: #ff6666; padding: 5px 10px; font-size: 0.85em;">Remove</button>
                 </div>
-                
-                <div class="item-form-group" style="margin-bottom: 10px;">
-                    <label>
-                        <input type="checkbox" class="merchant-unlimited" data-merchant-item-id="${mi.id}" ${unlimitedChecked}>
-                        Unlimited (shop never runs out)
-                    </label>
-                </div>
-                
-                <div class="merchant-inventory-config" style="display: ${mi.unlimited ? 'none' : 'block'};">
-                    <div class="item-form-group" style="margin-bottom: 10px;">
-                        <label>Current Inventory: <strong style="color: #00ff00;">${currentQtyDisplay}</strong></label>
-                    </div>
-                    
-                    <div class="item-form-group" style="margin-bottom: 10px;">
-                        <label for="merchantMaxQty_${mi.id}">Max Quantity</label>
-                        <input type="number" id="merchantMaxQty_${mi.id}" class="item-form-input merchant-max-qty" 
-                               data-merchant-item-id="${mi.id}"
-                               value="${maxQtyValue}" 
-                               min="1" step="1"
-                               placeholder="Maximum quantity the room can carry">
-                    </div>
-                    
-                    <div class="item-form-group" style="margin-bottom: 10px;">
-                        <label for="merchantRegenHours_${mi.id}">Regeneration (hours)</label>
-                        <input type="number" id="merchantRegenHours_${mi.id}" class="item-form-input merchant-regen-hours" 
-                               data-merchant-item-id="${mi.id}"
-                               value="${regenHoursValue}" 
-                               min="0" step="0.1"
-                               placeholder="Hours to regenerate (e.g., 1.5 = 90 minutes)">
-                        <div style="font-size: 0.85em; color: #888; margin-top: 5px;">
-                            Leave empty for no regeneration. Set to hours (e.g., 1.5 = 90 minutes).
-                        </div>
-                    </div>
-                </div>
-                
-                <button class="save-merchant-item-btn editor-btn" data-merchant-item-id="${mi.id}" style="width: 100%; margin-top: 10px;">Save Configuration</button>
             </div>
         `;
     }).join('');

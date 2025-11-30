@@ -1,5 +1,129 @@
 # Node Game Server Implementation Plan
 
+## Authentication System (Email/Password)
+
+### Overview
+The game uses an email/password authentication system with account-based character management. Users register/login with an email address and password, then select from characters associated with their account.
+
+### Database Schema
+
+#### `accounts` Table
+- `id` (SERIAL PRIMARY KEY)
+- `email` (TEXT UNIQUE) - User's email address (lowercase, validated format)
+- `password_hash` (TEXT) - Bcrypt hashed password (10 rounds)
+- `email_verified` (BOOLEAN) - Ready for future email verification (defaults to FALSE)
+- `created_at` (BIGINT) - Timestamp in milliseconds
+- `last_login_at` (BIGINT) - Timestamp of last successful login
+
+#### `user_characters` Table
+- `id` (SERIAL PRIMARY KEY)
+- `account_id` (INTEGER REFERENCES accounts(id)) - Links to account
+- `player_id` (INTEGER REFERENCES players(id)) - Links to player character
+- `created_at` (BIGINT) - Timestamp in milliseconds
+- UNIQUE constraint on (account_id, player_id)
+
+### Authentication Flow
+
+1. **Registration** (`POST /api/register`)
+   - Validates email format (basic regex, no actual email verification yet)
+   - Validates password (min 4 characters, max 100)
+   - Checks for duplicate email
+   - Hashes password with bcrypt (10 rounds)
+   - Creates account with `email_verified = FALSE`
+   - Creates session with `accountId`
+   - Returns account info and empty character list
+
+2. **Login** (`POST /api/login`)
+   - Validates email format
+   - Looks up account by email
+   - Verifies password with bcrypt
+   - Updates `last_login_at`
+   - Creates session with `accountId`
+   - Returns account info and character list
+
+3. **Character Selection** (`POST /api/select-character`)
+   - Requires valid account session
+   - Validates character exists
+   - Verifies character belongs to account (security check)
+   - Creates player session (sets `playerName` and `playerId` in session)
+   - Redirects to `/game`
+
+4. **Logout** (`POST /api/logout`)
+   - Destroys session
+   - Returns to login screen
+
+### Security Features
+
+- **Password Hashing**: Bcrypt with 10 rounds
+- **Rate Limiting**: 
+  - Login: 10 attempts per 5 minutes per IP
+  - Registration: 5 attempts per 10 minutes per IP
+- **Session Management**: Express-session with secure cookies
+- **Character Ownership Validation**: Characters can only be selected if they belong to the account
+- **Email Format Validation**: Basic regex validation (ready for future email verification)
+
+### UI Flow
+
+1. **Landing Page** (`/`)
+   - Shows login/register tabs
+   - If already logged in (has account session), shows character selection
+   - If character already selected, redirects to `/game`
+
+2. **Character Selection**
+   - Displays account email
+   - Shows list of characters owned by account
+   - Character badges: "GOD" for god mode, "NOOB" for always-first-time flag
+   - Logout button
+
+3. **Game** (`/game`)
+   - Requires valid player session
+   - If no player session, redirects to `/`
+
+### Initial Account
+
+- **Email**: brian@brianfloyd.me
+- **Password**: test
+- **Characters**: Fliz, Hebron, noob (linked via migration)
+
+### Future Enhancements
+
+- Email verification system (using `email_verified` flag)
+- Password reset functionality
+- Account management (change email, change password)
+- Character creation UI (currently requires admin/god mode)
+- Multi-account support per email (if needed)
+
+### API Endpoints
+
+- `POST /api/register` - Create new account
+- `POST /api/login` - Login with email/password
+- `POST /api/logout` - Logout and destroy session
+- `GET /api/account` - Get current account info and characters (requires session)
+- `POST /api/select-character` - Select character to play (requires account session)
+
+### Database Functions (`database.js`)
+
+- `createAccount(email, passwordHash)` - Create new account
+- `getAccountByEmail(email)` - Get account by email
+- `getAccountById(accountId)` - Get account by ID
+- `updateLastLogin(accountId)` - Update last login timestamp
+- `getUserCharacters(accountId)` - Get all characters for an account
+- `addCharacterToAccount(accountId, playerId)` - Link character to account
+- `removeCharacterFromAccount(accountId, playerId)` - Unlink character from account
+
+### Session Structure
+
+Session now includes:
+- `accountId` - Account ID (set on login/register)
+- `accountEmail` - Account email
+- `emailVerified` - Email verification status
+- `playerName` - Selected character name (set on character selection)
+- `playerId` - Selected character ID (set on character selection)
+
+---
+
+# Node Game Server Implementation Plan
+
 ## Project Structure
 ```
 thegame/
@@ -718,7 +842,7 @@ Commands are registered in `COMMAND_REGISTRY` array in `client.js`. To add a new
 ## Merchant Items System
 
 ### Overview
-The merchant items system allows items to be sold in merchant rooms with configurable inventory management. Items can be assigned to multiple merchant rooms, and each room can have different inventory settings for the same item.
+The merchant items system allows items to be sold in merchant rooms with configurable inventory management. Items can be assigned to multiple merchant rooms, and each room can have different inventory settings for the same item. Configuration is done via JSON in the Map Editor for maximum flexibility.
 
 ### Database Schema
 
@@ -729,78 +853,148 @@ The merchant items system allows items to be sold in merchant rooms with configu
 | item_id | INTEGER | Foreign key to items(id) |
 | room_id | INTEGER | Foreign key to rooms(id) - must be merchant type |
 | unlimited | BOOLEAN | Whether item is unlimited (default TRUE) |
-| max_qty | INTEGER | Maximum quantity room can carry (nullable, only used if unlimited = FALSE) |
+| max_qty | INTEGER | Maximum quantity room can carry (nullable) |
 | current_qty | INTEGER | Current inventory quantity (default 0) |
-| regen_hours | NUMERIC | Hours to regenerate item once depleted (nullable, e.g., 1.5 = 90 minutes) |
+| regen_hours | NUMERIC | Hours to regenerate item once depleted (nullable) |
 | last_regen_time | BIGINT | Timestamp of last regeneration (nullable) |
+| price | INTEGER | Cost in gold (default 0) |
+| buyable | BOOLEAN | Whether players can buy this item (default TRUE) |
+| sellable | BOOLEAN | Whether merchant buys this item from players (default FALSE) |
+| config_json | TEXT | JSON configuration for flexible settings |
 | created_at | BIGINT | Creation timestamp |
 | UNIQUE(item_id, room_id) | | One item per room constraint |
 
+### Commands
+
+#### Merchant Commands
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `list` | `li`, `ls` | List items for sale (merchant rooms only) |
+| `buy` | `b` | Buy item from merchant (buy <item> [quantity]) |
+| `sell` | `s` | Sell item to merchant (sell <item> [quantity]) |
+
+**List Command Output Format:**
+```
+Merchant Inventory:
+  Item Name          Qty         Price
+  Pulse Resin        ∞          50 gold
+  Harvester Rune     5/10       100 gold
+  Glowroot Dust      0          25 gold (out of stock)
+```
+
 ### Merchant Item Configuration
 
-#### Unlimited Items (Default)
-- **Default Behavior**: Items are unlimited by default - shops never run out of inventory
-- **No Configuration Needed**: Unlimited items require no additional setup
-- **Use Case**: Common items that should always be available
+#### JSON Configuration Structure
+```json
+{
+  "unlimited": true,
+  "max_qty": null,
+  "current_qty": 0,
+  "regen_hours": null,
+  "buyable": true,
+  "sellable": false,
+  "price": 0
+}
+```
 
-#### Limited Inventory Items
-- **Max Quantity**: Rooms can have a maximum quantity they can carry
-- **Current Quantity**: Tracks current inventory that increments/decrements as items are bought/sold
-- **Use Case**: Rare items or items with limited supply
+#### Configuration Fields
+- **unlimited**: true/false - Shop never runs out of this item
+- **max_qty**: number|null - Maximum inventory quantity
+- **current_qty**: number - Current inventory level
+- **regen_hours**: number|null - Hours to regenerate (e.g., 1.5 = 90 minutes)
+- **buyable**: true/false - Can players purchase this item
+- **sellable**: true/false - Does merchant buy this item from players
+- **price**: number - Cost in gold coins
 
-#### Item Regeneration
-- **Regen Hours**: Items can be set to regenerate after being depleted
-- **Format**: Hours as decimal (e.g., 1.5 = 90 minutes, 2.0 = 2 hours)
-- **Behavior**: Once current_qty reaches 0, item regenerates after the specified hours
-- **Use Case**: Items that restock over time
-
-### Item Editor Integration
-
-#### Merchant Configuration Section
-- **Location**: Appears in item editor for all items (not just deeds)
+#### Item Editor Integration (Simplified)
 - **Add to Merchant**: Dropdown to select merchant room and add item
-- **Merchant Items List**: Shows all merchant rooms that sell the item
-- **Per-Room Configuration**: Each merchant room entry can be configured independently:
-  - Unlimited checkbox (default checked)
-  - Max quantity input (shown when unlimited is unchecked)
-  - Regeneration hours input (optional)
-  - Current inventory display
-  - Save/Remove buttons
+- **Merchant Items List**: Shows all merchant rooms that sell the item with room name and price
+- **Remove Button**: Remove item from merchant
+- **Configuration**: Done via Map Editor (JSON configuration)
 
-#### Room Selection
-- **Merchant Rooms Only**: Only rooms with `room_type = 'merchant'` appear in dropdown
-- **Multiple Merchants**: Same item can be added to multiple merchant rooms
-- **Duplicate Prevention**: Rooms already selling the item are filtered from dropdown
+#### Map Editor Integration (Full Configuration)
+- **Layout**: Side panel takes 35% width (flex: 0.35, min 360px), map grid takes 65% (flex: 0.65) for better editing space
+- **Merchant Stock Section**: Appears when merchant room is selected, with blue theme styling
+  - Section header: "🏪 Merchant Stock" with description "Items the merchant sells - use 'list' command in-game to view"
+  - **Table View**: Shows item name, quantity, price, and action buttons
+  - **Add Item**: Dropdown to add new items to merchant stock (populated from all items)
+  - **"Stock" Button**: Adds item to merchant inventory with default JSON configuration
+  - **Edit Button**: Opens JSON configuration editor for each item
+  - **Remove Button**: Remove item from merchant stock
+- **Items on Floor Section**: Yellow theme styling, appears for all room types
+  - Section header: "🗺️ Items on Floor" with description "Physical items lying on the ground that players can pick up"
+  - **"Drop" Button**: Adds item to room floor (physical item players can take)
+- **JSON Configuration Editor**: Always displays all 7 fields in consistent order:
+  - `unlimited`: true/false - Shop never runs out
+  - `max_qty`: number|null - Maximum inventory
+  - `current_qty`: number - Current inventory level
+  - `regen_hours`: number|null - Hours to regenerate
+  - `buyable`: true/false - Can players purchase
+  - `sellable`: true/false - Does merchant buy from players
+  - `price`: number - Cost in gold
 
 ### WebSocket Messages
 
-#### Client → Server
+#### Client → Server (Game)
+- `{ type: 'list' }` - Request merchant inventory list (in merchant room)
+- `{ type: 'buy', itemName: 'item_name', quantity: 1 }` - Buy item from merchant
+- `{ type: 'sell', itemName: 'item_name', quantity: 1 }` - Sell item to merchant
+
+#### Client → Server (Item Editor)
 - `{ type: 'getMerchantRooms' }` - Get all merchant rooms
 - `{ type: 'getMerchantItems', itemId: 123 }` - Get merchant items for specific item
-- `{ type: 'addItemToMerchant', itemId: 123, roomId: 456, unlimited: true, maxQty: null, regenHours: null }` - Add item to merchant room
-- `{ type: 'updateMerchantItem', merchantItemId: 789, unlimited: false, maxQty: 100, regenHours: 1.5 }` - Update merchant item configuration
+- `{ type: 'addItemToMerchant', itemId: 123, roomId: 456 }` - Add item to merchant room
 - `{ type: 'removeItemFromMerchant', merchantItemId: 789 }` - Remove item from merchant room
 
+#### Client → Server (Map Editor)
+- `{ type: 'getMerchantInventory', roomId: 456 }` - Get merchant inventory for room
+- `{ type: 'addItemToMerchantRoom', roomId: 456, itemId: 123 }` - Add item to merchant
+- `{ type: 'updateMerchantItemConfig', merchantItemId: 789, config: {...}, roomId: 456 }` - Update item config via JSON
+- `{ type: 'removeMerchantItem', merchantItemId: 789, roomId: 456 }` - Remove item from merchant
+
 #### Server → Client
+- `{ type: 'merchantList', items: [...] }` - Formatted merchant list for players
 - `{ type: 'merchantRooms', rooms: [...] }` - List of merchant rooms
 - `{ type: 'merchantItems', merchantItems: [...] }` - List of merchant items for item
+- `{ type: 'merchantInventory', roomId, merchantItems: [...] }` - Merchant inventory for room
 - `{ type: 'merchantItemAdded', merchantItem: {...} }` - Item added to merchant
-- `{ type: 'merchantItemUpdated', merchantItem: {...} }` - Merchant item updated
-- `{ type: 'merchantItemRemoved', merchantItemId: 789 }` - Item removed from merchant
+- `{ type: 'merchantItemConfigUpdated', merchantItemId }` - Config updated
 
 ### Database Functions
 - `getMerchantRooms()` - Get all rooms with room_type = 'merchant'
 - `getMerchantItems(itemId)` - Get all merchant room configurations for an item
-- `addItemToMerchant(itemId, roomId, unlimited, maxQty, regenHours)` - Add item to merchant room
-- `updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours)` - Update merchant item configuration
+- `addItemToMerchant(itemId, roomId, unlimited, maxQty, regenHours, price, buyable, sellable, configJson)` - Add item
+- `updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours, price, buyable, sellable, configJson)` - Update item
+- `updateMerchantItemFromConfig(merchantItemId, config)` - Update from parsed JSON config
 - `removeItemFromMerchant(merchantItemId)` - Remove item from merchant room
 - `getMerchantItemsForRoom(roomId)` - Get all items sold in a merchant room
+- `getMerchantItemsForList(roomId)` - Get buyable items for list command
+
+### Buy/Sell Commands
+
+#### Buy Command
+- **Validation**: Must be in merchant room, item must be buyable, must have stock (if not unlimited), must have enough currency
+- **Currency Auto-Conversion**: When player pays, currency is automatically converted to optimal format (crowns + shards remainder)
+- **Inventory Updates**: 
+  - Removes currency from player inventory (with auto-conversion)
+  - Adds item to player inventory
+  - Decrements merchant current_qty (if not unlimited)
+
+#### Sell Command
+- **Validation**: Must be in merchant room, item must be sellable, player must have item, merchant must pay for item
+- **Currency Auto-Conversion**: When merchant pays player, currency is automatically converted to optimal format (crowns + shards remainder)
+- **Inventory Updates**:
+  - Removes item from player inventory
+  - Adds currency to player inventory (with auto-conversion)
+  - Increments merchant current_qty (if not unlimited)
 
 ### Validation Rules
 - Only merchant rooms (`room_type = 'merchant'`) can sell items
 - Each item can only be added once per merchant room (UNIQUE constraint)
-- Max quantity is required when unlimited is disabled
-- Regeneration hours is optional (can be null for no regeneration)
+- List command only shows buyable items
+- Unlimited items show "∞" for quantity
+- Buy command checks: buyable flag, stock availability, player currency
+- Sell command checks: sellable flag, player inventory, merchant price
 
 ### WebSocket Messages
 
@@ -1027,6 +1221,146 @@ Comprehensive new player guide covering:
 - Quick reference card and glossary
 
 **Note**: This tutorial excludes god mode and sysop features - it's designed for regular players only.
+
+## Currency and Bank System
+
+### Overview
+A 2-tier currency system with Glimmer Shards (small) and Glimmer Crowns (large), player bank storage, and bank room type. Currency auto-conversion applies to both banks and merchants.
+
+### Currency Items
+
+#### Glimmer Shard
+- **Type**: currency
+- **Description**: "A faintly glowing fragment of crystallized essence."
+- **Encumbrance**: 0.5
+- **Poofable**: false
+
+#### Glimmer Crown
+- **Type**: currency
+- **Description**: "A radiant coin forged from pure Glimmer essence."
+- **Encumbrance**: 3
+- **Poofable**: false
+
+#### Conversion Rate
+- **100 Glimmer Shards = 1 Glimmer Crown**
+- Auto-conversion always optimizes to crowns + shards remainder
+- Applies to: bank deposits/withdrawals, merchant purchases, merchant sales
+
+### Player Bank Storage
+
+#### Database Table: `player_bank`
+- `id`: SERIAL PRIMARY KEY
+- `player_id`: INTEGER REFERENCES players(id) ON DELETE CASCADE
+- `currency_name`: TEXT NOT NULL (stores "Glimmer Shard" or "Glimmer Crown")
+- `quantity`: INTEGER NOT NULL DEFAULT 0
+- UNIQUE(player_id, currency_name)
+- Bank storage does NOT affect encumbrance
+
+### Bank Commands
+
+| Command | Abbreviation | Description |
+|---------|-------------|-------------|
+| `deposit` | `dep` | Deposit currency to bank (deposit <quantity\|all> <currency>) |
+| `withdraw` | `wd` | Withdraw currency from bank (withdraw <quantity\|all> <currency>) |
+| `balance` | `bal` | Check bank balance (bank rooms only) |
+
+#### Deposit Command
+- **Validation**: Must be in bank room
+- **Auto-Conversion**: Deposited currency is automatically converted to optimal format
+- **"all" keyword**: Deposits all of specified currency type
+- **Partial Name Matching**: Supports "shard", "crown", "glimmer shard", etc.
+
+#### Withdraw Command
+- **Validation**: Must be in bank room
+- **Auto-Conversion**: Withdrawn currency is automatically converted to optimal format
+- **"all" keyword**: Withdraws all of specified currency type
+- **Routing**: Server routes to bank withdraw if in bank room, warehouse withdraw if in warehouse room
+
+#### Balance Command
+- **Validation**: Must be in bank room
+- **Display**: Shows both currencies separately (e.g., "2 Glimmer Crowns, 45 Glimmer Shards")
+
+### Room Types
+
+#### Fixed Room Type Enum
+The following 4 room types are FIXED, PERMANENT, and must always exist:
+- **normal**: Default room type (green #00ff00)
+- **merchant**: Merchant/shop rooms (blue #0088ff)
+- **bank**: Bank rooms (yellow #ffff00)
+- **warehouse**: Warehouse rooms (cyan #00ffff)
+
+#### Room Type Rules
+- All 4 types must exist in `room_type_colors` table
+- Map editor dropdown shows all 4 types
+- No validation should restrict room types to only previously existing values
+- If a room type is missing, it is added automatically
+- If a room type appears extra, it is kept (not removed)
+
+#### Bank Room Type
+- Players must be in bank room (`room_type === 'bank'`) to use deposit, withdraw, balance commands
+- No special visual handling - behaves like normal rooms visually
+- Commands handle all bank functionality
+
+#### Warehouse Room Type
+- **Structural Only**: Warehouse type exists but has no functionality yet
+- No commands, no storage logic, no special handling
+- Just ensures warehouse is a valid selectable room type
+- Future warehouse functionality will be added later
+
+### Database Functions
+
+#### Currency Functions (`database.js`)
+- `convertCurrencyToOptimal(shards)` - Convert shards to crowns + remainder
+- `getPlayerCurrency(playerId)` - Get player's currency from inventory
+- `removePlayerCurrency(playerId, totalShardsNeeded)` - Remove currency with auto-conversion
+- `addPlayerCurrency(playerId, totalShardsToAdd)` - Add currency with auto-conversion
+
+#### Bank Functions (`database.js`)
+- `getPlayerBank(playerId)` - Get all currency in bank
+- `getPlayerBankBalance(playerId)` - Get bank balance in optimal format
+- `depositCurrency(playerId, currencyName, quantity)` - Deposit with auto-conversion
+- `withdrawCurrency(playerId, currencyName, quantity)` - Withdraw with auto-conversion
+
+### WebSocket Messages
+
+#### Client → Server (Bank)
+- `{ type: 'deposit', currencyName: 'Glimmer Shard', quantity: 100 }` - Deposit currency
+- `{ type: 'deposit', currencyName: 'Glimmer Shard', quantity: 'all' }` - Deposit all
+- `{ type: 'withdraw', currencyName: 'Glimmer Crown', quantity: 1 }` - Withdraw currency
+- `{ type: 'withdraw', currencyName: 'Glimmer Shard', quantity: 'all' }` - Withdraw all
+- `{ type: 'balance' }` - Check balance
+
+#### Server → Client (Bank)
+- `{ type: 'message', message: 'Deposited 1 Glimmer Crown, 50 Glimmer Shards. Bank balance: 2 Glimmer Crowns, 45 Glimmer Shards.' }`
+- `{ type: 'message', message: 'Bank Balance: 2 Glimmer Crowns, 45 Glimmer Shards' }`
+
+#### Client → Server (Merchant Buy/Sell)
+- `{ type: 'buy', itemName: 'Pulse Resin', quantity: 1 }` - Buy item
+- `{ type: 'sell', itemName: 'Pulse Resin', quantity: 1 }` - Sell item
+
+#### Server → Client (Merchant Buy/Sell)
+- `{ type: 'message', message: 'Purchased 1 Pulse Resin for 1 Glimmer Crown, 50 Glimmer Shards.' }`
+- `{ type: 'message', message: 'Sold 1 Pulse Resin for 25 Glimmer Shards.' }`
+
+### Currency Auto-Conversion Rules
+
+#### When Player Pays (Buy from Merchant)
+1. Calculate total price in shards
+2. Check player has enough total shards (crowns * 100 + shards)
+3. Remove currency from player inventory
+4. Convert remaining currency to optimal format (crowns + shards remainder)
+5. Add back remaining currency in optimal format
+
+#### When Player Receives (Sell to Merchant, Bank Withdraw)
+1. Calculate payment in shards
+2. Add to player currency total
+3. Convert to optimal format (crowns + shards remainder)
+4. Store in player inventory in optimal format
+
+#### Bank Deposits/Withdrawals
+- Always convert to/from optimal format
+- Depositing 150 shards becomes 1 crown + 50 shards in bank
+- Withdrawing 1 crown from bank gives 1 crown (or 100 shards if requested)
 
 ## Future Enhancements (Prepared)
 

@@ -30,6 +30,7 @@ let dragEndY = 0;
 let allMapsData = [];
 let currentMapId = null; // For player's current map
 let allItemsData = []; // For item placement in rooms
+let merchantInventory = []; // For merchant room inventory management
 let playerCurrentRoom = null; // Player's current room coordinates for centering
 let roomTypeColors = { // Default colors
     normal: '#00ff00',
@@ -122,6 +123,9 @@ function handleMessage(data) {
             }
             if (data.roomTypes) {
                 allRoomTypes = data.roomTypes;
+            }
+            if (data.allItems) {
+                allItemsData = data.allItems;
             }
             currentEditorMapId = data.mapId;
             renderMapEditor();
@@ -274,6 +278,13 @@ function handleMessage(data) {
             // Refresh item section
             if (selectedRoom && selectedRoom.id === data.roomId) {
                 updateRoomItemsSection(data.roomId, data.roomItems, null);
+            }
+            break;
+        case 'merchantInventory':
+            // Update the merchant inventory section in the side panel
+            if (selectedRoom && selectedRoom.id === data.roomId) {
+                merchantInventory = data.merchantItems || [];
+                updateMerchantInventorySection(data.roomId, merchantInventory);
             }
             break;
         case 'mapData':
@@ -954,7 +965,7 @@ function updateRoomItemsSection(roomId, roomItems, allItems) {
         section.innerHTML = '<p style="font-size: 0.8em; color: #888;">No items in room</p>';
     }
     
-    // Populate item dropdown
+    // Populate item dropdown (for room floor items)
     if (itemSelect && allItemsData.length > 0) {
         itemSelect.innerHTML = '<option value="">Select item...</option>';
         allItemsData.forEach(item => {
@@ -964,6 +975,224 @@ function updateRoomItemsSection(roomId, roomItems, allItems) {
             itemSelect.appendChild(option);
         });
     }
+    
+    // Also populate merchant item dropdown if it exists (for merchant rooms)
+    const merchantItemSelect = document.getElementById('merchantItemToAdd');
+    if (merchantItemSelect && allItemsData.length > 0) {
+        merchantItemSelect.innerHTML = '<option value="">Select item...</option>';
+        allItemsData.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.id;
+            option.textContent = item.name;
+            merchantItemSelect.appendChild(option);
+        });
+    }
+}
+
+// Update merchant inventory section
+function updateMerchantInventorySection(roomId, merchantItems) {
+    const section = document.getElementById('merchantInventorySection');
+    if (!section) return;
+    
+    if (merchantItems && merchantItems.length > 0) {
+        let html = `
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.75em; margin-bottom: 8px;">
+                <thead>
+                    <tr style="background: #002244; color: #0088ff;">
+                        <th style="padding: 4px; text-align: left; border-bottom: 1px solid #0088ff;">Item</th>
+                        <th style="padding: 4px; text-align: center; border-bottom: 1px solid #0088ff; width: 50px;">Qty</th>
+                        <th style="padding: 4px; text-align: right; border-bottom: 1px solid #0088ff; width: 60px;">Price</th>
+                        <th style="padding: 4px; text-align: center; border-bottom: 1px solid #0088ff; width: 80px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        
+        merchantItems.forEach(item => {
+            const qtyDisplay = item.unlimited ? '∞' : `${item.current_qty}${item.max_qty ? '/' + item.max_qty : ''}`;
+            const priceDisplay = item.price > 0 ? item.price : '0';
+            const configJson = item.config_json || JSON.stringify({
+                unlimited: item.unlimited,
+                max_qty: item.max_qty,
+                current_qty: item.current_qty,
+                regen_hours: item.regen_hours,
+                buyable: item.buyable,
+                sellable: item.sellable,
+                price: item.price
+            });
+            
+            html += `
+                <tr style="background: #001133;">
+                    <td style="padding: 4px; color: #00ff00;">${item.item_name}</td>
+                    <td style="padding: 4px; text-align: center; color: #ffff00;">${qtyDisplay}</td>
+                    <td style="padding: 4px; text-align: right; color: #ffcc00;">${priceDisplay}</td>
+                    <td style="padding: 4px; text-align: center;">
+                        <button class="edit-merchant-item-btn" data-merchant-item-id="${item.id}" data-item-name="${item.item_name}" data-config='${escapeHtml(configJson)}' style="padding: 2px 4px; font-size: 0.85em; background: #002244; border: 1px solid #0088ff; color: #0088ff; cursor: pointer; margin-right: 2px;">Edit</button>
+                        <button class="remove-merchant-item-btn" data-merchant-item-id="${item.id}" style="padding: 2px 4px; font-size: 0.85em; background: #440000; border: 1px solid #ff0000; color: #ff6666; cursor: pointer;">X</button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += '</tbody></table>';
+        section.innerHTML = html;
+        
+        // Add click handlers for edit buttons
+        section.querySelectorAll('.edit-merchant-item-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const merchantItemId = parseInt(btn.dataset.merchantItemId);
+                const itemName = btn.dataset.itemName;
+                const config = btn.dataset.config;
+                showMerchantItemConfigEditor(merchantItemId, itemName, config, roomId);
+            });
+        });
+        
+        // Add click handlers for remove buttons
+        section.querySelectorAll('.remove-merchant-item-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const merchantItemId = parseInt(btn.dataset.merchantItemId);
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'removeMerchantItem',
+                        merchantItemId: merchantItemId,
+                        roomId: roomId
+                    }));
+                }
+            });
+        });
+    } else {
+        section.innerHTML = '<p style="font-size: 0.8em; color: #888;">No items in merchant inventory</p>';
+    }
+}
+
+// Escape HTML for attributes
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.replace(/&/g, '&amp;')
+               .replace(/"/g, '&quot;')
+               .replace(/'/g, '&#39;')
+               .replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;');
+}
+
+// Show merchant item config editor (modal/dialog)
+function showMerchantItemConfigEditor(merchantItemId, itemName, configJson, roomId) {
+    // Default config structure - ALL fields that should always be shown
+    const defaultConfig = {
+        unlimited: true,
+        max_qty: null,
+        current_qty: 0,
+        regen_hours: null,
+        buyable: true,
+        sellable: false,
+        price: 0
+    };
+    
+    // Parse config if it's a string
+    let config;
+    try {
+        const parsedConfig = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
+        // Merge with defaults to ensure all fields are present
+        config = { ...defaultConfig, ...parsedConfig };
+    } catch (e) {
+        config = { ...defaultConfig };
+    }
+    
+    // Format the JSON nicely with all fields in consistent order
+    const orderedConfig = {
+        unlimited: config.unlimited,
+        max_qty: config.max_qty,
+        current_qty: config.current_qty,
+        regen_hours: config.regen_hours,
+        buyable: config.buyable,
+        sellable: config.sellable,
+        price: config.price
+    };
+    const formattedConfig = JSON.stringify(orderedConfig, null, 2);
+    
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'merchantItemConfigModal';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    `;
+    
+    overlay.innerHTML = `
+        <div style="background: #0a0a0a; border: 2px solid #0088ff; padding: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;">
+            <h3 style="color: #0088ff; margin-top: 0; margin-bottom: 15px;">Edit Merchant Item: ${itemName}</h3>
+            <p style="font-size: 0.85em; color: #888; margin-bottom: 15px;">
+                Configure item properties using JSON. Available fields:<br>
+                • unlimited: true/false - Shop never runs out<br>
+                • max_qty: number - Maximum inventory<br>
+                • current_qty: number - Current inventory<br>
+                • regen_hours: number - Hours to regenerate (e.g., 1.5 = 90 min)<br>
+                • buyable: true/false - Can players buy this<br>
+                • sellable: true/false - Can players sell this to merchant<br>
+                • price: number - Cost in gold
+            </p>
+            <textarea id="merchantItemConfigJson" style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 0.85em; background: #111; border: 1px solid #0088ff; color: #00ff00; padding: 8px; box-sizing: border-box;">${formattedConfig}</textarea>
+            <div id="merchantItemConfigError" style="color: #ff6666; font-size: 0.85em; margin-top: 8px; display: none;"></div>
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <button id="saveMerchantItemConfig" style="flex: 1; padding: 8px; background: #002244; border: 2px solid #0088ff; color: #0088ff; cursor: pointer; font-family: 'Courier New', monospace;">Save</button>
+                <button id="cancelMerchantItemConfig" style="flex: 1; padding: 8px; background: #220000; border: 2px solid #ff6666; color: #ff6666; cursor: pointer; font-family: 'Courier New', monospace;">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save button handler
+    document.getElementById('saveMerchantItemConfig').addEventListener('click', () => {
+        const jsonText = document.getElementById('merchantItemConfigJson').value;
+        const errorDiv = document.getElementById('merchantItemConfigError');
+        
+        try {
+            const parsedConfig = JSON.parse(jsonText);
+            
+            // Validate required fields
+            if (parsedConfig.unlimited === undefined) parsedConfig.unlimited = true;
+            if (parsedConfig.buyable === undefined) parsedConfig.buyable = true;
+            if (parsedConfig.sellable === undefined) parsedConfig.sellable = false;
+            if (parsedConfig.price === undefined) parsedConfig.price = 0;
+            
+            // Send to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'updateMerchantItemConfig',
+                    merchantItemId: merchantItemId,
+                    config: parsedConfig,
+                    roomId: roomId
+                }));
+            }
+            
+            // Close modal
+            overlay.remove();
+        } catch (e) {
+            errorDiv.textContent = 'Invalid JSON: ' + e.message;
+            errorDiv.style.display = 'block';
+        }
+    });
+    
+    // Cancel button handler
+    document.getElementById('cancelMerchantItemConfig').addEventListener('click', () => {
+        overlay.remove();
+    });
+    
+    // Close on click outside
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+        }
+    });
 }
 
 function updateSidePanel() {
@@ -1179,19 +1408,37 @@ function updateSidePanel() {
                 ${generateRoomTypeOptions(selectedRoom.roomType || 'normal')}
             </select>
             
-            <!-- Room Items Section -->
-            <div style="border-top: 1px solid #333; margin-top: 12px; padding-top: 8px;">
-                <h4 style="font-size: 0.85em; margin-bottom: 8px; color: #ffff00;">Room Items</h4>
+            <!-- Room Items Section (Items on Floor) -->
+            <div style="border-top: 1px solid #ffff00; margin-top: 12px; padding-top: 8px; background: #1a1a00; padding: 8px; border-radius: 4px;">
+                <h4 style="font-size: 0.85em; margin-bottom: 4px; color: #ffff00;">🗺️ Items on Floor</h4>
+                <p style="font-size: 0.65em; color: #888; margin-bottom: 8px; font-style: italic;">Physical items lying on the ground that players can pick up</p>
                 <div id="roomItemsSection" style="margin-bottom: 8px;">
                     <p style="font-size: 0.8em; color: #888;">Loading items...</p>
                 </div>
-                <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: stretch;">
+                <div style="display: flex; gap: 6px; margin-bottom: 4px; align-items: stretch;">
                     <select id="itemToAdd" style="flex: 0.75; font-size: 0.8em; min-width: 0;">
                         <option value="">Select item...</option>
                     </select>
-                    <button id="addItemBtn" style="padding: 4px 12px; font-size: 0.8em; white-space: nowrap; flex-shrink: 0;">Add</button>
+                    <button id="addItemBtn" style="padding: 4px 12px; font-size: 0.8em; white-space: nowrap; flex-shrink: 0; background: #333300; border-color: #ffff00; color: #ffff00;">Drop</button>
                 </div>
             </div>
+            
+            <!-- Merchant Inventory Section (only for merchant rooms) -->
+            ${selectedRoom.roomType === 'merchant' ? `
+            <div style="border-top: 1px solid #0088ff; margin-top: 12px; padding-top: 8px; background: #001133; padding: 8px; border-radius: 4px;">
+                <h4 style="font-size: 0.85em; margin-bottom: 4px; color: #0088ff;">🏪 Merchant Stock</h4>
+                <p style="font-size: 0.65em; color: #888; margin-bottom: 8px; font-style: italic;">Items the merchant sells - use 'list' command in-game to view</p>
+                <div id="merchantInventorySection" style="margin-bottom: 8px;">
+                    <p style="font-size: 0.8em; color: #888;">Loading merchant items...</p>
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 4px; align-items: stretch;">
+                    <select id="merchantItemToAdd" style="flex: 0.75; font-size: 0.8em; min-width: 0;">
+                        <option value="">Select item...</option>
+                    </select>
+                    <button id="addMerchantItemBtn" style="padding: 4px 12px; font-size: 0.8em; white-space: nowrap; flex-shrink: 0; background: #002255; border-color: #0088ff; color: #0088ff;">Stock</button>
+                </div>
+            </div>
+            ` : ''}
             
             <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button id="updateRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Update Room</button>
@@ -1235,6 +1482,39 @@ function updateSidePanel() {
                 type: 'getRoomItemsForEditor',
                 roomId: selectedRoom.id
             }));
+        }
+        
+        // Request merchant inventory if this is a merchant room
+        if (selectedRoom.roomType === 'merchant' && selectedRoom.id && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'getMerchantInventory',
+                roomId: selectedRoom.id
+            }));
+            
+            // Populate merchant item dropdown
+            const merchantItemSelect = document.getElementById('merchantItemToAdd');
+            if (merchantItemSelect && allItemsData.length > 0) {
+                merchantItemSelect.innerHTML = '<option value="">Select item...</option>' + 
+                    allItemsData.map(item => `<option value="${item.id}">${item.name}</option>`).join('');
+            }
+            
+            // Add merchant item button handler
+            const addMerchantItemBtn = document.getElementById('addMerchantItemBtn');
+            if (addMerchantItemBtn) {
+                addMerchantItemBtn.addEventListener('click', () => {
+                    const itemSelect = document.getElementById('merchantItemToAdd');
+                    const itemId = parseInt(itemSelect.value);
+                    if (itemId && selectedRoom.id) {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'addItemToMerchantRoom',
+                                roomId: selectedRoom.id,
+                                itemId: itemId
+                            }));
+                        }
+                    }
+                });
+            }
         }
         
         if (hasConnection) {

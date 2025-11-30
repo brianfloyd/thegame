@@ -255,9 +255,17 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       const accessCheck = await db.checkWarehouseAccess(playerData.playerId, warehouseLocationKey);
       
       if (accessCheck.hasAccess) {
-        // Initialize warehouse if first time
+        // Initialize warehouse if first time (or if player is always-first-time)
+        // For always-first-time players, always reinitialize to ensure fresh state
+        const player = await db.getPlayerById(playerData.playerId);
+        const isAlwaysFirstTime = player && player.flag_always_first_time === 1;
         let capacity = await db.getPlayerWarehouseCapacity(playerData.playerId, warehouseLocationKey);
-        if (!capacity) {
+        if (!capacity || isAlwaysFirstTime) {
+          // If always-first-time, delete existing warehouse first to ensure fresh start
+          if (isAlwaysFirstTime && capacity) {
+            await db.query('DELETE FROM player_warehouses WHERE player_id = $1 AND warehouse_location_key = $2', [playerData.playerId, warehouseLocationKey]);
+            await db.query('DELETE FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2', [playerData.playerId, warehouseLocationKey]);
+          }
           capacity = await db.initializePlayerWarehouse(playerData.playerId, warehouseLocationKey, accessCheck.deedItem.id);
         }
         

@@ -791,6 +791,13 @@ async function hasPlayerBeenGreetedByLoreKeeper(playerId, npcId) {
  * Mark a player as having been greeted by a Lore Keeper
  */
 async function markPlayerGreetedByLoreKeeper(playerId, npcId) {
+  // Check if player has flag_always_first_time - if so, never mark as greeted
+  const player = await getPlayerById(playerId);
+  if (player && player.flag_always_first_time === 1) {
+    // Player is "noob" - always treat as first time, don't mark as greeted
+    return;
+  }
+  
   await query(
     `INSERT INTO lore_keeper_greetings (player_id, npc_id, first_greeted_at, last_greeted_at)
      VALUES ($1, $2, NOW(), NOW())
@@ -804,6 +811,13 @@ async function markPlayerGreetedByLoreKeeper(playerId, npcId) {
  * Get all Lore Keepers that have greeted a player
  */
 async function getGreetedLoreKeepersForPlayer(playerId) {
+  // Check if player has flag_always_first_time - if so, always return empty (never greeted)
+  const player = await getPlayerById(playerId);
+  if (player && player.flag_always_first_time === 1) {
+    // Player is "noob" - always treat as first time, never show as greeted
+    return [];
+  }
+  
   const rows = await getAll(
     'SELECT npc_id FROM lore_keeper_greetings WHERE player_id = $1',
     [playerId]
@@ -935,6 +949,7 @@ async function getMerchantItems(itemId) {
   return getAll(
     `SELECT mi.id, mi.item_id, mi.room_id, mi.unlimited, mi.max_qty, 
             mi.current_qty, mi.regen_hours, mi.last_regen_time,
+            mi.price, mi.buyable, mi.sellable, mi.config_json,
             r.name as room_name, r.map_id, m.name as map_name, r.x, r.y
      FROM merchant_items mi
      JOIN rooms r ON mi.room_id = r.id
@@ -945,7 +960,7 @@ async function getMerchantItems(itemId) {
   );
 }
 
-async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null, regenHours = null) {
+async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null, regenHours = null, price = 0, buyable = true, sellable = false, configJson = '{}') {
   // Validate room is merchant type
   const room = await getRoomById(roomId);
   if (!room) {
@@ -957,12 +972,12 @@ async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null
   
   // Insert or update merchant item
   const result = await query(
-    `INSERT INTO merchant_items (item_id, room_id, unlimited, max_qty, current_qty, regen_hours, last_regen_time, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO merchant_items (item_id, room_id, unlimited, max_qty, current_qty, regen_hours, last_regen_time, price, buyable, sellable, config_json, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT (item_id, room_id) 
-     DO UPDATE SET unlimited = $3, max_qty = $4, regen_hours = $6
+     DO UPDATE SET unlimited = $3, max_qty = $4, regen_hours = $6, price = $8, buyable = $9, sellable = $10, config_json = $11
      RETURNING id`,
-    [itemId, roomId, unlimited, maxQty, 0, regenHours, null, Date.now()]
+    [itemId, roomId, unlimited, maxQty, 0, regenHours, null, price, buyable, sellable, configJson, Date.now()]
   );
   
   return getMerchantItemById(result.rows[0].id);
@@ -979,12 +994,102 @@ async function getMerchantItemById(id) {
   );
 }
 
-async function updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours) {
+async function updateMerchantItem(merchantItemId, unlimited, maxQty, regenHours, price = null, buyable = null, sellable = null, configJson = null) {
+  // Build dynamic update query based on provided fields
+  let updates = [];
+  let params = [];
+  let paramIndex = 1;
+  
+  if (unlimited !== null && unlimited !== undefined) {
+    updates.push(`unlimited = $${paramIndex++}`);
+    params.push(unlimited);
+  }
+  if (maxQty !== undefined) {
+    updates.push(`max_qty = $${paramIndex++}`);
+    params.push(maxQty);
+  }
+  if (regenHours !== undefined) {
+    updates.push(`regen_hours = $${paramIndex++}`);
+    params.push(regenHours);
+  }
+  if (price !== null && price !== undefined) {
+    updates.push(`price = $${paramIndex++}`);
+    params.push(price);
+  }
+  if (buyable !== null && buyable !== undefined) {
+    updates.push(`buyable = $${paramIndex++}`);
+    params.push(buyable);
+  }
+  if (sellable !== null && sellable !== undefined) {
+    updates.push(`sellable = $${paramIndex++}`);
+    params.push(sellable);
+  }
+  if (configJson !== null && configJson !== undefined) {
+    updates.push(`config_json = $${paramIndex++}`);
+    params.push(configJson);
+  }
+  
+  if (updates.length === 0) {
+    return getMerchantItemById(merchantItemId);
+  }
+  
+  params.push(merchantItemId);
   await query(
-    `UPDATE merchant_items 
-     SET unlimited = $1, max_qty = $2, regen_hours = $3
-     WHERE id = $4`,
-    [unlimited, maxQty, regenHours, merchantItemId]
+    `UPDATE merchant_items SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+    params
+  );
+  return getMerchantItemById(merchantItemId);
+}
+
+async function updateMerchantItemFromConfig(merchantItemId, config) {
+  // Update merchant item from a parsed JSON config object
+  const { unlimited, max_qty, current_qty, regen_hours, buyable, sellable, price } = config;
+  
+  let updates = [];
+  let params = [];
+  let paramIndex = 1;
+  
+  if (unlimited !== undefined) {
+    updates.push(`unlimited = $${paramIndex++}`);
+    params.push(unlimited);
+  }
+  if (max_qty !== undefined) {
+    updates.push(`max_qty = $${paramIndex++}`);
+    params.push(max_qty);
+  }
+  if (current_qty !== undefined) {
+    updates.push(`current_qty = $${paramIndex++}`);
+    params.push(current_qty);
+  }
+  if (regen_hours !== undefined) {
+    updates.push(`regen_hours = $${paramIndex++}`);
+    params.push(regen_hours);
+  }
+  if (buyable !== undefined) {
+    updates.push(`buyable = $${paramIndex++}`);
+    params.push(buyable);
+  }
+  if (sellable !== undefined) {
+    updates.push(`sellable = $${paramIndex++}`);
+    params.push(sellable);
+  }
+  if (price !== undefined) {
+    updates.push(`price = $${paramIndex++}`);
+    params.push(price);
+  }
+  
+  // Always update config_json with the full config
+  updates.push(`config_json = $${paramIndex++}`);
+  params.push(JSON.stringify(config));
+  
+  if (updates.length === 0) {
+    return getMerchantItemById(merchantItemId);
+  }
+  
+  params.push(merchantItemId);
+  await query(
+    `UPDATE merchant_items SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+    params
   );
   return getMerchantItemById(merchantItemId);
 }
@@ -999,10 +1104,24 @@ async function getMerchantItemsForRoom(roomId) {
   return getAll(
     `SELECT mi.id, mi.item_id, mi.room_id, mi.unlimited, mi.max_qty, 
             mi.current_qty, mi.regen_hours, mi.last_regen_time,
+            mi.price, mi.buyable, mi.sellable, mi.config_json,
             i.name as item_name, i.description as item_description, i.item_type
      FROM merchant_items mi
      JOIN items i ON mi.item_id = i.id
      WHERE mi.room_id = $1
+     ORDER BY i.name`,
+    [roomId]
+  );
+}
+
+async function getMerchantItemsForList(roomId) {
+  // Optimized query for list command - only get buyable items with display info
+  return getAll(
+    `SELECT mi.id, mi.item_id, mi.unlimited, mi.max_qty, mi.current_qty, mi.price,
+            i.name as item_name
+     FROM merchant_items mi
+     JOIN items i ON mi.item_id = i.id
+     WHERE mi.room_id = $1 AND mi.buyable = TRUE
      ORDER BY i.name`,
     [roomId]
   );
@@ -1209,13 +1328,19 @@ async function initializePlayerWarehouse(playerId, warehouseLocationKey, deedIte
   const maxQuantityPerType = deed.deed_base_max_quantity_per_type || 100;
   const upgradeTier = deed.deed_upgrade_tier || 1;
   
-  // Check if warehouse already exists
-  const existing = await getPlayerWarehouseCapacity(playerId, warehouseLocationKey);
-  if (existing) {
-    return existing;
+  // Check if player has flag_always_first_time - if so, always treat as first time (always initialize)
+  const player = await getPlayerById(playerId);
+  const isAlwaysFirstTime = player && player.flag_always_first_time === 1;
+  
+  // Check if warehouse already exists (unless player is always-first-time)
+  if (!isAlwaysFirstTime) {
+    const existing = await getPlayerWarehouseCapacity(playerId, warehouseLocationKey);
+    if (existing) {
+      return existing;
+    }
   }
   
-  // Create new warehouse capacity record
+  // Create new warehouse capacity record (or recreate for always-first-time players)
   const result = await query(
     `INSERT INTO player_warehouses (player_id, warehouse_location_key, deed_item_id, upgrade_tier, max_item_types, max_quantity_per_type, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
@@ -1270,6 +1395,241 @@ async function checkWarehouseAccess(playerId, warehouseLocationKey) {
   return { hasAccess: false, deedItem: null };
 }
 
+// ============================================================
+// Player Bank Functions
+// ============================================================
+
+/**
+ * Convert shards to optimal format (crowns + shards remainder)
+ * @param {number} shards - Total number of shards
+ * @returns {Object} { crowns: number, shards: number }
+ */
+function convertCurrencyToOptimal(shards) {
+  const crowns = Math.floor(shards / 100);
+  const remainderShards = shards % 100;
+  return { crowns, shards: remainderShards };
+}
+
+/**
+ * Get all currency in bank for a player
+ */
+async function getPlayerBank(playerId) {
+  return getAll(
+    'SELECT currency_name, quantity FROM player_bank WHERE player_id = $1 ORDER BY currency_name',
+    [playerId]
+  );
+}
+
+/**
+ * Get player's bank balance in optimal format
+ */
+async function getPlayerBankBalance(playerId) {
+  const bankItems = await getPlayerBank(playerId);
+  let totalShards = 0;
+  
+  for (const item of bankItems) {
+    // Parse quantity as integer (PostgreSQL may return as string)
+    const quantity = parseInt(item.quantity, 10) || 0;
+    
+    if (item.currency_name === 'Glimmer Shard') {
+      totalShards += quantity;
+    } else if (item.currency_name === 'Glimmer Crown') {
+      totalShards += quantity * 100;
+    }
+  }
+  
+  return convertCurrencyToOptimal(totalShards);
+}
+
+/**
+ * Deposit currency to player bank (with auto-conversion)
+ */
+async function depositCurrency(playerId, currencyName, quantity) {
+  // Get current bank balance
+  const bankItems = await getPlayerBank(playerId);
+  let currentShards = 0;
+  let currentCrowns = 0;
+  
+  for (const item of bankItems) {
+    if (item.currency_name === 'Glimmer Shard') {
+      currentShards = item.quantity;
+    } else if (item.currency_name === 'Glimmer Crown') {
+      currentCrowns = item.quantity;
+    }
+  }
+  
+  // Add new currency
+  if (currencyName === 'Glimmer Shard') {
+    currentShards += quantity;
+  } else if (currencyName === 'Glimmer Crown') {
+    currentCrowns += quantity;
+  }
+  
+  // Convert to optimal format
+  const totalShards = currentShards + (currentCrowns * 100);
+  const optimal = convertCurrencyToOptimal(totalShards);
+  
+  // Update bank
+  await query(
+    `INSERT INTO player_bank (player_id, currency_name, quantity) 
+     VALUES ($1, 'Glimmer Crown', $2)
+     ON CONFLICT (player_id, currency_name) DO UPDATE SET quantity = $2`,
+    [playerId, optimal.crowns]
+  );
+  
+  if (optimal.shards > 0) {
+    await query(
+      `INSERT INTO player_bank (player_id, currency_name, quantity) 
+       VALUES ($1, 'Glimmer Shard', $2)
+       ON CONFLICT (player_id, currency_name) DO UPDATE SET quantity = $2`,
+      [playerId, optimal.shards]
+    );
+  } else {
+    // Remove shards if we have 0
+    await query(
+      'DELETE FROM player_bank WHERE player_id = $1 AND currency_name = $2',
+      [playerId, 'Glimmer Shard']
+    );
+  }
+  
+  return optimal;
+}
+
+/**
+ * Withdraw currency from player bank (with auto-conversion)
+ */
+async function withdrawCurrency(playerId, currencyName, quantity) {
+  const bankItems = await getPlayerBank(playerId);
+  let totalShards = 0;
+  
+  for (const item of bankItems) {
+    if (item.currency_name === 'Glimmer Shard') {
+      totalShards += item.quantity;
+    } else if (item.currency_name === 'Glimmer Crown') {
+      totalShards += item.quantity * 100;
+    }
+  }
+  
+  // Calculate withdrawal in shards
+  let withdrawShards = 0;
+  if (currencyName === 'Glimmer Shard') {
+    withdrawShards = quantity;
+  } else if (currencyName === 'Glimmer Crown') {
+    withdrawShards = quantity * 100;
+  }
+  
+  if (totalShards < withdrawShards) {
+    throw new Error('Insufficient funds in bank');
+  }
+  
+  // Update bank
+  const remainingShards = totalShards - withdrawShards;
+  const optimal = convertCurrencyToOptimal(remainingShards);
+  
+  await query(
+    `INSERT INTO player_bank (player_id, currency_name, quantity) 
+     VALUES ($1, 'Glimmer Crown', $2)
+     ON CONFLICT (player_id, currency_name) DO UPDATE SET quantity = $2`,
+    [playerId, optimal.crowns]
+  );
+  
+  if (optimal.shards > 0) {
+    await query(
+      `INSERT INTO player_bank (player_id, currency_name, quantity) 
+       VALUES ($1, 'Glimmer Shard', $2)
+       ON CONFLICT (player_id, currency_name) DO UPDATE SET quantity = $2`,
+      [playerId, optimal.shards]
+    );
+  } else {
+    await query(
+      'DELETE FROM player_bank WHERE player_id = $1 AND currency_name = $2',
+      [playerId, 'Glimmer Shard']
+    );
+  }
+  
+  // Return what was withdrawn (in requested format)
+  if (currencyName === 'Glimmer Crown') {
+    return { crowns: quantity, shards: 0 };
+  } else {
+    const withdrawnOptimal = convertCurrencyToOptimal(withdrawShards);
+    return withdrawnOptimal;
+  }
+}
+
+/**
+ * Get player's currency from inventory
+ */
+async function getPlayerCurrency(playerId) {
+  const items = await getPlayerItems(playerId);
+  let shards = 0;
+  let crowns = 0;
+  
+  for (const item of items) {
+    // Parse quantity as integer (PostgreSQL may return as string)
+    const quantity = parseInt(item.quantity, 10) || 0;
+    
+    if (item.item_name === 'Glimmer Shard') {
+      shards = quantity;
+    } else if (item.item_name === 'Glimmer Crown') {
+      crowns = quantity;
+    }
+  }
+  
+  return { shards, crowns, totalShards: shards + (crowns * 100) };
+}
+
+/**
+ * Remove currency from player inventory (with auto-conversion)
+ */
+async function removePlayerCurrency(playerId, totalShardsNeeded) {
+  const currency = await getPlayerCurrency(playerId);
+  
+  if (currency.totalShards < totalShardsNeeded) {
+    throw new Error('Insufficient currency');
+  }
+  
+  // Convert to optimal and remove
+  let remainingShards = currency.totalShards - totalShardsNeeded;
+  const optimal = convertCurrencyToOptimal(remainingShards);
+  
+  // Remove all currency first
+  await removePlayerItem(playerId, 'Glimmer Shard', currency.shards);
+  await removePlayerItem(playerId, 'Glimmer Crown', currency.crowns);
+  
+  // Add back remaining
+  if (optimal.crowns > 0) {
+    await addPlayerItem(playerId, 'Glimmer Crown', optimal.crowns);
+  }
+  if (optimal.shards > 0) {
+    await addPlayerItem(playerId, 'Glimmer Shard', optimal.shards);
+  }
+  
+  return optimal;
+}
+
+/**
+ * Add currency to player inventory (with auto-conversion)
+ */
+async function addPlayerCurrency(playerId, totalShardsToAdd) {
+  const currency = await getPlayerCurrency(playerId);
+  const totalShards = currency.totalShards + totalShardsToAdd;
+  const optimal = convertCurrencyToOptimal(totalShards);
+  
+  // Remove all currency first
+  await removePlayerItem(playerId, 'Glimmer Shard', currency.shards);
+  await removePlayerItem(playerId, 'Glimmer Crown', currency.crowns);
+  
+  // Add back in optimal format
+  if (optimal.crowns > 0) {
+    await addPlayerItem(playerId, 'Glimmer Crown', optimal.crowns);
+  }
+  if (optimal.shards > 0) {
+    await addPlayerItem(playerId, 'Glimmer Shard', optimal.shards);
+  }
+  
+  return optimal;
+}
+
 async function getPlayerWarehouseDeeds(playerId, warehouseLocationKey) {
   // Get all deed items player owns for this warehouse location
   const playerItems = await getPlayerItems(playerId);
@@ -1290,6 +1650,88 @@ async function getPlayerWarehouseDeeds(playerId, warehouseLocationKey) {
   }
   
   return deeds;
+}
+
+// ============================================================
+// Account Functions
+// ============================================================
+
+/**
+ * Create a new account
+ */
+async function createAccount(email, passwordHash) {
+  const result = await query(
+    'INSERT INTO accounts (email, password_hash, created_at) VALUES ($1, $2, $3) RETURNING id, email, email_verified, created_at',
+    [email.toLowerCase().trim(), passwordHash, Date.now()]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Get account by email
+ */
+async function getAccountByEmail(email) {
+  return getOne(
+    'SELECT * FROM accounts WHERE email = $1',
+    [email.toLowerCase().trim()]
+  );
+}
+
+/**
+ * Get account by ID
+ */
+async function getAccountById(accountId) {
+  return getOne(
+    'SELECT * FROM accounts WHERE id = $1',
+    [accountId]
+  );
+}
+
+/**
+ * Update last login timestamp
+ */
+async function updateLastLogin(accountId) {
+  await query(
+    'UPDATE accounts SET last_login_at = $1 WHERE id = $2',
+    [Date.now(), accountId]
+  );
+}
+
+/**
+ * Get all characters for an account
+ */
+async function getUserCharacters(accountId) {
+  return getAll(
+    `SELECT p.id, p.name, p.current_room_id, p.flag_god_mode, p.flag_always_first_time,
+            r.name as room_name, r.map_id, m.name as map_name
+     FROM user_characters uc
+     JOIN players p ON uc.player_id = p.id
+     LEFT JOIN rooms r ON p.current_room_id = r.id
+     LEFT JOIN maps m ON r.map_id = m.id
+     WHERE uc.account_id = $1
+     ORDER BY p.name`,
+    [accountId]
+  );
+}
+
+/**
+ * Add a character to an account
+ */
+async function addCharacterToAccount(accountId, playerId) {
+  await query(
+    'INSERT INTO user_characters (account_id, player_id, created_at) VALUES ($1, $2, $3) ON CONFLICT (account_id, player_id) DO NOTHING',
+    [accountId, playerId, Date.now()]
+  );
+}
+
+/**
+ * Remove a character from an account
+ */
+async function removeCharacterFromAccount(accountId, playerId) {
+  await query(
+    'DELETE FROM user_characters WHERE account_id = $1 AND player_id = $2',
+    [accountId, playerId]
+  );
 }
 
 // ============================================================
@@ -1401,8 +1843,10 @@ module.exports = {
   getMerchantItems,
   addItemToMerchant,
   updateMerchantItem,
+  updateMerchantItemFromConfig,
   removeItemFromMerchant,
   getMerchantItemsForRoom,
+  getMerchantItemsForList,
   
   // Room Items
   getRoomItems,
@@ -1426,5 +1870,24 @@ module.exports = {
   getWarehouseItemQuantity,
   hasPlayerWarehouseDeed,
   checkWarehouseAccess,
-  getPlayerWarehouseDeeds
+  getPlayerWarehouseDeeds,
+  
+  // Player Bank
+  getPlayerBank,
+  depositCurrency,
+  withdrawCurrency,
+  getPlayerBankBalance,
+  convertCurrencyToOptimal,
+  getPlayerCurrency,
+  removePlayerCurrency,
+  addPlayerCurrency,
+  
+  // Accounts
+  createAccount,
+  getAccountByEmail,
+  getAccountById,
+  updateLastLogin,
+  getUserCharacters,
+  addCharacterToAccount,
+  removeCharacterFromAccount
 };

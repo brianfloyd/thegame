@@ -49,6 +49,9 @@ async function getMapEditorData(ctx, data) {
   const roomTypes = await db.getAllRoomTypes();
   const roomTypeList = roomTypes.map(rt => rt.room_type);
   
+  // Get all items for dropdown population
+  const allItems = await db.getAllItems();
+  
   ws.send(JSON.stringify({
     type: 'mapEditorData',
     rooms: rooms.map(r => ({
@@ -66,6 +69,7 @@ async function getMapEditorData(ctx, data) {
     })),
     roomTypeColors: colorMap,
     roomTypes: roomTypeList,
+    allItems: allItems,
     mapId: map.id,
     mapName: map.name
   }));
@@ -121,7 +125,7 @@ async function createRoom(ctx, data) {
 
   // Validate room type - must be one of the 4 allowed types
   const validRoomType = roomType || 'normal';
-  const allowedTypes = ['normal', 'merchant', 'factory', 'warehouse'];
+  const allowedTypes = ['normal', 'merchant', 'bank', 'warehouse'];
   if (!allowedTypes.includes(validRoomType)) {
     ws.send(JSON.stringify({ type: 'error', message: `Invalid room type: ${validRoomType}. Valid types: ${allowedTypes.join(', ')}` }));
     return;
@@ -238,7 +242,7 @@ async function updateRoom(ctx, data) {
 
   // Validate room type - must be one of the 4 allowed types
   const validRoomType = roomType || 'normal';
-  const allowedTypes = ['normal', 'merchant', 'factory', 'warehouse'];
+  const allowedTypes = ['normal', 'merchant', 'bank', 'warehouse'];
   if (!allowedTypes.includes(validRoomType)) {
     ws.send(JSON.stringify({ type: 'error', message: `Invalid room type: ${validRoomType}. Valid types: ${allowedTypes.join(', ')}` }));
     return;
@@ -860,6 +864,152 @@ async function clearAllItemsFromRoom(ctx, data) {
   }
 }
 
+/**
+ * Get merchant inventory for a room
+ */
+async function getMerchantInventory(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { roomId } = data;
+  if (!roomId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+    return;
+  }
+
+  const merchantItems = await db.getMerchantItemsForRoom(roomId);
+  ws.send(JSON.stringify({ type: 'merchantInventory', roomId, merchantItems }));
+}
+
+/**
+ * Add item to merchant room from map editor
+ */
+async function addItemToMerchantRoom(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { itemId, roomId } = data;
+  if (!itemId || !roomId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Item ID and Room ID required' }));
+    return;
+  }
+
+  try {
+    // Add with default values - configuration done via JSON editor
+    const defaultConfig = JSON.stringify({
+      unlimited: true,
+      max_qty: null,
+      current_qty: 0,
+      regen_hours: null,
+      buyable: true,
+      sellable: false,
+      price: 0
+    });
+    const merchantItem = await db.addItemToMerchant(
+      itemId, 
+      roomId, 
+      true,  // unlimited
+      null,  // maxQty
+      null,  // regenHours
+      0,     // price
+      true,  // buyable
+      false, // sellable
+      defaultConfig  // config_json
+    );
+    
+    // Return updated merchant inventory
+    const merchantItems = await db.getMerchantItemsForRoom(roomId);
+    ws.send(JSON.stringify({ type: 'merchantInventory', roomId, merchantItems }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to add item to merchant: ' + err.message }));
+  }
+}
+
+/**
+ * Update merchant item configuration via JSON
+ */
+async function updateMerchantItemConfig(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { merchantItemId, config, roomId } = data;
+  if (!merchantItemId || !config) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Merchant Item ID and config required' }));
+    return;
+  }
+
+  try {
+    // Validate config is valid JSON
+    let parsedConfig;
+    if (typeof config === 'string') {
+      parsedConfig = JSON.parse(config);
+    } else {
+      parsedConfig = config;
+    }
+    
+    // Update the merchant item with the new config
+    await db.updateMerchantItemFromConfig(merchantItemId, parsedConfig);
+    
+    // Return updated merchant inventory
+    if (roomId) {
+      const merchantItems = await db.getMerchantItemsForRoom(roomId);
+      ws.send(JSON.stringify({ type: 'merchantInventory', roomId, merchantItems }));
+    } else {
+      ws.send(JSON.stringify({ type: 'merchantItemConfigUpdated', merchantItemId }));
+    }
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to update merchant item config: ' + err.message }));
+  }
+}
+
+/**
+ * Remove item from merchant room
+ */
+async function removeMerchantItem(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { merchantItemId, roomId } = data;
+  if (!merchantItemId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Merchant Item ID required' }));
+    return;
+  }
+
+  try {
+    await db.removeItemFromMerchant(merchantItemId);
+    
+    // Return updated merchant inventory
+    if (roomId) {
+      const merchantItems = await db.getMerchantItemsForRoom(roomId);
+      ws.send(JSON.stringify({ type: 'merchantInventory', roomId, merchantItems }));
+    } else {
+      ws.send(JSON.stringify({ type: 'merchantItemRemoved', merchantItemId }));
+    }
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to remove merchant item: ' + err.message }));
+  }
+}
+
 module.exports = {
   getMapEditorData,
   createMap,
@@ -878,7 +1028,11 @@ module.exports = {
   getRoomItemsForEditor,
   addItemToRoom,
   removeItemFromRoom,
-  clearAllItemsFromRoom
+  clearAllItemsFromRoom,
+  getMerchantInventory,
+  addItemToMerchantRoom,
+  updateMerchantItemConfig,
+  removeMerchantItem
 };
 
 

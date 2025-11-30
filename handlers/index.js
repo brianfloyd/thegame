@@ -34,6 +34,12 @@ const handlerMap = {
   warehouse: gameHandlers.warehouse,
   store: gameHandlers.store,
   withdraw: gameHandlers.withdraw,
+  list: gameHandlers.list,
+  deposit: gameHandlers.deposit,
+  balance: gameHandlers.balance,
+  buy: gameHandlers.buy,
+  sell: gameHandlers.sell,
+  wealth: gameHandlers.wealth,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,
@@ -54,6 +60,10 @@ const handlerMap = {
   addItemToRoom: mapEditorHandlers.addItemToRoom,
   removeItemFromRoom: mapEditorHandlers.removeItemFromRoom,
   clearAllItemsFromRoom: mapEditorHandlers.clearAllItemsFromRoom,
+  getMerchantInventory: mapEditorHandlers.getMerchantInventory,
+  addItemToMerchantRoom: mapEditorHandlers.addItemToMerchantRoom,
+  updateMerchantItemConfig: mapEditorHandlers.updateMerchantItemConfig,
+  removeMerchantItem: mapEditorHandlers.removeMerchantItem,
   
   // NPC editor handlers
   getAllNPCs: npcEditorHandlers.getAllNPCs,

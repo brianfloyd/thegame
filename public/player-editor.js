@@ -93,6 +93,10 @@ function handleMessage(data) {
             renderPlayerList();
             updatePlayerSelector();
             showPlayerForm(data.player);
+            // Reload inventory after player update
+            if (data.player.id === selectedPlayerId) {
+                ws.send(JSON.stringify({ type: 'getPlayerInventory', playerId: data.player.id }));
+            }
             showEditorNotification('Player updated successfully', 'info');
             break;
         case 'itemList':
@@ -316,6 +320,11 @@ function showPlayerForm(player) {
     // Populate item selector if items already loaded
     if (allItems.length > 0) {
         updateItemSelector();
+    }
+    
+    // Request inventory if player is selected
+    if (player.id === selectedPlayerId) {
+        ws.send(JSON.stringify({ type: 'getPlayerInventory', playerId: player.id }));
     }
 }
 

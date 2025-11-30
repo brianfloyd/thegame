@@ -11,9 +11,9 @@ const session = require('express-session');
 const MemoryStore = session.MemoryStore;
 const memoryStore = new MemoryStore();
 
-// Session store for our custom session data (playerName, playerId, etc.)
+// Session store for our custom session data (accountId, playerName, playerId, etc.)
 // This is separate from express-session's session data but uses the same sessionId
-const sessionStore = new Map(); // Map<sessionId, { playerName, playerId, createdAt, expiresAt }>
+const sessionStore = new Map(); // Map<sessionId, { accountId, playerName, playerId, createdAt, expiresAt }>
 
 // Rate limiting for character selection (simple in-memory store)
 const characterSelectionAttempts = new Map(); // Map<ip, { count, resetTime }>
@@ -90,7 +90,24 @@ function createOptionalSession(db) {
   return async function optionalSession(req, res, next) {
     const sessionId = req.sessionID;
     
-    if (sessionId && req.session.playerName) {
+    // Check for account session (new system)
+    if (sessionId && req.session.accountId) {
+      const sessionData = sessionStore.get(sessionId);
+      if (sessionData && sessionData.expiresAt >= Date.now()) {
+        // If player is selected, load player data
+        if (req.session.playerName) {
+          const player = await db.getPlayerByName(req.session.playerName);
+          if (player) {
+            req.player = player;
+            req.accountId = req.session.accountId;
+          }
+        } else {
+          // Just account session, no character selected yet
+          req.accountId = req.session.accountId;
+        }
+      }
+    } else if (sessionId && req.session.playerName) {
+      // Legacy session support (for backwards compatibility during transition)
       const sessionData = sessionStore.get(sessionId);
       if (sessionData && sessionData.expiresAt >= Date.now()) {
         const player = await db.getPlayerByName(req.session.playerName);
@@ -128,6 +145,11 @@ function createCharacterSelectionHandler(db) {
   return async function handleCharacterSelection(req, res) {
     const { playerName } = req.body;
     const clientIp = req.ip || req.connection.remoteAddress;
+    
+    // Require account session
+    if (!req.session.accountId) {
+      return res.status(401).json({ success: false, error: 'Please log in first' });
+    }
     
     // Basic rate limiting (30 attempts per 30 seconds per IP - relaxed for development)
     const now = Date.now();
@@ -172,6 +194,14 @@ function createCharacterSelectionHandler(db) {
       return res.status(404).json({ success: false, error: 'Player not found' });
     }
     
+    // Verify character belongs to account
+    const userCharacters = await db.getUserCharacters(req.session.accountId);
+    const characterOwned = userCharacters.some(char => char.id === player.id);
+    if (!characterOwned) {
+      console.log(`Security: Character access denied - ${sanitizedPlayerName} not owned by account ${req.session.accountId} from ${clientIp}`);
+      return res.status(403).json({ success: false, error: 'You do not have access to this character' });
+    }
+    
     // Check if player is already in an active session
     const existingSessions = [];
     for (const [sessionId, sessionData] of sessionStore.entries()) {
@@ -189,6 +219,7 @@ function createCharacterSelectionHandler(db) {
     
     // Store in our custom session store using express-session's sessionID
     sessionStore.set(req.sessionID, {
+      accountId: req.session.accountId,
       playerName: player.name,
       playerId: player.id,
       createdAt: Date.now(),
@@ -205,7 +236,7 @@ function createCharacterSelectionHandler(db) {
         console.error('Session save error:', err);
         return res.status(500).json({ success: false, error: 'Failed to create session' });
       }
-      console.log(`Character selected: ${player.name} (session: ${req.sessionID.substring(0, 8)}...)`);
+      console.log(`Character selected: ${player.name} (account: ${req.session.accountId}, session: ${req.sessionID.substring(0, 8)}...)`);
       res.json({ success: true, sessionId: req.sessionID });
     });
   };

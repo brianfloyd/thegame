@@ -246,8 +246,21 @@ function handleMessage(data) {
             break;
         case 'message':
             if (data.message) {
-                addToTerminal(data.message, 'info');
+                if (data.html) {
+                    // Support HTML formatting for messages
+                    const terminalContent = document.getElementById('terminalContent');
+                    const msgDiv = document.createElement('div');
+                    msgDiv.className = 'info-message';
+                    msgDiv.innerHTML = data.message;
+                    terminalContent.appendChild(msgDiv);
+                    terminalContent.scrollTop = terminalContent.scrollHeight;
+                } else {
+                    addToTerminal(data.message, 'info');
+                }
             }
+            break;
+        case 'merchantList':
+            displayMerchantList(data.items);
             break;
         case 'jumpMaps':
             populateJumpMaps(data.maps);
@@ -668,6 +681,16 @@ const COMMAND_REGISTRY = [
     { name: 'store', abbrev: 'st', description: 'Store item to warehouse (store <item> [quantity])', category: 'Warehouse' },
     { name: 'withdraw', abbrev: 'wd', description: 'Withdraw item from warehouse (withdraw <item> [quantity])', category: 'Warehouse' },
     
+    // Merchant commands
+    { name: 'list', abbrev: 'li, ls', description: 'List items for sale (merchant rooms only)', category: 'Merchant' },
+    { name: 'buy', abbrev: 'b', description: 'Buy item from merchant (buy <item> [quantity])', category: 'Merchant' },
+    { name: 'sell', abbrev: 's [item]', description: 'Sell item to merchant (sell <item> [quantity] or s <item> [quantity])', category: 'Merchant' },
+    
+    // Bank commands
+    { name: 'deposit', abbrev: 'dep', description: 'Deposit currency to bank (deposit <quantity|all> <currency>)', category: 'Bank' },
+    { name: 'balance', abbrev: 'bal', description: 'Check bank balance (bank rooms only)', category: 'Bank' },
+    { name: 'wealth', abbrev: null, description: 'Show total wealth in Glimmer shards (wallet + bank)', category: 'Bank' },
+    
     // NPC interaction commands
     { name: 'harvest', abbrev: 'h/p', description: 'Harvest from NPC (harvest <npc>)', category: 'NPC' },
     { name: 'collect', abbrev: 'c', description: 'Alias for harvest', category: 'NPC' },
@@ -781,6 +804,73 @@ function displayHelp() {
     helpDiv.appendChild(table);
     
     terminalContent.appendChild(helpDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Display merchant list in terminal
+function displayMerchantList(items) {
+    const terminalContent = document.getElementById('terminalContent');
+    
+    // Create merchant list container
+    const listDiv = document.createElement('div');
+    listDiv.className = 'merchant-list-section';
+    
+    // Header
+    const header = document.createElement('div');
+    header.className = 'merchant-list-header';
+    header.textContent = 'Merchant Inventory:';
+    listDiv.appendChild(header);
+    
+    // Create table
+    const table = document.createElement('table');
+    table.className = 'merchant-list-table';
+    
+    // Table header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const thItem = document.createElement('th');
+    thItem.textContent = 'Item';
+    const thQty = document.createElement('th');
+    thQty.textContent = 'Qty';
+    const thPrice = document.createElement('th');
+    thPrice.textContent = 'Price';
+    headerRow.appendChild(thItem);
+    headerRow.appendChild(thQty);
+    headerRow.appendChild(thPrice);
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Table body
+    const tbody = document.createElement('tbody');
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        if (!item.inStock) {
+            row.className = 'out-of-stock';
+        }
+        
+        const tdName = document.createElement('td');
+        tdName.textContent = item.name;
+        
+        const tdQty = document.createElement('td');
+        tdQty.textContent = item.quantity;
+        tdQty.className = 'merchant-qty';
+        
+        const tdPrice = document.createElement('td');
+        tdPrice.textContent = item.price > 0 ? `${item.price} gold` : 'Free';
+        tdPrice.className = 'merchant-price';
+        if (!item.inStock) {
+            tdPrice.textContent += ' (out of stock)';
+        }
+        
+        row.appendChild(tdName);
+        row.appendChild(tdQty);
+        row.appendChild(tdPrice);
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    listDiv.appendChild(table);
+    
+    terminalContent.appendChild(listDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
@@ -1947,7 +2037,39 @@ function executeCommand(command) {
         return;
     }
     
-    // WITHDRAW / WD [quantity|all] <item> - withdraw item from warehouse
+    // LIST / LI / LS - list items for sale in merchant room
+    if (base === 'list' || base === 'li' || base === 'ls') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'list' }));
+        return;
+    }
+    
+    // DEPOSIT / DEP <quantity|all> <currency> - deposit currency to bank
+    if (base === 'deposit' || base === 'dep') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const rest = parts.slice(1);
+        if (rest.length < 2) {
+            addToTerminal('Usage: deposit <quantity|all> <currency>', 'error');
+            return;
+        }
+        
+        const quantity = rest[0].toLowerCase() === 'all' ? 'all' : rest[0];
+        const currencyName = rest.slice(1).join(' ');
+        
+        ws.send(JSON.stringify({ type: 'deposit', currencyName, quantity }));
+        return;
+    }
+    
+    // WITHDRAW / WD <quantity|all> <currency> - withdraw currency from bank (if in bank room)
+    // Note: withdraw also handles warehouse items, server routes based on room type
     if (base === 'withdraw' || base === 'wd') {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             addToTerminal('Not connected to server. Please wait...', 'error');
@@ -1985,6 +2107,99 @@ function executeCommand(command) {
         }
         
         ws.send(JSON.stringify({ type: 'withdraw', itemName, quantity }));
+        return;
+    }
+    
+    // BALANCE / BAL - show bank balance
+    if (base === 'balance' || base === 'bal') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'balance' }));
+        return;
+    }
+    
+    // WEALTH - show total wealth in Glimmer shards
+    if (base === 'wealth') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'wealth' }));
+        return;
+    }
+    
+    // BUY <item> [quantity] - buy item from merchant
+    if (base === 'buy' || base === 'b') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Buy what?', 'error');
+            return;
+        }
+        
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        // Check if first word is a number (quantity)
+        if (rest.length > 1) {
+            const parsedQty = parseInt(rest[0], 10);
+            if (!isNaN(parsedQty) && parsedQty > 0) {
+                quantity = parsedQty;
+                itemNameParts = rest.slice(1);
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Buy what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'buy', itemName, quantity }));
+        return;
+    }
+    
+    // SELL <item> [quantity] - sell item to merchant
+    // Note: 's' alone is south (movement), but 's [item]' is sell (has qualifier)
+    if (base === 'sell' || (base === 's' && parts.length > 1)) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        
+        const rest = parts.slice(1);
+        if (rest.length === 0) {
+            addToTerminal('Sell what?', 'error');
+            return;
+        }
+        
+        let quantity = 1;
+        let itemNameParts = rest;
+        
+        // Check if first word is a number (quantity)
+        if (rest.length > 1) {
+            const parsedQty = parseInt(rest[0], 10);
+            if (!isNaN(parsedQty) && parsedQty > 0) {
+                quantity = parsedQty;
+                itemNameParts = rest.slice(1);
+            }
+        }
+        
+        const itemName = itemNameParts.join(' ');
+        if (!itemName) {
+            addToTerminal('Sell what?', 'error');
+            return;
+        }
+        
+        ws.send(JSON.stringify({ type: 'sell', itemName, quantity }));
         return;
     }
 
