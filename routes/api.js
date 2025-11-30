@@ -40,8 +40,174 @@ function setupRoutes(app, options) {
   app.post('/api/logout', logoutHandler);
   app.get('/api/account', optionalSession, getAccountInfoHandler);
   
+  // Email verification endpoint
+  app.get('/api/verify-email', async (req, res) => {
+    const { token } = req.query;
+    if (!token) {
+      return res.redirect('/?error=invalid_token');
+    }
+    
+    try {
+      const tokenData = await options.db.getEmailVerificationToken(token);
+      if (!tokenData) {
+        return res.redirect('/?error=invalid_or_expired_token');
+      }
+      
+      // Mark account as verified
+      await options.db.verifyAccountEmail(tokenData.account_id);
+      
+      // Mark token as used
+      await options.db.markEmailVerificationTokenUsed(token);
+      
+      console.log(`Email verified for account: ${tokenData.account_id}`);
+      res.redirect('/?verified=true');
+    } catch (err) {
+      console.error('Email verification error:', err);
+      res.redirect('/?error=verification_failed');
+    }
+  });
+  
+  // Request password reset endpoint
+  app.post('/api/request-password-reset', async (req, res) => {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'Email is required' });
+    }
+    
+    const sanitizedEmail = email.trim().toLowerCase();
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+    if (!emailRegex.test(sanitizedEmail)) {
+      return res.status(400).json({ success: false, error: 'Invalid email format' });
+    }
+    
+    try {
+      const account = await options.db.getAccountByEmail(sanitizedEmail);
+      // Always return success (don't reveal if email exists)
+      if (account) {
+        const { v4: uuidv4 } = require('uuid');
+        const resetToken = uuidv4();
+        const expiresAt = Date.now() + (60 * 60 * 1000); // 1 hour
+        
+        await options.db.createPasswordResetToken(account.id, resetToken, expiresAt);
+        
+        const emailService = require('../utils/email');
+        await emailService.sendPasswordResetEmail(sanitizedEmail, resetToken);
+      }
+      
+      // Always return success to prevent email enumeration
+      res.json({ 
+        success: true, 
+        message: 'If an account with that email exists, a password reset link has been sent.' 
+      });
+    } catch (err) {
+      console.error('Password reset request error:', err);
+      // Still return success to prevent email enumeration
+      res.json({ 
+        success: true, 
+        message: 'If an account with that email exists, a password reset link has been sent.' 
+      });
+    }
+  });
+  
+  // Reset password endpoint
+  app.post('/api/reset-password', async (req, res) => {
+    const { token, newPassword } = req.body;
+    
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Token and new password are required' });
+    }
+    
+    // Validate password strength
+    if (newPassword.length < 4) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 4 characters' });
+    }
+    if (newPassword.length > 100) {
+      return res.status(400).json({ success: false, error: 'Password is too long' });
+    }
+    
+    try {
+      const tokenData = await options.db.getPasswordResetToken(token);
+      if (!tokenData) {
+        return res.status(400).json({ success: false, error: 'Invalid or expired reset token' });
+      }
+      
+      // Hash new password
+      const bcrypt = require('bcrypt');
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      
+      // Update password
+      await options.db.updateAccountPassword(tokenData.account_id, passwordHash);
+      
+      // Mark token as used
+      await options.db.markPasswordResetTokenUsed(token);
+      
+      console.log(`Password reset for account: ${tokenData.account_id}`);
+      res.json({ success: true, message: 'Password has been reset successfully' });
+    } catch (err) {
+      console.error('Password reset error:', err);
+      res.status(500).json({ success: false, error: 'Failed to reset password' });
+    }
+  });
+  
   // Character selection endpoint (requires account session)
   app.post('/api/select-character', characterSelectionHandler);
+  
+  // Create character endpoint (requires account session)
+  app.post('/api/create-character', async (req, res) => {
+    if (!req.session.accountId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    
+    const { characterName } = req.body;
+    
+    if (!characterName || typeof characterName !== 'string') {
+      return res.status(400).json({ success: false, error: 'Character name is required' });
+    }
+    
+    const sanitizedName = characterName.trim();
+    
+    // Validate name
+    if (sanitizedName.length < 2) {
+      return res.status(400).json({ success: false, error: 'Character name must be at least 2 characters' });
+    }
+    if (sanitizedName.length > 50) {
+      return res.status(400).json({ success: false, error: 'Character name is too long' });
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(sanitizedName)) {
+      return res.status(400).json({ success: false, error: 'Character name can only contain letters, numbers, and underscores' });
+    }
+    
+    try {
+      // Check if name already exists
+      const existingPlayer = await options.db.getPlayerByName(sanitizedName);
+      if (existingPlayer) {
+        return res.status(409).json({ success: false, error: 'Character name already taken' });
+      }
+      
+      // Create player based on Hebron's template
+      const player = await options.db.createPlayer(sanitizedName, req.session.accountId);
+      
+      // Get updated character list
+      const characters = await options.db.getUserCharacters(req.session.accountId);
+      
+      console.log(`Character created: ${sanitizedName} for account ${req.session.accountId}`);
+      res.json({ 
+        success: true, 
+        player: {
+          id: player.id,
+          name: player.name
+        },
+        characters: characters
+      });
+    } catch (err) {
+      console.error('Create character error:', err);
+      if (err.code === '23505') { // Unique constraint violation
+        return res.status(409).json({ success: false, error: 'Character name already taken' });
+      }
+      res.status(500).json({ success: false, error: 'Failed to create character' });
+    }
+  });
   
   // Root route - landing page (login/character selection)
   app.get('/', optionalSession, (req, res) => {
@@ -78,6 +244,11 @@ function setupRoutes(app, options) {
   // Player Editor route (God Mode only)
   app.get('/player', validateSession, checkGodMode, (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'public', 'player-editor.html'));
+  });
+  
+  // Password reset page (public route)
+  app.get('/reset-password', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'reset-password.html'));
   });
 }
 

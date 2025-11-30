@@ -164,10 +164,31 @@
                 ${currentAccount.emailVerified ? '' : '<p class="warning">Email not verified</p>'}
             `;
             
-            // Show characters
+            // Show characters or character creation form
             const characterList = document.getElementById('characterList');
             if (currentCharacters.length === 0) {
-                characterList.innerHTML = '<p>No characters available. Contact an administrator to create a character for your account.</p>';
+                characterList.innerHTML = `
+                    <div id="createCharacterForm" class="create-character-form">
+                        <h2>Create Your Character</h2>
+                        <p style="margin-bottom: 20px; color: #666;">Your character will start with balanced stats and begin in the town square.</p>
+                        <div style="margin-bottom: 15px;">
+                            <input type="text" id="characterNameInput" placeholder="Character Name" 
+                                   maxlength="50" pattern="[a-zA-Z0-9_]+" 
+                                   style="width: 100%; padding: 12px; border: 2px solid #667eea; border-radius: 8px; font-size: 1em; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+                                   title="Only letters, numbers, and underscores allowed">
+                        </div>
+                        <button id="createCharacterBtn" class="auth-btn" style="width: 100%;">Create Character</button>
+                        <div id="createCharacterError" class="error-message" style="margin-top: 10px;"></div>
+                    </div>
+                `;
+                
+                // Attach create character handler
+                document.getElementById('createCharacterBtn').addEventListener('click', createCharacter);
+                document.getElementById('characterNameInput').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        createCharacter();
+                    }
+                });
             } else {
                 characterList.innerHTML = currentCharacters.map(char => `
                     <button class="player-btn" data-player="${char.name}">
@@ -209,6 +230,51 @@
             } catch (error) {
                 console.error('Error selecting character:', error);
                 alert('Failed to select character. Please try again.');
+            }
+        }
+
+        // Create character
+        async function createCharacter() {
+            const characterName = document.getElementById('characterNameInput')?.value.trim();
+            const errorDiv = document.getElementById('createCharacterError');
+            
+            if (!characterName) {
+                errorDiv.textContent = 'Please enter a character name';
+                return;
+            }
+            
+            if (characterName.length < 2) {
+                errorDiv.textContent = 'Character name must be at least 2 characters';
+                return;
+            }
+            
+            if (!/^[a-zA-Z0-9_]+$/.test(characterName)) {
+                errorDiv.textContent = 'Character name can only contain letters, numbers, and underscores';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/create-character', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ characterName })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update character list and refresh display
+                    currentCharacters = data.characters || [];
+                    showCharacterSelection();
+                } else {
+                    errorDiv.textContent = data.error || 'Failed to create character';
+                }
+            } catch (error) {
+                console.error('Create character error:', error);
+                errorDiv.textContent = 'Failed to create character. Please try again.';
             }
         }
 

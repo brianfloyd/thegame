@@ -5,6 +5,8 @@
  */
 
 const bcrypt = require('bcrypt');
+const { v4: uuidv4 } = require('uuid');
+const emailService = require('../utils/email');
 
 // Rate limiting for authentication attempts
 const authAttempts = new Map(); // Map<ip, { count, resetTime }>
@@ -165,8 +167,22 @@ function createRegisterHandler(db) {
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
       
-      // Create account (email_verified defaults to FALSE - ready for future email verification)
+      // Create account (email_verified defaults to FALSE)
       const account = await db.createAccount(sanitizedEmail, passwordHash);
+      
+      // Generate verification token (expires in 24 hours)
+      const verificationToken = uuidv4();
+      const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+      
+      // Save verification token to database
+      await db.createEmailVerificationToken(account.id, verificationToken, expiresAt);
+      
+      // Send verification email
+      const emailResult = await emailService.sendVerificationEmail(sanitizedEmail, verificationToken);
+      if (!emailResult.success) {
+        console.error('Failed to send verification email:', emailResult.error);
+        // Don't fail registration if email fails, but log it
+      }
       
       // Reset rate limiting on successful registration
       authAttempts.delete(clientIp);
@@ -189,7 +205,8 @@ function createRegisterHandler(db) {
           accountId: account.id,
           email: account.email,
           emailVerified: account.email_verified,
-          characters: [] // New account has no characters yet
+          characters: [], // New account has no characters yet
+          verificationEmailSent: emailResult.success
         });
       });
     } catch (err) {

@@ -41,7 +41,7 @@
                     <button class="widget-icon active" data-widget="map" title="Map">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg>
                     </button>
-                    <button class="widget-icon" data-widget="comms" title="Comms">
+                    <button class="widget-icon active" data-widget="comms" title="Comms">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
                     </button>
                     <button class="widget-icon hidden" id="warehouse-widget-icon" data-widget="warehouse" title="Warehouse">
@@ -101,7 +101,7 @@
                     
                     <!-- Slot 4: Empty (or NPC widget when harvesting) -->
                     <div class="widget-slot" data-slot="3">
-                        <div class="widget widget-empty" id="widget-empty">
+                        <div class="widget widget-empty hidden" id="widget-empty">
                             <div class="widget-header">-</div>
                             <div class="widget-content"></div>
                         </div>
@@ -148,7 +148,7 @@
                                 <div class="warehouse-info-note">You are in a shared warehouse building. Storage shown here is yours alone.</div>
                                 <div class="warehouse-capacity">
                                     <div class="warehouse-capacity-row">
-                                        <span class="warehouse-capacity-label">Capacity:</span>
+                                        <span class="warehouse-capacity-label">Types:</span>
                                         <span id="warehouse-capacity-display">-</span>
                                     </div>
                                     <div class="warehouse-capacity-row">
@@ -213,8 +213,8 @@
                                 </div>
                             </div>
                         </div>
-                        <!-- Comms Widget -->
-                        <div class="widget hidden" id="widget-comms" data-widget="comms">
+                        <!-- Comms Widget (shown by default for non-god mode players) -->
+                        <div class="widget" id="widget-comms" data-widget="comms">
                             <div class="widget-header">Comms</div>
                             <div class="widget-content">
                                 <div class="comm-mode-selector">

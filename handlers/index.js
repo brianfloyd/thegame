@@ -40,6 +40,8 @@ const handlerMap = {
   buy: gameHandlers.buy,
   sell: gameHandlers.sell,
   wealth: gameHandlers.wealth,
+  who: gameHandlers.who,
+  saveTerminalMessage: gameHandlers.saveTerminalMessage,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

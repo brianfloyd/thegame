@@ -164,6 +164,47 @@ async function getAllPlayers() {
   return getAll('SELECT * FROM players');
 }
 
+/**
+ * Create a new player based on Hebron's template
+ * Copies all stats from Hebron (10/10/10/10/10 stats, 0 abilities, 50/50 HP, 10/10 Mana)
+ */
+async function createPlayer(name, accountId) {
+  // Get town square room (starting location)
+  const townSquare = await getOne(
+    'SELECT id FROM rooms WHERE name = $1 AND map_id = $2',
+    ['town square', 1]
+  );
+  
+  if (!townSquare) {
+    throw new Error('Starting room (town square) not found');
+  }
+  
+  // Create player with Hebron's stats (10/10/10/10/10, 0 abilities, 50/50 HP, 10/10 Mana)
+  const result = await query(
+    `INSERT INTO players (
+      name, current_room_id,
+      stat_brute_strength, stat_life_force, stat_cunning, stat_intelligence, stat_wisdom,
+      ability_crafting, ability_lockpicking, ability_stealth, ability_dodge, ability_critical_hit,
+      resource_hit_points, resource_max_hit_points, resource_mana, resource_max_mana,
+      flag_god_mode, flag_always_first_time
+    ) VALUES ($1, $2, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 0, 0)
+    RETURNING id, name, current_room_id`,
+    [name, townSquare.id]
+  );
+  
+  const player = result.rows[0];
+  
+  // Link player to account
+  if (accountId) {
+    await query(
+      'INSERT INTO user_characters (account_id, player_id, created_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [accountId, player.id, Date.now()]
+    );
+  }
+  
+  return player;
+}
+
 async function getPlayersInRoom(roomId) {
   const rows = await getAll('SELECT name FROM players WHERE current_room_id = $1', [roomId]);
   return rows.map(row => row.name);
@@ -1688,6 +1729,22 @@ async function getAccountById(accountId) {
 }
 
 /**
+ * Check if account is within grace period (2 weeks) for unverified accounts
+ * Returns true if account is verified OR if account was created within last 2 weeks
+ */
+async function isAccountWithinGracePeriod(accountId) {
+  const account = await getAccountById(accountId);
+  if (!account) return false;
+  
+  // If verified, always allow
+  if (account.email_verified) return true;
+  
+  // Check if account was created within last 2 weeks (14 days)
+  const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+  return account.created_at >= twoWeeksAgo;
+}
+
+/**
  * Update last login timestamp
  */
 async function updateLastLogin(accountId) {
@@ -1735,6 +1792,94 @@ async function removeCharacterFromAccount(accountId, playerId) {
 }
 
 // ============================================================
+// Email Verification Token Functions
+// ============================================================
+
+/**
+ * Create email verification token
+ */
+async function createEmailVerificationToken(accountId, token, expiresAt) {
+  await query(
+    'INSERT INTO email_verification_tokens (account_id, token, expires_at) VALUES ($1, $2, $3)',
+    [accountId, token, expiresAt]
+  );
+}
+
+/**
+ * Get email verification token (if valid and not expired)
+ */
+async function getEmailVerificationToken(token) {
+  return getOne(
+    'SELECT * FROM email_verification_tokens WHERE token = $1 AND used = FALSE AND expires_at > $2',
+    [token, Date.now()]
+  );
+}
+
+/**
+ * Mark email verification token as used
+ */
+async function markEmailVerificationTokenUsed(token) {
+  await query(
+    'UPDATE email_verification_tokens SET used = TRUE WHERE token = $1',
+    [token]
+  );
+}
+
+/**
+ * Mark account email as verified
+ */
+async function verifyAccountEmail(accountId) {
+  await query(
+    'UPDATE accounts SET email_verified = TRUE WHERE id = $1',
+    [accountId]
+  );
+}
+
+// ============================================================
+// Password Reset Token Functions
+// ============================================================
+
+/**
+ * Create password reset token
+ */
+async function createPasswordResetToken(accountId, token, expiresAt) {
+  await query(
+    'INSERT INTO password_reset_tokens (account_id, token, expires_at) VALUES ($1, $2, $3)',
+    [accountId, token, expiresAt]
+  );
+}
+
+/**
+ * Get password reset token (if valid and not expired)
+ */
+async function getPasswordResetToken(token) {
+  return getOne(
+    'SELECT * FROM password_reset_tokens WHERE token = $1 AND used = FALSE AND expires_at > $2',
+    [token, Date.now()]
+  );
+}
+
+/**
+ * Mark password reset token as used
+ */
+async function markPasswordResetTokenUsed(token) {
+  await query(
+    'UPDATE password_reset_tokens SET used = TRUE WHERE token = $1',
+    [token]
+  );
+}
+
+/**
+ * Update account password
+ */
+async function updateAccountPassword(accountId, newPasswordHash) {
+  await query(
+    'UPDATE accounts SET password_hash = $1 WHERE id = $2',
+    [newPasswordHash, accountId]
+  );
+}
+
+// ============================================================
 // Connection Pool Management
 // ============================================================
 
@@ -1751,6 +1896,73 @@ async function testConnection() {
     console.error('PostgreSQL connection failed:', err.message);
     return false;
   }
+}
+
+// ============================================================
+// Terminal History Functions
+// ============================================================
+
+/**
+ * Save a terminal message to history
+ * Automatically keeps only last 1000 messages per player
+ */
+async function saveTerminalMessage(playerId, messageText, messageType = 'info', messageHtml = null) {
+  // Check if player is noob (flag_always_first_time) - don't persist for noob
+  const player = await getPlayerById(playerId);
+  if (player && player.flag_always_first_time === 1) {
+    return; // Don't save history for noob character
+  }
+  
+  // Insert new message
+  await query(
+    'INSERT INTO terminal_history (player_id, message_text, message_type, message_html, created_at) VALUES ($1, $2, $3, $4, $5)',
+    [playerId, messageText, messageType, messageHtml, Date.now()]
+  );
+  
+  // Keep only last 1000 messages per player
+  // Delete older messages
+  await query(
+    `DELETE FROM terminal_history 
+     WHERE player_id = $1 
+     AND id NOT IN (
+       SELECT id FROM terminal_history 
+       WHERE player_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 1000
+     )`,
+    [playerId]
+  );
+}
+
+/**
+ * Get terminal history for a player (last 1000 messages)
+ * Returns empty array for noob character
+ */
+async function getTerminalHistory(playerId) {
+  // Check if player is noob - don't return history
+  const player = await getPlayerById(playerId);
+  if (player && player.flag_always_first_time === 1) {
+    return []; // No history for noob character
+  }
+  
+  const rows = await getAll(
+    'SELECT message_text, message_type, message_html, created_at FROM terminal_history WHERE player_id = $1 ORDER BY created_at ASC LIMIT 1000',
+    [playerId]
+  );
+  
+  return rows.map(row => ({
+    text: row.message_text,
+    type: row.message_type,
+    html: row.message_html,
+    timestamp: row.created_at
+  }));
+}
+
+/**
+ * Clear terminal history for a player
+ */
+async function clearTerminalHistory(playerId) {
+  await query('DELETE FROM terminal_history WHERE player_id = $1', [playerId]);
 }
 
 // ============================================================
@@ -1784,6 +1996,7 @@ module.exports = {
   // Players
   getPlayerByName,
   getPlayerById,
+  createPlayer,
   getAllPlayers,
   getPlayersInRoom,
   updatePlayerRoom,
@@ -1889,5 +2102,23 @@ module.exports = {
   updateLastLogin,
   getUserCharacters,
   addCharacterToAccount,
-  removeCharacterFromAccount
+  removeCharacterFromAccount,
+  isAccountWithinGracePeriod,
+  
+  // Email Verification
+  createEmailVerificationToken,
+  getEmailVerificationToken,
+  markEmailVerificationTokenUsed,
+  verifyAccountEmail,
+  
+  // Password Reset
+  createPasswordResetToken,
+  getPasswordResetToken,
+  markPasswordResetTokenUsed,
+  updateAccountPassword,
+  
+  // Terminal History
+  saveTerminalMessage,
+  getTerminalHistory,
+  clearTerminalHistory
 };

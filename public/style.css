@@ -183,6 +183,20 @@ body {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
+.create-character-form {
+    text-align: left;
+    padding: 20px;
+    background: #f9f9f9;
+    border-radius: 8px;
+    margin-top: 20px;
+}
+
+.create-character-form h2 {
+    color: #667eea;
+    margin-bottom: 10px;
+    font-size: 1.5em;
+}
+
 #characterSelection .container {
     background: white;
     border-radius: 16px;
@@ -896,6 +910,55 @@ body {
     padding: 8px 12px;
     border-bottom: 2px solid #00ff00;
     background: rgba(0, 255, 0, 0.1);
+}
+
+/* Who command table styling */
+.who-list {
+    margin: 10px 0;
+}
+
+.who-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+}
+
+.who-table thead {
+    background: rgba(0, 255, 0, 0.15);
+}
+
+.who-table th {
+    color: #ffff00;
+    font-weight: bold;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid #00ff00;
+    border-right: 1px solid rgba(0, 255, 0, 0.3);
+}
+
+.who-table th:last-child {
+    border-right: none;
+}
+
+.who-table td {
+    color: #00ff00;
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+    border-right: 1px solid rgba(0, 255, 0, 0.1);
+}
+
+.who-table td:last-child {
+    border-right: none;
+}
+
+.who-table tbody tr:hover {
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.who-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
 .help-category {

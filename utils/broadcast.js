@@ -245,23 +245,23 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     hasWarehouseDeed = await db.hasPlayerWarehouseDeed(playerData.playerId);
   }
 
-  // Get warehouse widget state if room is warehouse type
+  // Get warehouse widget state
+  // If in warehouse room: show interactive state
+  // If not in warehouse room but has deed: show view-only state (first warehouse they have access to)
   let warehouseState = null;
-  if (room.room_type === 'warehouse') {
-    const warehouseLocationKey = room.id.toString();
-    
-    if (playerData && playerData.playerId) {
-      // Check if player has access via deed
+  
+  if (playerData && playerData.playerId && hasWarehouseDeed) {
+    if (room.room_type === 'warehouse') {
+      // In warehouse room - check if player has access
+      const warehouseLocationKey = room.id.toString();
       const accessCheck = await db.checkWarehouseAccess(playerData.playerId, warehouseLocationKey);
       
       if (accessCheck.hasAccess) {
         // Initialize warehouse if first time (or if player is always-first-time)
-        // For always-first-time players, always reinitialize to ensure fresh state
         const player = await db.getPlayerById(playerData.playerId);
         const isAlwaysFirstTime = player && player.flag_always_first_time === 1;
         let capacity = await db.getPlayerWarehouseCapacity(playerData.playerId, warehouseLocationKey);
         if (!capacity || isAlwaysFirstTime) {
-          // If always-first-time, delete existing warehouse first to ensure fresh start
           if (isAlwaysFirstTime && capacity) {
             await db.query('DELETE FROM player_warehouses WHERE player_id = $1 AND warehouse_location_key = $2', [playerData.playerId, warehouseLocationKey]);
             await db.query('DELETE FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2', [playerData.playerId, warehouseLocationKey]);
@@ -269,11 +269,8 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
           capacity = await db.initializePlayerWarehouse(playerData.playerId, warehouseLocationKey, accessCheck.deedItem.id);
         }
         
-        // Get warehouse items
         const items = await db.getWarehouseItems(playerData.playerId, warehouseLocationKey);
         const itemTypeCount = await db.getWarehouseItemTypeCount(playerData.playerId, warehouseLocationKey);
-        
-        // Get owned deeds for this location
         const deeds = await db.getPlayerWarehouseDeeds(playerData.playerId, warehouseLocationKey);
         
         warehouseState = {
@@ -288,14 +285,46 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
           deeds: deeds
         };
         
-        // Store in warehouseWidgetState
         warehouseWidgetState.set(connectionId, {
           roomId: room.id,
           warehouseLocationKey: warehouseLocationKey
         });
       }
+    } else {
+      // Not in warehouse room - find first warehouse player has access to (for view-only)
+      const playerItems = await db.getPlayerItems(playerData.playerId);
+      const allItems = await db.getAllItems();
+      
+      for (const playerItem of playerItems) {
+        const itemDef = allItems.find(item => item.name === playerItem.item_name);
+        if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key) {
+          const warehouseLocationKey = itemDef.deed_warehouse_location_key;
+          const capacity = await db.getPlayerWarehouseCapacity(playerData.playerId, warehouseLocationKey);
+          
+          if (capacity) {
+            const items = await db.getWarehouseItems(playerData.playerId, warehouseLocationKey);
+            const itemTypeCount = await db.getWarehouseItemTypeCount(playerData.playerId, warehouseLocationKey);
+            const deeds = await db.getPlayerWarehouseDeeds(playerData.playerId, warehouseLocationKey);
+            
+            warehouseState = {
+              warehouseLocationKey: warehouseLocationKey,
+              items: items,
+              capacity: {
+                maxItemTypes: capacity.max_item_types,
+                maxQuantityPerType: capacity.max_quantity_per_type,
+                currentItemTypes: itemTypeCount,
+                upgradeTier: capacity.upgrade_tier
+              },
+              deeds: deeds
+            };
+            break; // Use first warehouse found
+          }
+        }
+      }
     }
-  } else {
+  }
+  
+  if (!warehouseState) {
     warehouseWidgetState.delete(connectionId);
   }
 

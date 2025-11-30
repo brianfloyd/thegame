@@ -196,13 +196,20 @@ async function authenticateSession(ctx, data) {
 
   // If player has flag_always_first_time, reset them to town square in Newhaven
   if (player.flag_always_first_time === 1) {
-    const townSquare = await db.getOne(
-      'SELECT id FROM rooms WHERE name = $1 AND map_id = 1 LIMIT 1',
-      ['town square']
-    );
+    // Get all rooms on map 1 (Newhaven) and find town square
+    const newhavenRooms = await db.getRoomsByMap(1);
+    const townSquare = newhavenRooms.find(r => r.name.toLowerCase() === 'town square');
+    
     if (townSquare) {
       await db.updatePlayerRoom(townSquare.id, playerName);
       player.current_room_id = townSquare.id;
+    } else {
+      // Fallback: try to get room at coordinates (0, 0) on map 1
+      const fallbackRoom = await db.getRoomByCoords(1, 0, 0);
+      if (fallbackRoom) {
+        await db.updatePlayerRoom(fallbackRoom.id, playerName);
+        player.current_room_id = fallbackRoom.id;
+      }
     }
   }
 
@@ -281,8 +288,41 @@ async function authenticateSession(ctx, data) {
   // Trigger Lore Keeper engagement for entering this room
   await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, room.id);
 
+  // Load and send terminal history (excludes noob character automatically)
+  const terminalHistory = await db.getTerminalHistory(player.id);
+  if (terminalHistory.length > 0) {
+    ws.send(JSON.stringify({
+      type: 'terminalHistory',
+      messages: terminalHistory
+    }));
+  }
+
   console.log(`Player ${playerName} connected (${connectionId}) in room ${room.name}`);
   return { authenticated: true, connectionId };
+}
+
+/**
+ * Handle saveTerminalMessage - save a terminal message to history
+ */
+async function saveTerminalMessage(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  if (!connectionId || !playerName) {
+    return; // Silently fail if not authenticated
+  }
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    return; // Silently fail if player not found
+  }
+  
+  // Save message to history (automatically excludes noob character)
+  await db.saveTerminalMessage(
+    player.id,
+    data.message || '',
+    data.messageType || 'info',
+    data.messageHtml || null
+  );
 }
 
 /**
@@ -1935,6 +1975,8 @@ async function restartServer(ctx, data) {
 
 /**
  * Handle warehouse command - open warehouse widget
+ * Allows view-only access from anywhere if player has a deed
+ * Full interaction only when in the specific warehouse room
  */
 async function warehouse(ctx, data) {
   const { ws, db, connectionId, playerName } = ctx;
@@ -1951,46 +1993,105 @@ async function warehouse(ctx, data) {
     return;
   }
   
-  // Validate player is in warehouse room
-  if (currentRoom.room_type !== 'warehouse') {
-    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a warehouse room to access storage.' }));
+  // Check if player has any warehouse deed
+  const hasDeed = await db.hasPlayerWarehouseDeed(player.id);
+  if (!hasDeed) {
+    ws.send(JSON.stringify({ type: 'error', message: 'You need a warehouse deed to access storage.' }));
     return;
   }
   
-  const warehouseLocationKey = currentRoom.id.toString();
+  // Determine which warehouse to show
+  let warehouseLocationKey = null;
+  let accessCheck = null;
   
-  // Check if player has access via deed
-  const accessCheck = await db.checkWarehouseAccess(player.id, warehouseLocationKey);
-  if (!accessCheck.hasAccess) {
-    ws.send(JSON.stringify({ type: 'error', message: 'You need a warehouse deed to access this storage.' }));
-    return;
+  // If in a warehouse room, use that warehouse
+  if (currentRoom.room_type === 'warehouse') {
+    warehouseLocationKey = currentRoom.id.toString();
+    accessCheck = await db.checkWarehouseAccess(player.id, warehouseLocationKey);
+    
+    // If player has access to this warehouse, use it
+    if (accessCheck.hasAccess) {
+      // Initialize warehouse if first time
+      let capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
+      if (!capacity) {
+        capacity = await db.initializePlayerWarehouse(player.id, warehouseLocationKey, accessCheck.deedItem.id);
+      }
+      
+      // Get warehouse items
+      const items = await db.getWarehouseItems(player.id, warehouseLocationKey);
+      const itemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+      
+      // Get owned deeds for this location
+      const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
+      
+      ws.send(JSON.stringify({
+        type: 'warehouseWidgetState',
+        state: {
+          warehouseLocationKey: warehouseLocationKey,
+          items: items,
+          capacity: {
+            maxItemTypes: capacity.max_item_types,
+            maxQuantityPerType: capacity.max_quantity_per_type,
+            currentItemTypes: itemTypeCount,
+            upgradeTier: capacity.upgrade_tier
+          },
+          deeds: deeds
+        }
+      }));
+      return;
+    }
   }
   
-  // Initialize warehouse if first time
-  let capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
-  if (!capacity) {
-    capacity = await db.initializePlayerWarehouse(player.id, warehouseLocationKey, accessCheck.deedItem.id);
+  // Not in warehouse room or don't have access to current warehouse
+  // Find first warehouse the player has access to (for view-only)
+  const playerItems = await db.getPlayerItems(player.id);
+  const allItems = await db.getAllItems();
+  
+  for (const playerItem of playerItems) {
+    const itemDef = allItems.find(item => item.name === playerItem.item_name);
+    if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key) {
+      warehouseLocationKey = itemDef.deed_warehouse_location_key;
+      
+      // Get warehouse data for view-only
+      const capacity = await db.getPlayerWarehouseCapacity(player.id, warehouseLocationKey);
+      if (capacity) {
+        const items = await db.getWarehouseItems(player.id, warehouseLocationKey);
+        const itemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
+        const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
+        
+        ws.send(JSON.stringify({
+          type: 'warehouseWidgetState',
+          state: {
+            warehouseLocationKey: warehouseLocationKey,
+            items: items,
+            capacity: {
+              maxItemTypes: capacity.max_item_types,
+              maxQuantityPerType: capacity.max_quantity_per_type,
+              currentItemTypes: itemTypeCount,
+              upgradeTier: capacity.upgrade_tier
+            },
+            deeds: deeds
+          }
+        }));
+        return;
+      }
+    }
   }
   
-  // Get warehouse items
-  const items = await db.getWarehouseItems(player.id, warehouseLocationKey);
-  const itemTypeCount = await db.getWarehouseItemTypeCount(player.id, warehouseLocationKey);
-  
-  // Get owned deeds for this location
-  const deeds = await db.getPlayerWarehouseDeeds(player.id, warehouseLocationKey);
-  
+  // If we get here, player has a deed but no warehouse initialized yet
+  // This shouldn't happen, but send empty state
   ws.send(JSON.stringify({
     type: 'warehouseWidgetState',
     state: {
-      warehouseLocationKey: warehouseLocationKey,
-      items: items,
+      warehouseLocationKey: null,
+      items: [],
       capacity: {
-        maxItemTypes: capacity.max_item_types,
-        maxQuantityPerType: capacity.max_quantity_per_type,
-        currentItemTypes: itemTypeCount,
-        upgradeTier: capacity.upgrade_tier
+        maxItemTypes: 0,
+        maxQuantityPerType: 0,
+        currentItemTypes: 0,
+        upgradeTier: 1
       },
-      deeds: deeds
+      deeds: []
     }
   }));
 }
@@ -2904,6 +3005,95 @@ async function sell(ctx, data) {
   }
 }
 
+/**
+ * Handle who command - show all players currently in the world
+ */
+async function who(ctx, data) {
+  const { ws, db, connectedPlayers, playerName } = ctx;
+  
+  try {
+    // Get all connected players
+    const playersList = [];
+    
+    for (const [connectionId, playerData] of connectedPlayers.entries()) {
+      // Skip if WebSocket is not open
+      if (!playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      
+      // Get player info
+      const player = await db.getPlayerByName(playerData.playerName);
+      if (!player) continue;
+      
+      // Get room info
+      const room = await db.getRoomById(player.current_room_id);
+      if (!room) continue;
+      
+      // Get map info
+      const map = await db.getMapById(room.map_id);
+      if (!map) continue;
+      
+      playersList.push({
+        name: player.name,
+        mapName: map.name,
+        roomName: room.name,
+        x: room.x,
+        y: room.y
+      });
+    }
+    
+    // Sort by player name
+    playersList.sort((a, b) => a.name.localeCompare(b.name));
+    
+    // Build HTML table
+    let html = '<div class="who-list">';
+    html += '<table class="who-table">';
+    html += '<thead><tr>';
+    html += '<th>Player</th>';
+    html += '<th>Map</th>';
+    html += '<th>Location</th>';
+    html += '</tr></thead>';
+    html += '<tbody>';
+    
+    if (playersList.length === 0) {
+      html += '<tr><td colspan="3" style="text-align: center; color: #888;">No other players are currently in the world.</td></tr>';
+    } else {
+      playersList.forEach(player => {
+        html += '<tr>';
+        html += `<td><strong>${escapeHtml(player.name)}</strong></td>`;
+        html += `<td>${escapeHtml(player.mapName)}</td>`;
+        html += `<td>${escapeHtml(player.roomName)} (${player.x}, ${player.y})</td>`;
+        html += '</tr>';
+      });
+    }
+    
+    html += '</tbody></table>';
+    html += '</div>';
+    
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: html,
+      html: true
+    }));
+  } catch (err) {
+    console.error('Who command error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get player list' }));
+  }
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -2930,6 +3120,8 @@ module.exports = {
   balance,
   buy,
   sell,
-  wealth
+  wealth,
+  who,
+  saveTerminalMessage
 };
 

@@ -5,7 +5,10 @@ let currentRoomId = null; // Track current room to detect room changes
 
 // Widget system state
 const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode'];
-let activeWidgets = ['stats', 'compass', 'map']; // Currently visible widgets (stats always first when present)
+// Default widgets for normal players: stats, compass, map, comms
+// For god mode players: stats, compass, map, godmode (replaces comms)
+let activeWidgets = ['stats', 'compass', 'map', 'comms'];
+let widgetsInitialized = false; // Track if we've set up widgets based on player type
 let restartRequested = false; // Track if server restart was requested
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
@@ -126,11 +129,12 @@ function handleMessage(data) {
                 updateWidgetDisplay(); // Update icon visibility
             }
             if (data.warehouseWidgetState !== undefined && activeWidgets.includes('warehouse')) {
-                if (data.room.roomType === 'warehouse' && data.warehouseWidgetState !== null) {
+                // Always show warehouse widget state if provided (view-only when not in warehouse room)
+                if (data.warehouseWidgetState !== null) {
                     warehouseWidgetState = data.warehouseWidgetState;
                     updateWarehouseWidget(warehouseWidgetState);
                 } else {
-                    // Not in warehouse room - show read-only view
+                    // No state - show empty
                     updateWarehouseWidget(null);
                 }
             }
@@ -204,11 +208,12 @@ function handleMessage(data) {
                 updateWidgetDisplay(); // Update icon visibility
             }
             if (data.warehouseWidgetState !== undefined && activeWidgets.includes('warehouse')) {
-                if (data.room.roomType === 'warehouse' && data.warehouseWidgetState !== null) {
+                // Always show warehouse widget state if provided (view-only when not in warehouse room)
+                if (data.warehouseWidgetState !== null) {
                     warehouseWidgetState = data.warehouseWidgetState;
                     updateWarehouseWidget(warehouseWidgetState);
                 } else {
-                    // Not in warehouse room - show read-only view
+                    // No state - show empty
                     updateWarehouseWidget(null);
                 }
             }
@@ -241,6 +246,53 @@ function handleMessage(data) {
             warehouseWidgetState = data.state;
             updateWarehouseWidget(warehouseWidgetState);
             break;
+        case 'terminalHistory':
+            // Load persisted terminal history
+            if (data.messages && Array.isArray(data.messages)) {
+                const terminalContent = document.getElementById('terminalContent');
+                if (terminalContent) {
+                    // Clear existing content first
+                    terminalContent.innerHTML = '';
+                    
+                    // Add separator to indicate history
+                    const separator = document.createElement('div');
+                    separator.className = 'terminal-separator';
+                    separator.textContent = '─'.repeat(40);
+                    separator.style.color = '#666';
+                    separator.style.fontStyle = 'italic';
+                    terminalContent.appendChild(separator);
+                    
+                    const historyLabel = document.createElement('div');
+                    historyLabel.className = 'info-message';
+                    historyLabel.style.color = '#666';
+                    historyLabel.style.fontStyle = 'italic';
+                    historyLabel.textContent = 'Previous session history:';
+                    terminalContent.appendChild(historyLabel);
+                    
+                    // Add all history messages
+                    data.messages.forEach(msg => {
+                        const msgDiv = document.createElement('div');
+                        msgDiv.className = msg.type === 'error' ? 'error-message' : 'info-message';
+                        if (msg.html) {
+                            msgDiv.innerHTML = msg.html;
+                        } else {
+                            msgDiv.textContent = msg.text;
+                        }
+                        terminalContent.appendChild(msgDiv);
+                    });
+                    
+                    // Add separator after history
+                    const separatorAfter = document.createElement('div');
+                    separatorAfter.className = 'terminal-separator';
+                    separatorAfter.textContent = '─'.repeat(40);
+                    separatorAfter.style.color = '#666';
+                    separatorAfter.style.fontStyle = 'italic';
+                    terminalContent.appendChild(separatorAfter);
+                    
+                    terminalContent.scrollTop = terminalContent.scrollHeight;
+                }
+            }
+            break;
         case 'error':
             addToTerminal(data.message, 'error');
             break;
@@ -254,6 +306,16 @@ function handleMessage(data) {
                     msgDiv.innerHTML = data.message;
                     terminalContent.appendChild(msgDiv);
                     terminalContent.scrollTop = terminalContent.scrollHeight;
+                    
+                    // Save HTML message to history
+                    if (currentPlayerName && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'saveTerminalMessage',
+                            message: data.message,
+                            messageType: 'info',
+                            messageHtml: data.message
+                        }));
+                    }
                 } else {
                     addToTerminal(data.message, 'info');
                 }
@@ -670,6 +732,7 @@ const COMMAND_REGISTRY = [
     // Information commands
     { name: 'look', abbrev: 'l', description: 'Look at room or target (l <target>)', category: 'Information' },
     { name: 'inventory', abbrev: 'i, inv', description: 'Show your inventory', category: 'Information' },
+    { name: 'who', abbrev: null, description: 'Show all players currently in the world', category: 'Information' },
     { name: 'help', abbrev: '?', description: 'Show available commands', category: 'Information' },
     
     // Item commands
@@ -902,6 +965,7 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
             separator.className = 'terminal-separator';
             separator.textContent = '─'.repeat(40);
             terminalContent.appendChild(separator);
+            saveTerminalContentToHistory('─'.repeat(40), 'info');
         }
         
         // Display room name with map name prefix
@@ -910,12 +974,14 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         const displayName = room.mapName ? `${room.mapName}, ${room.name}` : room.name;
         roomNameDiv.textContent = displayName;
         terminalContent.appendChild(roomNameDiv);
+        saveTerminalContentToHistory(displayName, 'info');
         
         // Display room description
         const roomDescDiv = document.createElement('div');
         roomDescDiv.className = 'room-description';
         roomDescDiv.textContent = room.description;
         terminalContent.appendChild(roomDescDiv);
+        saveTerminalContentToHistory(room.description, 'info');
         
         // Display players
         const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
@@ -925,6 +991,7 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         playersLine.className = 'players-line';
         playersLine.innerHTML = `<span class="players-section-title">Also here:</span>`;
         
+        let playersText = 'Also here: ';
         if (otherPlayers.length > 0) {
             otherPlayers.forEach((playerName, index) => {
                 const playerSpan = document.createElement('span');
@@ -932,16 +999,19 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
                 playerSpan.setAttribute('data-player', playerName);
                 playerSpan.textContent = (index === 0 ? ' ' : ', ') + playerName;
                 playersLine.appendChild(playerSpan);
+                playersText += (index === 0 ? '' : ', ') + playerName;
             });
         } else {
             const noPlayers = document.createElement('span');
             noPlayers.className = 'player-item';
             noPlayers.textContent = ' No one else is here.';
             playersLine.appendChild(noPlayers);
+            playersText += 'No one else is here.';
         }
         
         playersDiv.appendChild(playersLine);
         terminalContent.appendChild(playersDiv);
+        saveTerminalContentToHistory(playersText, 'info');
         
         // Display NPCs
         if (npcs && npcs.length > 0) {
@@ -951,16 +1021,20 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
                 const stateDesc = getNPCStateDescription(npc);
                 return npc.name + (stateDesc ? ` (${stateDesc})` : '');
             });
+            const npcsText = `You see here: ${npcNames.join(', ')}`;
             npcsDiv.innerHTML = `<span class="npcs-section-title">You see here:</span> ${npcNames.join(', ')}`;
             terminalContent.appendChild(npcsDiv);
+            saveTerminalContentToHistory(npcsText, 'info');
         }
         
         // Display exits (room items are shown in the dynamic status bar)
         if (exits && exits.length > 0) {
             const exitsDiv = document.createElement('div');
             exitsDiv.className = 'exits-section';
+            const exitsText = `Exits: ${exits.join(', ')}`;
             exitsDiv.innerHTML = `<span class="exits-section-title">Exits:</span> ${exits.join(', ')}`;
             terminalContent.appendChild(exitsDiv);
+            saveTerminalContentToHistory(exitsText, 'info');
         }
         
         // Scroll to bottom
@@ -1187,14 +1261,31 @@ function removePlayerFromTerminal(playerName, direction) {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
+// Helper function to save terminal content to history
+function saveTerminalContentToHistory(text, type = 'info', html = null) {
+    if (currentPlayerName && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'saveTerminalMessage',
+            message: text,
+            messageType: type,
+            messageHtml: html
+        }));
+    }
+}
+
 // Add message to terminal
-function addToTerminal(message, type = 'info') {
+function addToTerminal(message, type = 'info', saveToHistory = true) {
     const terminalContent = document.getElementById('terminalContent');
     const msgDiv = document.createElement('div');
     msgDiv.className = type === 'error' ? 'error-message' : 'info-message';
     msgDiv.textContent = message;
     terminalContent.appendChild(msgDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
+    
+    // Save to terminal history (if player is connected and not noob)
+    if (saveToHistory) {
+        saveTerminalContentToHistory(message, type);
+    }
 }
 
 // Display resonated message (world broadcast)
@@ -1775,6 +1866,16 @@ function executeCommand(command) {
             return;
         }
         ws.send(JSON.stringify({ type: 'inventory' }));
+        return;
+    }
+
+    // WHO - show all players in the world
+    if (base === 'who') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        ws.send(JSON.stringify({ type: 'who' }));
         return;
     }
 
@@ -3454,6 +3555,13 @@ function updateGodModeUI(hasGodMode) {
     if (godmodeIcon) {
         if (hasGodMode) {
             godmodeIcon.classList.remove('hidden');
+            
+            // First time setup for god mode player: replace comms with godmode
+            if (!widgetsInitialized) {
+                // Set default widgets for god mode: stats, compass, map, godmode
+                activeWidgets = ['stats', 'compass', 'map', 'godmode'];
+                widgetsInitialized = true;
+            }
         } else {
             godmodeIcon.classList.add('hidden');
             // Also hide the widget if it's visible
@@ -3461,11 +3569,19 @@ function updateGodModeUI(hasGodMode) {
             if (widget) {
                 widget.classList.add('hidden');
             }
-            // Remove from active widgets
+            // Remove godmode from active widgets
             activeWidgets = activeWidgets.filter(w => w !== 'godmode');
-            updateWidgetDisplay();
+            
+            // First time setup for non-god mode player: ensure comms is in 4th slot
+            if (!widgetsInitialized) {
+                // Set default widgets for normal player: stats, compass, map, comms
+                activeWidgets = ['stats', 'compass', 'map', 'comms'];
+                widgetsInitialized = true;
+            }
         }
     }
+    
+    updateWidgetDisplay();
 }
 
 // ============================================================
@@ -3538,189 +3654,111 @@ function toggleWidget(widgetName) {
 }
 
 // Update the widget display based on activeWidgets state
+// activeWidgets is the SOURCE OF TRUTH - this function makes the UI match it
 function updateWidgetDisplay() {
     const slots = document.querySelectorAll('.widget-slot');
     const toggleBar = document.querySelector('.widget-toggle-bar');
     
-    // FIRST: Sync activeWidgets with actually visible widgets BEFORE we start hiding/showing
-    // This catches widgets that are visible but not in activeWidgets
+    // Step 1: Update toggle bar icons
+    // - Show/hide icons based on availability (godmode only if god mode, warehouse only if has deed)
+    // - Highlight active icons (those in activeWidgets)
     TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        if (widgetName === 'godmode' && !godMode) return;
-        if (widgetName === 'warehouse' && !hasWarehouseDeed) return;
-        
-        const widget = document.getElementById(`widget-${widgetName}`);
-        if (widget) {
-            const isVisible = !widget.classList.contains('hidden');
-            const isInActiveWidgets = activeWidgets.includes(widgetName);
-            
-            // If widget is visible but not in activeWidgets, add it
-            if (isVisible && !isInActiveWidgets) {
-                activeWidgets.push(widgetName);
-            }
-        }
-    });
-    
-    // Update toggle bar icons based on current activeWidgets
-    TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        // Skip godmode widget if not in god mode
-        if (widgetName === 'godmode' && !godMode) {
-            return;
-        }
-        // Skip warehouse widget if player doesn't have a deed
-        if (widgetName === 'warehouse' && !hasWarehouseDeed) {
-            const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
-            if (icon) {
-                icon.classList.add('hidden');
-            }
-            return;
-        }
-        // Show warehouse icon if player has a deed
-        if (widgetName === 'warehouse' && hasWarehouseDeed) {
-            const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
-            if (icon) {
-                icon.classList.remove('hidden');
-            }
-        }
-        
         const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
-        if (icon) {
-            const isActive = activeWidgets.includes(widgetName);
-            if (isActive) {
-                icon.classList.add('active');
+        if (!icon) return;
+        
+        // Handle icon visibility
+        if (widgetName === 'godmode') {
+            if (godMode) {
+                icon.classList.remove('hidden');
             } else {
-                icon.classList.remove('active');
+                icon.classList.add('hidden');
+                return; // Don't process further for hidden godmode icon
             }
+        } else if (widgetName === 'warehouse') {
+            if (hasWarehouseDeed) {
+                icon.classList.remove('hidden');
+            } else {
+                icon.classList.add('hidden');
+                return; // Don't process further for hidden warehouse icon
+            }
+        }
+        
+        // Update active state (highlighted = in activeWidgets)
+        if (activeWidgets.includes(widgetName)) {
+            icon.classList.add('active');
+        } else {
+            icon.classList.remove('active');
         }
     });
     
-    // Build list of widgets to show
-    // Priority: Factory widget in slot 0 (top-left), then NPC widget, then warehouse widget, then toggleable widgets
+    // Step 2: Build list of widgets to actually display in slots
+    // Auto-managed widgets (factory, npc) take priority, then activeWidgets
     let widgetsToShow = [];
     
-    // Slot 0: Factory widget (if in factory room) - always top left when visible
+    // Factory widget takes slot if visible (auto-managed)
     if (factoryWidgetVisible) {
         widgetsToShow.push('factory');
     }
     
-    // Slot 1: NPC widget (if harvesting) - always visible when active
+    // NPC widget takes slot if visible (auto-managed)
     if (npcWidgetVisible) {
         widgetsToShow.push('npc');
     }
     
-    // Warehouse widget is now toggleable (not auto-managed)
-    // It will be shown if in activeWidgets and player has a deed
-    
-    // Remaining slots: Toggleable widgets (stats, compass, map, communication, warehouse, godmode)
-    // Filter out godmode widget if not in god mode
-    // Filter out warehouse widget if player doesn't have a deed
+    // Add toggleable widgets from activeWidgets (filtered by availability)
     const filteredActiveWidgets = activeWidgets.filter(w => {
-        if (w === 'godmode' && !godMode) {
-            return false;
-        }
-        if (w === 'warehouse' && !hasWarehouseDeed) {
-            return false;
-        }
+        if (w === 'godmode' && !godMode) return false;
+        if (w === 'warehouse' && !hasWarehouseDeed) return false;
         return true;
     });
     widgetsToShow.push(...filteredActiveWidgets);
     
-    // Assign widgets to slots
-    slots.forEach((slot, index) => {
-        // Hide all widgets in this slot first (including any that shouldn't be visible)
-        const widgets = slot.querySelectorAll('.widget');
-        widgets.forEach(w => w.classList.add('hidden'));
-        
-        // Also ensure all widgets in other slots that aren't in widgetsToShow are hidden
-        // This catches cases where widgets might be in wrong slots
-        if (index === 0) { // Only do this once, on first slot iteration
-            TOGGLEABLE_WIDGETS.forEach(wName => {
-                if (wName === 'godmode' && !godMode) return;
-                if (!widgetsToShow.includes(wName)) {
-                    const w = document.getElementById(`widget-${wName}`);
-                    if (w) {
-                        w.classList.add('hidden');
-                    }
-                }
-            });
+    // Limit to 4 slots
+    widgetsToShow = widgetsToShow.slice(0, 4);
+    
+    // Step 3: Hide ALL widgets first (clean slate)
+    // Hide all toggleable widgets
+    TOGGLEABLE_WIDGETS.forEach(widgetName => {
+        const widget = document.getElementById(`widget-${widgetName}`);
+        if (widget) {
+            widget.classList.add('hidden');
         }
-        
-        // Show the appropriate widget for this slot
+    });
+    // Also hide auto-managed widgets if not in widgetsToShow
+    ['npc', 'factory'].forEach(widgetName => {
+        const widget = document.getElementById(`widget-${widgetName}`);
+        if (widget && !widgetsToShow.includes(widgetName)) {
+            widget.classList.add('hidden');
+        }
+    });
+    // Hide empty widget placeholders
+    document.querySelectorAll('.widget-empty').forEach(w => w.classList.add('hidden'));
+    
+    // Step 4: Show widgets in their slots
+    slots.forEach((slot, index) => {
         if (index < widgetsToShow.length) {
             const widgetName = widgetsToShow[index];
-            
-            // First try to find widget in current slot
-            let widget = slot.querySelector(`[data-widget="${widgetName}"]`);
-            
-            // If not found in current slot, search all slots or by ID
-            if (!widget) {
-                const widgetId = `widget-${widgetName}`;
-                // Try by ID first, then search all slots by data-widget
-                widget = document.getElementById(widgetId) || document.querySelector(`[data-widget="${widgetName}"]`);
-            }
+            const widgetId = `widget-${widgetName}`;
+            const widget = document.getElementById(widgetId);
             
             if (widget) {
-                // If widget is in a different slot, move it to this slot
+                // Move widget to this slot if needed
                 if (widget.parentElement !== slot) {
                     slot.appendChild(widget);
                 }
                 widget.classList.remove('hidden');
-                // Make widget draggable if it's a toggleable widget
+                
+                // Make toggleable widgets draggable
                 if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
                     widget.draggable = true;
                     widget.dataset.widgetName = widgetName;
                 }
             }
         } else {
-            // Show empty widget placeholder
+            // Show empty placeholder for unused slots
             const emptyWidget = slot.querySelector('.widget-empty');
             if (emptyWidget) {
                 emptyWidget.classList.remove('hidden');
-            }
-        }
-    });
-    
-    // Sync activeWidgets with actually visible widgets (ensure consistency)
-    // Check all toggleable widgets and ensure activeWidgets matches what's visible
-    const updatedActiveWidgets = [...activeWidgets];
-    
-    TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        if (widgetName === 'godmode' && !godMode) return;
-        
-        const widget = document.getElementById(`widget-${widgetName}`);
-        if (widget) {
-            const isVisible = !widget.classList.contains('hidden');
-            const isInActiveWidgets = updatedActiveWidgets.includes(widgetName);
-            
-            // If widget is visible but not in activeWidgets, add it
-            if (isVisible && !isInActiveWidgets) {
-                updatedActiveWidgets.push(widgetName);
-            }
-            // If widget is hidden but in activeWidgets, remove it
-            else if (!isVisible && isInActiveWidgets) {
-                const index = updatedActiveWidgets.indexOf(widgetName);
-                if (index > -1) {
-                    updatedActiveWidgets.splice(index, 1);
-                }
-            }
-        }
-    });
-    
-    // Update activeWidgets if it changed
-    if (updatedActiveWidgets.length !== activeWidgets.length || 
-        !updatedActiveWidgets.every((w, i) => w === activeWidgets[i])) {
-        activeWidgets = updatedActiveWidgets;
-    }
-    
-    // Update icons based on synced activeWidgets
-    TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        if (widgetName === 'godmode' && !godMode) return;
-        
-        const icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
-        if (icon) {
-            if (activeWidgets.includes(widgetName)) {
-                icon.classList.add('active');
-            } else {
-                icon.classList.remove('active');
             }
         }
     });
@@ -4070,7 +4108,10 @@ function updateWarehouseWidget(state) {
     const withdrawItemInput = document.getElementById('warehouse-withdraw-item');
     const withdrawQuantityInput = document.getElementById('warehouse-withdraw-quantity');
     
-    if (!isInWarehouseRoom || !state) {
+    // Determine if we're in interactive mode (in warehouse room) or view-only mode
+    const isInteractive = isInWarehouseRoom && state && state.warehouseLocationKey;
+    
+    if (!isInteractive) {
         // Read-only mode: disable all inputs and buttons
         if (storeBtn) storeBtn.disabled = true;
         if (withdrawBtn) withdrawBtn.disabled = true;
@@ -4082,22 +4123,27 @@ function updateWarehouseWidget(state) {
         // Show read-only message
         const infoNote = warehouseWidget.querySelector('.warehouse-info-note');
         if (infoNote) {
-            infoNote.textContent = 'You must be in a warehouse room to interact with your storage.';
+            if (state && state.warehouseLocationKey) {
+                infoNote.textContent = 'View-only mode. You must be in a warehouse room to store or withdraw items.';
+            } else {
+                infoNote.textContent = 'You need a warehouse deed to access storage.';
+            }
             infoNote.style.color = '#ffaa00';
         }
         
-        // Still show data if available
+        // Still show data if available (view-only mode)
         if (state) {
             // Update displays with state data
             const capacityDisplay = document.getElementById('warehouse-capacity-display');
             if (capacityDisplay && state.capacity) {
-                capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} item types, ${state.capacity.maxQuantityPerType} qty per type`;
+                capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} types`;
             }
             
             const storedDisplay = document.getElementById('warehouse-stored-display');
             if (storedDisplay && state.items) {
                 const totalItems = state.items.reduce((sum, item) => sum + item.quantity, 0);
-                storedDisplay.textContent = `${state.items.length} types, ${totalItems} total items`;
+                const maxCapacity = state.capacity ? state.capacity.maxItemTypes * state.capacity.maxQuantityPerType : 0;
+                storedDisplay.textContent = `${totalItems}/${maxCapacity} stored`;
             }
             
             const deedsList = document.getElementById('warehouse-deeds-list');
@@ -4146,14 +4192,15 @@ function updateWarehouseWidget(state) {
     // Update capacity display
     const capacityDisplay = document.getElementById('warehouse-capacity-display');
     if (capacityDisplay && state.capacity) {
-        capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} item types, ${state.capacity.maxQuantityPerType} qty per type`;
+        capacityDisplay.textContent = `${state.capacity.currentItemTypes}/${state.capacity.maxItemTypes} types`;
     }
     
     // Update stored display
     const storedDisplay = document.getElementById('warehouse-stored-display');
     if (storedDisplay && state.items) {
         const totalItems = state.items.reduce((sum, item) => sum + item.quantity, 0);
-        storedDisplay.textContent = `${state.items.length} types, ${totalItems} total items`;
+        const maxCapacity = state.capacity ? state.capacity.maxItemTypes * state.capacity.maxQuantityPerType : 0;
+        storedDisplay.textContent = `${totalItems}/${maxCapacity} stored`;
     }
     
     // Update deeds list

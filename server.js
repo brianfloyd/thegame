@@ -12,6 +12,10 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
+// Initialize email service (must be done after dotenv)
+const emailService = require('./utils/email');
+emailService.initializeEmailService();
+
 // Database module (async PostgreSQL)
 const db = require('./database');
 
