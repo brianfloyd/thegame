@@ -40,15 +40,34 @@ The game uses an email/password authentication system with account-based charact
    - Updates `last_login_at`
    - Creates session with `accountId`
    - Returns account info and character list
+   - Login screen includes "Forgot Password?" link
 
-3. **Character Selection** (`POST /api/select-character`)
+3. **Forgot Password** (`POST /api/request-password-reset`)
+   - Accessible from login screen via "Forgot Password?" link
+   - Opens modal dialog for email input
+   - Validates email format
+   - If account exists, generates password reset token (1-hour expiration)
+   - Sends password reset email with reset link
+   - Always returns success message (prevents email enumeration)
+   - User receives email with link to `/reset-password?token=...`
+
+4. **Password Reset** (`POST /api/reset-password`)
+   - User clicks link in email, navigates to `/reset-password?token=...`
+   - Validates reset token (must be valid, not expired, not used)
+   - Validates new password (min 4 characters, max 100)
+   - Hashes new password with bcrypt
+   - Updates account password
+   - Marks reset token as used
+   - User can then login with new password
+
+5. **Character Selection** (`POST /api/select-character`)
    - Requires valid account session
    - Validates character exists
    - Verifies character belongs to account (security check)
    - Creates player session (sets `playerName` and `playerId` in session)
    - Redirects to `/game`
 
-4. **Logout** (`POST /api/logout`)
+6. **Logout** (`POST /api/logout`)
    - Destroys session
    - Returns to login screen
 
@@ -66,6 +85,9 @@ The game uses an email/password authentication system with account-based charact
 
 1. **Landing Page** (`/`)
    - Shows login/register tabs
+   - Login form includes "Forgot Password?" link below login button
+   - Clicking "Forgot Password?" opens modal dialog
+   - Modal allows user to enter email and request password reset
    - If already logged in (has account session), shows character selection
    - If character already selected, redirects to `/game`
 
@@ -85,10 +107,93 @@ The game uses an email/password authentication system with account-based charact
 - **Password**: test
 - **Characters**: Fliz, Hebron, noob (linked via migration)
 
+### Account Removal Script (Testing Only)
+
+A testing-only script for removing accounts and all associated data from the database.
+
+#### Usage
+```bash
+npm run remove-account <email>
+```
+
+#### What Gets Deleted
+- Account record
+- All characters/players associated with the account
+- Player inventory (player_items)
+- Player bank storage (player_bank)
+- Warehouse items and warehouse ownership (warehouse_items, player_warehouses)
+- Terminal history (player's own history only)
+- Lore keeper data (greetings, item awards)
+- User character links (user_characters)
+- Email verification tokens
+- Password reset tokens
+
+#### What is NOT Deleted
+- Player names appearing in another player's backscroll (terminal_history from other players)
+- Broadcasting system conversations (terminal_history from other players)
+
+**Note**: This script is for testing only and will be reworked for production with proper constraints and safety checks.
+
+### Email Verification System
+
+The game uses an email verification system with a 7-day grace period for new accounts.
+
+#### Grace Period
+- New accounts can play for **7 days** without verifying their email
+- After 7 days, email verification is **required** to continue playing
+- Verified accounts have unlimited access (no grace period expiration)
+
+#### Verification Flow
+1. **Registration**: Account is created with `email_verified = FALSE`
+   - Verification email is automatically sent with a 24-hour expiration token
+   - User can play immediately during the 7-day grace period
+
+2. **During Grace Period**: 
+   - Character selection screen displays days remaining (e.g., "You have 5 days remaining to verify your email")
+   - "Resend Verification Email" button is available if email was lost or missed
+   - User can continue playing normally
+
+3. **After Grace Period**:
+   - Character selection is blocked until email is verified
+   - Game access is blocked until email is verified
+   - User must click verification link in email or use "Resend Verification Email" button
+
+#### Character Selection Screen Features
+- **Days Remaining Display**: Shows countdown of days left in grace period (if unverified)
+- **Resend Verification Email Button**: Allows users to request a new verification email
+  - Button appears only for unverified accounts
+  - Generates new 24-hour verification token
+  - Sends email with verification link
+
+#### API Endpoints
+
+- `GET /api/verify-email?token=<token>` - Verify email using token from email link
+- `POST /api/resend-verification-email` - Resend verification email (requires account session)
+- `GET /api/account` - Returns account info including `daysRemainingForVerification`
+
+#### Database Functions
+
+- `isAccountWithinGracePeriod(accountId)` - Returns true if account is verified OR created within last 7 days
+- `getDaysRemainingForVerification(accountId)` - Returns days remaining in grace period (null if verified, can be negative if expired)
+
+### Password Reset Flow
+
+1. **Request Password Reset**:
+   - User clicks "Forgot Password?" link on login screen
+   - Modal dialog appears with email input field
+   - User enters email and clicks "Send Reset Link"
+   - System sends password reset email (if account exists)
+   - Success message displayed (always shows success to prevent email enumeration)
+
+2. **Reset Password**:
+   - User receives email with reset link: `/reset-password?token=...`
+   - Clicking link opens password reset page
+   - User enters new password and confirms
+   - System validates token and updates password
+   - User redirected to login screen to login with new password
+
 ### Future Enhancements
 
-- Email verification system (using `email_verified` flag)
-- Password reset functionality
 - Account management (change email, change password)
 - Character creation UI (currently requires admin/god mode)
 - Multi-account support per email (if needed)
@@ -100,6 +205,9 @@ The game uses an email/password authentication system with account-based charact
 - `POST /api/logout` - Logout and destroy session
 - `GET /api/account` - Get current account info and characters (requires session)
 - `POST /api/select-character` - Select character to play (requires account session)
+- `POST /api/request-password-reset` - Request password reset email (public)
+- `POST /api/reset-password` - Reset password with token (public)
+- `GET /reset-password` - Password reset page (public, requires token query param)
 
 ### Database Functions (`database.js`)
 

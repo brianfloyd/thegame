@@ -19,9 +19,11 @@
     "test-email-simple": "node scripts/test-email-simple.js",
     "test-email-auth": "node scripts/test-email-auth.js",
     "test-email-diagnostic": "node scripts/test-email-diagnostic.js",
+    "test-email-username": "node scripts/test-email-username.js",
     "sync-dev-to-prod": "node scripts/sync-dev-to-prod.js",
     "sync-dev-to-prod:dry-run": "node scripts/sync-dev-to-prod.js --dry-run",
-    "test-sync-safety": "node scripts/test-sync-safety.js"
+    "test-sync-safety": "node scripts/test-sync-safety.js",
+    "remove-account": "node scripts/remove-account.js"
   },
   "keywords": [],
   "author": "",

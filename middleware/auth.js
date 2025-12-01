@@ -77,6 +77,7 @@ function createLoginHandler(db) {
       
       // Get user's characters
       const characters = await db.getUserCharacters(account.id);
+      const daysRemaining = await db.getDaysRemainingForVerification(account.id);
       
       // Store account info in session (but don't select character yet)
       req.session.accountId = account.id;
@@ -96,6 +97,7 @@ function createLoginHandler(db) {
           accountId: account.id,
           email: account.email,
           emailVerified: account.email_verified,
+          daysRemainingForVerification: daysRemaining,
           characters: characters
         });
       });
@@ -180,12 +182,18 @@ function createRegisterHandler(db) {
       // Send verification email
       const emailResult = await emailService.sendVerificationEmail(sanitizedEmail, verificationToken);
       if (!emailResult.success) {
-        console.error('Failed to send verification email:', emailResult.error);
+        console.error(`❌ Failed to send verification email to ${sanitizedEmail} during registration:`, emailResult.error);
+        console.error('   Registration will continue, but user will need to use "Resend Verification Email" button');
         // Don't fail registration if email fails, but log it
+      } else {
+        console.log(`✅ Verification email sent successfully to ${sanitizedEmail} during registration`);
       }
       
       // Reset rate limiting on successful registration
       authAttempts.delete(clientIp);
+      
+      // Get days remaining for verification
+      const daysRemaining = await db.getDaysRemainingForVerification(account.id);
       
       // Store account info in session
       req.session.accountId = account.id;
@@ -205,6 +213,7 @@ function createRegisterHandler(db) {
           accountId: account.id,
           email: account.email,
           emailVerified: account.email_verified,
+          daysRemainingForVerification: daysRemaining,
           characters: [], // New account has no characters yet
           verificationEmailSent: emailResult.success
         });
@@ -253,12 +262,14 @@ function createGetAccountInfoHandler(db) {
       }
       
       const characters = await db.getUserCharacters(account.id);
+      const daysRemaining = await db.getDaysRemainingForVerification(account.id);
       
       res.json({
         success: true,
         accountId: account.id,
         email: account.email,
         emailVerified: account.email_verified,
+        daysRemainingForVerification: daysRemaining,
         characters: characters
       });
     } catch (err) {

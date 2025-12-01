@@ -34,6 +34,19 @@ function setupRoutes(app, options) {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
   });
   
+  // Email service status endpoint (for debugging)
+  app.get('/api/email-status', (req, res) => {
+    const emailService = require('../utils/email');
+    const isReady = emailService.isEmailServiceReady();
+    res.json({ 
+      emailServiceReady: isReady,
+      smtpUser: process.env.SMTP_USER ? '***configured***' : 'not set',
+      smtpPassword: process.env.SMTP_PASSWORD ? '***configured***' : 'not set',
+      smtpHost: process.env.SMTP_HOST || 'smtpout.secureserver.net',
+      smtpPort: process.env.SMTP_PORT || '587'
+    });
+  });
+  
   // Authentication endpoints
   app.post('/api/login', loginHandler);
   app.post('/api/register', registerHandler);
@@ -67,6 +80,52 @@ function setupRoutes(app, options) {
     }
   });
   
+  // Resend verification email endpoint
+  app.post('/api/resend-verification-email', async (req, res) => {
+    if (!req.session.accountId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    
+    try {
+      const account = await options.db.getAccountById(req.session.accountId);
+      if (!account) {
+        return res.status(404).json({ success: false, error: 'Account not found' });
+      }
+      
+      // If already verified, no need to resend
+      if (account.email_verified) {
+        return res.json({ success: true, message: 'Email is already verified' });
+      }
+      
+      // Generate new verification token (expires in 24 hours)
+      const { v4: uuidv4 } = require('uuid');
+      const verificationToken = uuidv4();
+      const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+      
+      // Save verification token to database
+      await options.db.createEmailVerificationToken(account.id, verificationToken, expiresAt);
+      
+      // Send verification email
+      const emailService = require('../utils/email');
+      const emailResult = await emailService.sendVerificationEmail(account.email, verificationToken);
+      
+      if (!emailResult.success) {
+        console.error(`❌ Failed to send verification email to ${account.email}:`, emailResult.error);
+        console.error('Email service error details:', emailResult);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to send verification email. Please check server logs for details.' 
+        });
+      }
+      
+      console.log(`✅ Verification email sent successfully to ${account.email} for account: ${account.id}`);
+      res.json({ success: true, message: 'Verification email sent successfully' });
+    } catch (err) {
+      console.error('Resend verification email error:', err);
+      res.status(500).json({ success: false, error: 'Failed to resend verification email' });
+    }
+  });
+  
   // Request password reset endpoint
   app.post('/api/request-password-reset', async (req, res) => {
     const { email } = req.body;
@@ -92,7 +151,16 @@ function setupRoutes(app, options) {
         await options.db.createPasswordResetToken(account.id, resetToken, expiresAt);
         
         const emailService = require('../utils/email');
-        await emailService.sendPasswordResetEmail(sanitizedEmail, resetToken);
+        const emailResult = await emailService.sendPasswordResetEmail(sanitizedEmail, resetToken);
+        
+        if (!emailResult.success) {
+          console.error(`❌ Failed to send password reset email to ${sanitizedEmail}:`, emailResult.error);
+          // Log the error but still return success to prevent email enumeration
+        } else {
+          console.log(`✅ Password reset email sent successfully to ${sanitizedEmail}`);
+        }
+      } else {
+        console.log(`Password reset requested for non-existent email: ${sanitizedEmail} (returning success to prevent enumeration)`);
       }
       
       // Always return success to prevent email enumeration
@@ -101,7 +169,8 @@ function setupRoutes(app, options) {
         message: 'If an account with that email exists, a password reset link has been sent.' 
       });
     } catch (err) {
-      console.error('Password reset request error:', err);
+      console.error('❌ Password reset request error:', err);
+      console.error('Error stack:', err.stack);
       // Still return success to prevent email enumeration
       res.json({ 
         success: true, 
@@ -219,12 +288,25 @@ function setupRoutes(app, options) {
     res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
   });
   
-  // Game route - requires valid player session
-  app.get('/game', optionalSession, (req, res) => {
+  // Game route - requires valid player session and email verification (after grace period)
+  app.get('/game', optionalSession, async (req, res) => {
     // If no valid player session, redirect to login
     if (!req.player) {
       return res.redirect('/');
     }
+    
+    // Check if account is within grace period (7 days for unverified accounts)
+    if (req.session.accountId) {
+      const withinGracePeriod = await options.db.isAccountWithinGracePeriod(req.session.accountId);
+      if (!withinGracePeriod) {
+        const account = await options.db.getAccountById(req.session.accountId);
+        if (account && !account.email_verified) {
+          // Email verification required - redirect to character selection
+          return res.redirect('/?verification_required=true');
+        }
+      }
+    }
+    
     res.sendFile(path.join(__dirname, '..', 'public', 'game.html'));
   });
   

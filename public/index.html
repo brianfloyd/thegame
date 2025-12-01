@@ -20,6 +20,7 @@
                     <input type="email" id="loginEmail" placeholder="Email" required>
                     <input type="password" id="loginPassword" placeholder="Password" required>
                     <button id="loginBtn" class="auth-btn">Login</button>
+                    <a href="#" id="forgotPasswordLink" style="color: #667eea; text-decoration: none; font-size: 0.9em; margin-top: 10px; display: inline-block;">Forgot Password?</a>
                     <div id="loginError" class="error-message"></div>
                 </div>
                 <div id="registerForm" class="auth-form">
@@ -28,6 +29,22 @@
                     <button id="registerBtn" class="auth-btn">Register</button>
                     <div id="registerError" class="error-message"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Forgot Password Modal -->
+    <div id="forgotPasswordModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <h2 style="color: #667eea; margin-bottom: 20px;">Reset Password</h2>
+            <p style="color: #666; margin-bottom: 20px;">Enter your email address and we'll send you a link to reset your password.</p>
+            <div id="forgotPasswordForm">
+                <input type="email" id="forgotPasswordEmail" placeholder="Email" required 
+                       style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 1em; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin-bottom: 15px;">
+                <button id="sendResetEmailBtn" class="auth-btn" style="width: 100%;">Send Reset Link</button>
+                <div id="forgotPasswordError" class="error-message"></div>
+                <div id="forgotPasswordSuccess" style="color: #4caf50; font-size: 0.9em; margin-top: 10px; display: none;"></div>
             </div>
         </div>
     </div>
@@ -57,6 +74,12 @@
                     currentAccount = data;
                     currentCharacters = data.characters || [];
                     showCharacterSelection();
+                    
+                    // Check for verification required message
+                    const urlParams = new URLSearchParams(window.location.search);
+                    if (urlParams.get('verification_required') === 'true') {
+                        alert('Email verification required! Please verify your email to continue playing.');
+                    }
                 }
             } catch (error) {
                 console.error('Error checking auth:', error);
@@ -159,10 +182,66 @@
             
             // Show account info
             const accountInfo = document.getElementById('accountInfo');
+            let verificationMessage = '';
+            
+            if (!currentAccount.emailVerified) {
+                const daysRemaining = currentAccount.daysRemainingForVerification;
+                if (daysRemaining !== null && daysRemaining !== undefined) {
+                    if (daysRemaining > 0) {
+                        verificationMessage = `<p class="warning">Email not verified. You have ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} remaining to verify your email.</p>`;
+                    } else {
+                        verificationMessage = '<p class="warning" style="color: #d32f2f; font-weight: bold;">Email verification required! Please verify your email to continue playing.</p>';
+                    }
+                } else {
+                    verificationMessage = '<p class="warning">Email not verified</p>';
+                }
+                
+                // Add resend verification email button
+                verificationMessage += '<button id="resendVerificationBtn" class="auth-btn" style="margin-top: 10px; background: #ff9800;">Resend Verification Email</button>';
+                verificationMessage += '<div id="resendVerificationMessage" style="margin-top: 10px; min-height: 20px;"></div>';
+            }
+            
             accountInfo.innerHTML = `
                 <p>Logged in as: <strong>${currentAccount.email}</strong></p>
-                ${currentAccount.emailVerified ? '' : '<p class="warning">Email not verified</p>'}
+                ${verificationMessage}
             `;
+            
+            // Attach resend verification email handler if button exists
+            const resendBtn = document.getElementById('resendVerificationBtn');
+            if (resendBtn) {
+                resendBtn.addEventListener('click', async () => {
+                    const messageDiv = document.getElementById('resendVerificationMessage');
+                    resendBtn.disabled = true;
+                    resendBtn.textContent = 'Sending...';
+                    
+                    try {
+                        const response = await fetch('/api/resend-verification-email', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            credentials: 'include'
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            messageDiv.textContent = 'Verification email sent! Please check your inbox.';
+                            messageDiv.style.color = '#4caf50';
+                        } else {
+                            messageDiv.textContent = data.error || 'Failed to send verification email';
+                            messageDiv.style.color = '#d32f2f';
+                        }
+                    } catch (error) {
+                        console.error('Resend verification email error:', error);
+                        messageDiv.textContent = 'Failed to send verification email. Please try again.';
+                        messageDiv.style.color = '#d32f2f';
+                    } finally {
+                        resendBtn.disabled = false;
+                        resendBtn.textContent = 'Resend Verification Email';
+                    }
+                });
+            }
             
             // Show characters or character creation form
             const characterList = document.getElementById('characterList');
@@ -302,6 +381,86 @@
             }
         });
 
+        // Forgot Password Modal
+        const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+        const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+        const modalClose = document.querySelector('.modal-close');
+        
+        forgotPasswordLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            forgotPasswordModal.style.display = 'block';
+            document.getElementById('forgotPasswordEmail').value = document.getElementById('loginEmail').value || '';
+            document.getElementById('forgotPasswordError').textContent = '';
+            document.getElementById('forgotPasswordSuccess').style.display = 'none';
+        });
+        
+        modalClose.addEventListener('click', () => {
+            forgotPasswordModal.style.display = 'none';
+        });
+        
+        window.addEventListener('click', (e) => {
+            if (e.target === forgotPasswordModal) {
+                forgotPasswordModal.style.display = 'none';
+            }
+        });
+        
+        // Send password reset email
+        document.getElementById('sendResetEmailBtn').addEventListener('click', async () => {
+            const email = document.getElementById('forgotPasswordEmail').value.trim();
+            const errorDiv = document.getElementById('forgotPasswordError');
+            const successDiv = document.getElementById('forgotPasswordSuccess');
+            const sendBtn = document.getElementById('sendResetEmailBtn');
+            
+            errorDiv.textContent = '';
+            successDiv.style.display = 'none';
+            
+            if (!email) {
+                errorDiv.textContent = 'Please enter your email address';
+                return;
+            }
+            
+            const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+            if (!emailRegex.test(email)) {
+                errorDiv.textContent = 'Please enter a valid email address';
+                return;
+            }
+            
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            
+            try {
+                const response = await fetch('/api/request-password-reset', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ email })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    successDiv.textContent = data.message || 'If an account with that email exists, a password reset link has been sent. Please check your email.';
+                    successDiv.style.display = 'block';
+                    errorDiv.textContent = '';
+                    
+                    // Close modal after 3 seconds
+                    setTimeout(() => {
+                        forgotPasswordModal.style.display = 'none';
+                    }, 3000);
+                } else {
+                    errorDiv.textContent = data.error || 'Failed to send reset email. Please try again.';
+                }
+            } catch (error) {
+                console.error('Password reset request error:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Reset Link';
+            }
+        });
+        
         // Allow Enter key to submit forms
         document.getElementById('loginPassword').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -311,6 +470,11 @@
         document.getElementById('registerPassword').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 document.getElementById('registerBtn').click();
+            }
+        });
+        document.getElementById('forgotPasswordEmail').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('sendResetEmailBtn').click();
             }
         });
 

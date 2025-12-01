@@ -28,7 +28,9 @@ function initializeEmailService() {
     console.log(`Email service: SMTP_USER was just username, using full email: ${smtpUser}`);
   }
   
-  // For GoDaddy, authentication uses just the username (before @)
+  // For GoDaddy, authentication can use either:
+  // 1. Just the username (before @) - most common
+  // 2. Full email address - sometimes required
   // Use SMTP_USERNAME if provided, otherwise extract from SMTP_USER
   let authUser = process.env.SMTP_USERNAME;
   if (!authUser && smtpUser) {
@@ -36,13 +38,20 @@ function initializeEmailService() {
     authUser = smtpUser.split('@')[0];
   }
   
+  // Store full email for potential fallback
+  const fullEmailForAuth = smtpUser;
+  
   if (!smtpUser || !smtpPassword) {
-    console.error('Email service: SMTP_USER and SMTP_PASSWORD must be set in .env file');
+    console.error('❌ Email service: SMTP_USER and SMTP_PASSWORD must be set in .env file');
+    console.error('   Email service will NOT be available until these are configured.');
+    transporter = null;
     return;
   }
   
   console.log(`Email service: Configuring SMTP for ${smtpUser} on ${smtpHost}:${smtpPort}`);
   console.log(`Email service: Using auth user: ${authUser}`);
+  console.log(`Email service: Auth password: ${smtpPassword ? '***' + smtpPassword.slice(-3) : 'NOT SET'}`);
+  console.log(`Email service: Secure mode: ${smtpSecure} (${smtpSecure ? 'SSL' : 'STARTTLS'})`);
   
   transporter = nodemailer.createTransport({
     host: smtpHost,
@@ -66,22 +75,34 @@ function initializeEmailService() {
   // Verify connection
   transporter.verify((error, success) => {
     if (error) {
-      console.error('Email service configuration error:', error.message);
+      console.error('❌ Email service configuration error:', error.message);
       console.error('Error code:', error.code);
+      
+      // If authentication failed, suggest trying full email
+      if (error.code === 'EAUTH' && authUser !== fullEmailForAuth) {
+        console.error('\n⚠️  Authentication failed with username. This might mean:');
+        console.error('   1. Password is incorrect');
+        console.error('   2. GoDaddy requires full email address for authentication');
+        console.error(`   Try setting SMTP_USERNAME=${fullEmailForAuth} in your .env file`);
+      }
+      
       console.error('\nTroubleshooting tips:');
       console.error('1. Verify your GoDaddy email password is correct');
       console.error('2. Try using just the username (before @) in SMTP_USERNAME env var');
-      console.error('3. Try port 587 with SMTP_SECURE=false instead of 465');
-      console.error('4. Check if SMTP is enabled in your GoDaddy email account settings');
-      console.error('5. Some GoDaddy accounts require enabling "Less Secure Apps" or using app passwords');
+      console.error(`3. If that fails, try using full email: SMTP_USERNAME=${fullEmailForAuth}`);
+      console.error('4. Try port 587 with SMTP_SECURE=false instead of 465');
+      console.error('5. Check if SMTP is enabled in your GoDaddy email account settings');
+      console.error('6. Some GoDaddy accounts require enabling "Less Secure Apps" or using app passwords');
+      console.error('7. Verify your GoDaddy email account is active and not locked');
       console.error('\nCurrent settings:');
       console.error(`  Host: ${smtpHost}`);
       console.error(`  Port: ${smtpPort}`);
       console.error(`  Secure: ${smtpSecure}`);
       console.error(`  Auth User: ${authUser}`);
-      console.error(`  Auth User (full email): ${smtpUser}`);
+      console.error(`  Full Email: ${fullEmailForAuth}`);
+      console.error(`  Password: ${smtpPassword ? 'Set (' + smtpPassword.length + ' chars)' : 'NOT SET'}`);
     } else {
-      console.log('Email service ready to send messages');
+      console.log('✅ Email service ready to send messages');
     }
   });
 }
@@ -91,8 +112,10 @@ function initializeEmailService() {
  */
 async function sendVerificationEmail(email, verificationToken) {
   if (!transporter) {
-    console.error('Email service not initialized');
-    return { success: false, error: 'Email service not initialized' };
+    console.error('❌ Email service not initialized - cannot send verification email');
+    console.error('   Check that SMTP_USER and SMTP_PASSWORD are set in environment variables');
+    console.error('   Also verify SMTP authentication succeeded during server startup');
+    return { success: false, error: 'Email service not initialized. Please check server configuration and SMTP credentials.' };
   }
 
   const baseUrl = process.env.BASE_URL || 'http://localhost:3434';
@@ -202,9 +225,23 @@ async function sendVerificationEmail(email, verificationToken) {
       code: error.code,
       command: error.command,
       response: error.response,
-      responseCode: error.responseCode,
-      stack: error.stack
+      responseCode: error.responseCode
     });
+    
+    // Provide specific guidance for authentication errors
+    if (error.code === 'EAUTH') {
+      console.error('\n⚠️  SMTP Authentication Failed!');
+      console.error('   This usually means:');
+      console.error('   1. Password is incorrect');
+      console.error('   2. Username format is wrong (try full email or just username)');
+      console.error('   3. GoDaddy account SMTP is disabled');
+      console.error('   4. Account is locked or requires password reset');
+      console.error('\n   Try:');
+      console.error('   - Verify password in GoDaddy email settings');
+      console.error('   - Try setting SMTP_USERNAME to full email address');
+      console.error('   - Check GoDaddy email account status');
+    }
+    
     return { success: false, error: error.message };
   }
 }
@@ -214,8 +251,9 @@ async function sendVerificationEmail(email, verificationToken) {
  */
 async function sendPasswordResetEmail(email, resetToken) {
   if (!transporter) {
-    console.error('Email service not initialized');
-    return { success: false, error: 'Email service not initialized' };
+    console.error('❌ Email service not initialized - cannot send password reset email');
+    console.error('   Check that SMTP_USER and SMTP_PASSWORD are set in environment variables');
+    return { success: false, error: 'Email service not initialized. Please check server configuration.' };
   }
 
   const baseUrl = process.env.BASE_URL || 'http://localhost:3434';
@@ -310,16 +348,38 @@ async function sendPasswordResetEmail(email, resetToken) {
       code: error.code,
       command: error.command,
       response: error.response,
-      responseCode: error.responseCode,
-      stack: error.stack
+      responseCode: error.responseCode
     });
+    
+    // Provide specific guidance for authentication errors
+    if (error.code === 'EAUTH') {
+      console.error('\n⚠️  SMTP Authentication Failed!');
+      console.error('   This usually means:');
+      console.error('   1. Password is incorrect');
+      console.error('   2. Username format is wrong (try full email or just username)');
+      console.error('   3. GoDaddy account SMTP is disabled');
+      console.error('   4. Account is locked or requires password reset');
+      console.error('\n   Try:');
+      console.error('   - Verify password in GoDaddy email settings');
+      console.error('   - Try setting SMTP_USERNAME to full email address');
+      console.error('   - Check GoDaddy email account status');
+    }
+    
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Check if email service is initialized
+ */
+function isEmailServiceReady() {
+  return transporter !== null;
 }
 
 module.exports = {
   initializeEmailService,
   sendVerificationEmail,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  isEmailServiceReady
 };
 
