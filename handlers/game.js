@@ -213,13 +213,105 @@ async function authenticateSession(ctx, data) {
     }
   }
 
+  // Check if this player is already connected and disconnect the old connection
+  let existingConnectionId = null;
+  for (const [connId, playerData] of connectedPlayers.entries()) {
+    if (playerData.playerName === player.name || playerData.playerId === player.id) {
+      existingConnectionId = connId;
+      break;
+    }
+  }
+  
+  if (existingConnectionId) {
+    const oldPlayerData = connectedPlayers.get(existingConnectionId);
+    const oldRoomId = oldPlayerData.roomId;
+    const oldWs = oldPlayerData.ws;
+    
+    console.log(`Player ${player.name} already connected (${existingConnectionId}), disconnecting old connection...`);
+    
+    // End any active harvest sessions for the old connection
+    if (oldPlayerData.playerId) {
+      const activeSession = await findPlayerHarvestSession(db, oldPlayerData.playerId);
+      if (activeSession) {
+        await endHarvestSession(db, activeSession.roomNpcId, true);
+      }
+    }
+    
+    // Drop factory widget items and remove poofable items for old connection
+    if (oldRoomId) {
+      const factoryState = factoryWidgetState.get(existingConnectionId);
+      const oldRoom = await db.getRoomById(oldRoomId);
+      
+      if (factoryState && factoryState.roomId === oldRoomId && oldRoom && oldRoom.room_type === 'factory') {
+        // Drop items from factory slots to room ground
+        for (let i = 0; i < factoryState.slots.length; i++) {
+          const slot = factoryState.slots[i];
+          if (slot && slot.itemName) {
+            await db.addRoomItem(oldRoomId, slot.itemName, slot.quantity);
+          }
+        }
+        factoryWidgetState.delete(existingConnectionId);
+        
+        // Check if room is now empty and remove poofable items
+        if (isRoomEmpty(connectedPlayers, oldRoomId)) {
+          await db.removePoofableItemsFromRoom(oldRoomId);
+        }
+      }
+      
+      // Clean up warehouse widget state
+      warehouseWidgetState.delete(existingConnectionId);
+      
+      // Notify others in the room that player left (from old connection)
+      broadcastToRoom(connectedPlayers, oldRoomId, {
+        type: 'playerLeft',
+        playerName: player.name
+      }, existingConnectionId);
+      
+      // Update room for others (remove player from room)
+      const updatedRoom = await db.getRoomById(oldRoomId);
+      for (const [otherConnId, otherPlayerData] of connectedPlayers) {
+        if (otherPlayerData.roomId === oldRoomId && otherConnId !== existingConnectionId) {
+          await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, updatedRoom);
+        }
+      }
+    }
+    
+    // Remove from connectedPlayers
+    connectedPlayers.delete(existingConnectionId);
+    
+    // Cancel any Lore Keeper engagement timers
+    cancelLoreKeeperEngagement(existingConnectionId);
+    
+    // Send force close message to old client
+    if (oldWs.readyState === WebSocket.OPEN) {
+      oldWs.send(JSON.stringify({ 
+        type: 'forceClose', 
+        message: 'Another session has connected with this character. This window will be closed.' 
+      }));
+      // Give the client a moment to receive the message, then close the connection
+      setTimeout(() => {
+        if (oldWs.readyState === WebSocket.OPEN) {
+          oldWs.close(1000, 'Replaced by new connection');
+        }
+      }, 100);
+    }
+    
+    // Broadcast system message: player left the game (from old connection)
+    broadcastToAll(connectedPlayers, {
+      type: 'systemMessage',
+      message: `${player.name} has left the game.`
+    });
+    
+    console.log(`Old connection ${existingConnectionId} for player ${player.name} has been disconnected`);
+  }
+
   // Generate unique connection ID for this WebSocket
   const connectionId = `conn_${ctx.nextConnectionId++}`;
   
   // Store the connectionId on the ws object for cleanup on disconnect
   ws.connectionId = connectionId;
 
-  // Store connection using unique connectionId (allows same player from multiple tabs)
+  // Store connection using unique connectionId (only one connection per player allowed)
   const room = await db.getRoomById(player.current_room_id);
   connectedPlayers.set(connectionId, { 
     ws, 

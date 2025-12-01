@@ -293,6 +293,33 @@ function handleMessage(data) {
                 }
             }
             break;
+        case 'forceClose':
+            // Another session has connected - close this window
+            console.log('Force close requested:', data.message);
+            // Display message briefly before closing
+            if (data.message) {
+                const terminalContent = document.getElementById('terminalContent');
+                if (terminalContent) {
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'error-message';
+                    errorDiv.style.color = '#ff0000';
+                    errorDiv.style.fontWeight = 'bold';
+                    errorDiv.style.padding = '10px';
+                    errorDiv.style.margin = '10px 0';
+                    errorDiv.textContent = data.message;
+                    terminalContent.appendChild(errorDiv);
+                    terminalContent.scrollTop = terminalContent.scrollHeight;
+                }
+            }
+            // Close the window after a brief delay to show the message
+            setTimeout(() => {
+                window.close();
+                // If window.close() doesn't work (some browsers block it), redirect to login
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 500);
+            }, 1000);
+            break;
         case 'error':
             addToTerminal(data.message, 'error');
             break;
@@ -4344,12 +4371,22 @@ function initWidgetToggleBar() {
     const toggleBar = document.querySelector('.widget-toggle-bar');
     if (!toggleBar) return;
     
+    // Handle widget toggle icons
     toggleBar.querySelectorAll('.widget-icon').forEach(icon => {
         icon.addEventListener('click', () => {
             const widgetName = icon.getAttribute('data-widget');
             toggleWidget(widgetName);
         });
     });
+    
+    // Handle exit to character selection button
+    const exitBtn = document.getElementById('exitToCharacterSelection');
+    if (exitBtn) {
+        exitBtn.addEventListener('click', () => {
+            // Redirect to character selection page
+            window.location.href = '/';
+        });
+    }
 }
 
 // ============================================================
