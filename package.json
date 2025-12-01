@@ -18,6 +18,7 @@
     "test-email": "node scripts/test-email.js",
     "test-email-simple": "node scripts/test-email-simple.js",
     "test-email-auth": "node scripts/test-email-auth.js",
+    "test-email-diagnostic": "node scripts/test-email-diagnostic.js",
     "sync-dev-to-prod": "node scripts/sync-dev-to-prod.js",
     "sync-dev-to-prod:dry-run": "node scripts/sync-dev-to-prod.js --dry-run",
     "test-sync-safety": "node scripts/test-sync-safety.js"
