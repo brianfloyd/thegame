@@ -86,12 +86,27 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Session cleanup job - every 5 minutes
-setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+setInterval(() => {
+  cleanupExpiredSessions();
+  // Also clean up activeAccountSessions for sessions that no longer exist
+  const { sessionStore } = require('./middleware/session');
+  for (const [accountId, sessionId] of activeAccountSessions.entries()) {
+    // Check if session still exists in sessionStore
+    if (!sessionStore.has(sessionId)) {
+      console.log(`Cleaning up orphaned account session: account ${accountId}, session ${sessionId}`);
+      activeAccountSessions.delete(accountId);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // Create middleware instances with db
 const validateSession = createValidateSession(db);
 const optionalSession = createOptionalSession(db);
 const characterSelectionHandler = createCharacterSelectionHandler(db);
+
+// Track active account sessions: accountId -> sessionId
+// Only one session per account is allowed - new login invalidates old session
+const activeAccountSessions = new Map();
 
 // Create authentication handlers
 const { 
@@ -100,10 +115,10 @@ const {
   createLogoutHandler,
   createGetAccountInfoHandler 
 } = require('./middleware/auth');
-const loginHandler = createLoginHandler(db);
-const registerHandler = createRegisterHandler(db);
-const logoutHandler = createLogoutHandler();
-const getAccountInfoHandler = createGetAccountInfoHandler(db);
+const loginHandler = createLoginHandler(db, activeAccountSessions);
+const registerHandler = createRegisterHandler(db, activeAccountSessions);
+const logoutHandler = createLogoutHandler(activeAccountSessions);
+const getAccountInfoHandler = createGetAccountInfoHandler(db, activeAccountSessions);
 
 // Setup routes
 setupRoutes(app, {
@@ -115,7 +130,8 @@ setupRoutes(app, {
   loginHandler,
   registerHandler,
   logoutHandler,
-  getAccountInfoHandler
+  getAccountInfoHandler,
+  activeAccountSessions
 });
 
 // ============================================================

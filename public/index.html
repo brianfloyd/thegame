@@ -60,9 +60,80 @@
     </div>
 
     <script>
+        // Generate unique tab ID for this browser window/tab
+        // This ensures each tab has its own independent session
+        let tabId = sessionStorage.getItem('gameTabId');
+        if (!tabId) {
+            tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            sessionStorage.setItem('gameTabId', tabId);
+        }
+        
+        // Override fetch to include tab ID in all requests
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options = {}] = args;
+            if (!options.headers) {
+                options.headers = {};
+            }
+            if (options.headers instanceof Headers) {
+                options.headers.set('X-Tab-ID', tabId);
+            } else if (typeof options.headers === 'object') {
+                options.headers['X-Tab-ID'] = tabId;
+            }
+            return originalFetch.apply(this, args);
+        };
+        
         let currentAccount = null;
         let currentCharacters = [];
 
+        // Poll session validity to detect if this window should be closed
+        let sessionCheckInterval = null;
+        
+        function startSessionCheck() {
+            // Check every 2 seconds if session is still valid
+            sessionCheckInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/session-valid', {
+                        credentials: 'include'
+                    });
+                    const data = await response.json();
+                    
+                    if (!data.valid && data.shouldClose) {
+                        // Session was replaced by another login - close this window
+                        console.log('Session replaced by another login, closing window...');
+                        clearInterval(sessionCheckInterval);
+                        
+                        // Show message briefly
+                        const loginScreen = document.getElementById('loginScreen');
+                        if (loginScreen) {
+                            const message = document.createElement('div');
+                            message.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #f44336; color: white; padding: 20px; border-radius: 8px; z-index: 10000; text-align: center;';
+                            message.textContent = 'Another session has logged in with this account. This window will be closed.';
+                            document.body.appendChild(message);
+                        }
+                        
+                        // Close window after brief delay
+                        setTimeout(() => {
+                            window.close();
+                            // Fallback: redirect if window can't be closed
+                            setTimeout(() => {
+                                window.location.href = '/';
+                            }, 500);
+                        }, 1000);
+                    }
+                } catch (error) {
+                    // Silently fail - don't spam console
+                }
+            }, 2000);
+        }
+        
+        function stopSessionCheck() {
+            if (sessionCheckInterval) {
+                clearInterval(sessionCheckInterval);
+                sessionCheckInterval = null;
+            }
+        }
+        
         // Check if already logged in on page load
         async function checkAuth() {
             try {
@@ -70,19 +141,36 @@
                     credentials: 'include'
                 });
                 const data = await response.json();
+                
+                // Only auto-login if we have a valid session for this tab
+                // Server will reject if tab ID doesn't match
                 if (data.success && data.accountId) {
                     currentAccount = data;
                     currentCharacters = data.characters || [];
                     showCharacterSelection();
+                    
+                    // Start polling for session validity
+                    startSessionCheck();
                     
                     // Check for verification required message
                     const urlParams = new URLSearchParams(window.location.search);
                     if (urlParams.get('verification_required') === 'true') {
                         alert('Email verification required! Please verify your email to continue playing.');
                     }
+                } else {
+                    // Not logged in - clear any stale state
+                    currentAccount = null;
+                    currentCharacters = [];
+                    // Start session check anyway in case user logs in
+                    startSessionCheck();
                 }
             } catch (error) {
                 console.error('Error checking auth:', error);
+                // Clear state on error
+                currentAccount = null;
+                currentCharacters = [];
+                // Start session check even on error
+                startSessionCheck();
             }
         }
 
@@ -125,6 +213,9 @@
                     currentAccount = data;
                     currentCharacters = data.characters || [];
                     showCharacterSelection();
+                    
+                    // Start polling for session validity after login
+                    startSessionCheck();
                 } else {
                     errorDiv.textContent = data.error || 'Login failed';
                 }
@@ -166,6 +257,9 @@
                     currentAccount = data;
                     currentCharacters = data.characters || [];
                     showCharacterSelection();
+                    
+                    // Start polling for session validity after registration
+                    startSessionCheck();
                 } else {
                     errorDiv.textContent = data.error || 'Registration failed';
                 }
@@ -367,6 +461,9 @@
                 
                 const data = await response.json();
                 if (data.success) {
+                    // Stop session checking on logout
+                    stopSessionCheck();
+                    
                     currentAccount = null;
                     currentCharacters = [];
                     document.getElementById('loginScreen').style.display = 'block';

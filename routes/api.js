@@ -47,6 +47,30 @@ function setupRoutes(app, options) {
     });
   });
   
+  // Session validation endpoint - checks if current session is still valid
+  app.get('/api/session-valid', optionalSession, (req, res) => {
+    if (!req.session.accountId) {
+      return res.json({ valid: false, reason: 'no_session' });
+    }
+    
+    // Check if this session is still the active session for this account
+    const activeAccountSessions = options.activeAccountSessions;
+    if (activeAccountSessions) {
+      const activeSessionData = activeAccountSessions.get(req.session.accountId);
+      const tabId = req.headers['x-tab-id'];
+      
+      // Check if session ID matches AND tab ID matches (if tab ID is provided)
+      if (!activeSessionData || 
+          activeSessionData.sessionId !== req.sessionID ||
+          (tabId && activeSessionData.tabId !== tabId)) {
+        // This session has been replaced by a new login
+        return res.json({ valid: false, reason: 'session_replaced', shouldClose: true });
+      }
+    }
+    
+    res.json({ valid: true });
+  });
+  
   // Authentication endpoints
   app.post('/api/login', loginHandler);
   app.post('/api/register', registerHandler);
@@ -280,6 +304,35 @@ function setupRoutes(app, options) {
   
   // Root route - landing page (login/character selection)
   app.get('/', optionalSession, (req, res) => {
+    // Get tab ID from header
+    const tabId = req.headers['x-tab-id'];
+    
+    // Only auto-login if the session's tab ID matches the current tab ID
+    // This prevents sharing sessions across tabs
+    if (req.session && req.session.accountId) {
+      // If tab ID is provided and doesn't match session's tab ID, destroy session
+      if (tabId) {
+        if (!req.session.tabId || req.session.tabId !== tabId) {
+          // Different tab or no tab ID in session - destroy session and show login
+          console.log(`Session tab ID mismatch: session has ${req.session.tabId}, request has ${tabId}. Destroying session.`);
+          req.session.destroy(() => {
+            res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+          });
+          return;
+        }
+      } else {
+        // No tab ID in request - this is an old client or direct navigation
+        // If session has a tab ID, we need one too, so destroy session
+        if (req.session.tabId) {
+          console.log('Request missing tab ID but session has one. Destroying session.');
+          req.session.destroy(() => {
+            res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+          });
+          return;
+        }
+      }
+    }
+    
     // If already has valid player session, redirect to game
     if (req.player) {
       return res.redirect('/game');

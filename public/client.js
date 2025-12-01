@@ -66,6 +66,29 @@ function saveCommsHistory() {
     }
 }
 
+// Generate unique tab ID for this browser window/tab
+// This ensures each tab has its own independent session
+let tabId = sessionStorage.getItem('gameTabId');
+if (!tabId) {
+    tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    sessionStorage.setItem('gameTabId', tabId);
+}
+
+// Override fetch to include tab ID in all requests
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+    const [url, options = {}] = args;
+    if (!options.headers) {
+        options.headers = {};
+    }
+    if (options.headers instanceof Headers) {
+        options.headers.set('X-Tab-ID', tabId);
+    } else if (typeof options.headers === 'object') {
+        options.headers['X-Tab-ID'] = tabId;
+    }
+    return originalFetch.apply(this, args);
+};
+
 // Get protocol (ws or wss) based on current page protocol
 const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
 const wsUrl = wsProtocol + location.host;
