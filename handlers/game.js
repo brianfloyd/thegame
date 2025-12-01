@@ -2502,65 +2502,79 @@ async function deposit(ctx, data) {
     // Normalize input for matching
     const normalizedInput = currencyName.toLowerCase().trim();
     
-    // Get player currency first to help with "glimmer" matching
-    const playerCurrency = await db.getPlayerCurrency(player.id);
+    // Get player's inventory first to check what currencies they actually have
+    const playerItems = await db.getPlayerItems(player.id);
+    
+    // Build list of currencies player actually has (with quantities)
+    const playerCurrencyItems = currencyItems.map(currencyItem => {
+      const playerItem = playerItems.find(pi => pi.item_name === currencyItem.name);
+      const quantity = playerItem ? parseInt(playerItem.quantity, 10) || 0 : 0;
+      return { currencyItem, quantity };
+    }).filter(pci => pci.quantity > 0); // Only currencies player has
     
     // Try to match currency with better logic
     let matchedCurrency = null;
     
-    // First, try exact or very close matches (prioritize more specific)
-    for (const item of currencyItems) {
-      const itemNameLower = item.name.toLowerCase();
-      
-      // Exact match (case-insensitive)
-      if (itemNameLower === normalizedInput) {
-        matchedCurrency = item;
-        break;
-      }
-      
-      // Check if input contains full item name or vice versa
-      if (itemNameLower.includes(normalizedInput) || normalizedInput.includes(itemNameLower)) {
-        matchedCurrency = item;
-        break;
-      }
-      
-      // Handle singular/plural variations
-      // "shards" should match "Glimmer Shard", "crowns" should match "Glimmer Crown"
-      if (normalizedInput === 'shards' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
-        matchedCurrency = item;
-        break;
-      }
-      if (normalizedInput === 'shard' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
-        matchedCurrency = item;
-        break;
-      }
-      if (normalizedInput === 'crowns' && itemNameLower.includes('crown')) {
-        matchedCurrency = item;
-        break;
-      }
-      if (normalizedInput === 'crown' && itemNameLower.includes('crown')) {
-        matchedCurrency = item;
-        break;
-      }
-    }
-    
-    // Handle "glimmer" - should match based on what player has
-    // Get player's inventory first to check what currencies they have
-    const playerItems = await db.getPlayerItems(player.id);
-    
-    if (!matchedCurrency && normalizedInput === 'glimmer') {
-      // Find currency items the player actually has
-      const playerCurrencyItems = currencyItems.filter(currencyItem => {
-        const playerItem = playerItems.find(pi => pi.item_name === currencyItem.name);
-        return playerItem && parseInt(playerItem.quantity, 10) > 0;
-      });
-      
-      // Prefer higher value currencies (crowns over shards) if multiple available
-      // Sort by name length (longer names often indicate higher value, e.g., "Crown" vs "Shard")
-      playerCurrencyItems.sort((a, b) => b.name.length - a.name.length);
-      
+    // Handle "glimmer", "glim", "g" as synonyms - match based on what player has
+    const glimmerSynonyms = ['glimmer', 'glim', 'g'];
+    if (glimmerSynonyms.includes(normalizedInput)) {
       if (playerCurrencyItems.length > 0) {
-        matchedCurrency = playerCurrencyItems[0];
+        // Prefer higher value currencies (crowns over shards) if multiple available
+        // Sort by name length (longer names often indicate higher value, e.g., "Crown" vs "Shard")
+        playerCurrencyItems.sort((a, b) => {
+          // Check for "crown" in name (higher value)
+          const aIsCrown = a.currencyItem.name.toLowerCase().includes('crown');
+          const bIsCrown = b.currencyItem.name.toLowerCase().includes('crown');
+          if (aIsCrown && !bIsCrown) return -1;
+          if (!aIsCrown && bIsCrown) return 1;
+          // Otherwise sort by name length
+          return b.currencyItem.name.length - a.currencyItem.name.length;
+        });
+        matchedCurrency = playerCurrencyItems[0].currencyItem;
+      }
+    } else {
+      // For specific currency names, try to match
+      for (const item of currencyItems) {
+        const itemNameLower = item.name.toLowerCase();
+        
+        // Exact match (case-insensitive)
+        if (itemNameLower === normalizedInput) {
+          matchedCurrency = item;
+          break;
+        }
+        
+        // Check if input contains full item name or vice versa
+        if (itemNameLower.includes(normalizedInput) || normalizedInput.includes(itemNameLower)) {
+          matchedCurrency = item;
+          break;
+        }
+        
+        // Handle singular/plural variations
+        // "shards" should match "Glimmer Shard", "crowns" should match "Glimmer Crown"
+        if (normalizedInput === 'shards' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          break;
+        }
+        if (normalizedInput === 'shard' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          break;
+        }
+        if (normalizedInput === 'crowns' && itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          break;
+        }
+        if (normalizedInput === 'crown' && itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          break;
+        }
+      }
+      
+      // If we matched a currency, verify player has it
+      if (matchedCurrency) {
+        const playerHasIt = playerItems.find(pi => pi.item_name === matchedCurrency.name && parseInt(pi.quantity, 10) > 0);
+        if (!playerHasIt) {
+          matchedCurrency = null; // Player doesn't have this currency
+        }
       }
     }
     
@@ -2657,6 +2671,7 @@ async function withdrawBank(ctx, data) {
   }
   
   // For bank withdrawals, client sends itemName (which is actually currencyName)
+  // Support both currencyName and itemName for compatibility
   const currencyName = data.currencyName || data.itemName;
   const quantity = data.quantity;
   
@@ -2666,29 +2681,157 @@ async function withdrawBank(ctx, data) {
   }
   
   try {
-    // Find currency item by partial name
+    // Find currency item by partial name with improved matching
     const allItems = await db.getAllItems();
     const currencyItems = allItems.filter(i => i.item_type === 'currency');
-    const matchedCurrency = currencyItems.find(item => 
-      item.name.toLowerCase().includes(currencyName.toLowerCase()) ||
-      currencyName.toLowerCase().includes(item.name.toLowerCase())
-    );
+    
+    // Normalize input for matching
+    const normalizedInput = currencyName.toLowerCase().trim();
+    
+    // Get bank balance first to check what currencies are actually in the bank
+    const bankBalance = await db.getPlayerBankBalance(player.id);
+    
+    // Build list of currencies available in bank (with quantities)
+    // Note: bankBalance returns {crowns, shards} which is hardcoded structure
+    // We'll match this to currency items dynamically
+    const bankCurrencyItems = [];
+    for (const currencyItem of currencyItems) {
+      const itemNameLower = currencyItem.name.toLowerCase();
+      let bankQuantity = 0;
+      
+      if (itemNameLower.includes('crown') && bankBalance.crowns > 0) {
+        bankQuantity = bankBalance.crowns;
+      } else if (itemNameLower.includes('shard') && !itemNameLower.includes('crown') && bankBalance.shards > 0) {
+        bankQuantity = bankBalance.shards;
+      }
+      
+      if (bankQuantity > 0) {
+        bankCurrencyItems.push({ currencyItem, quantity: bankQuantity });
+      }
+    }
+    
+    // Try to match currency with better logic
+    let matchedCurrency = null;
+    let bankCurrencyQuantity = 0;
+    
+    // Handle "glimmer", "glim", "g" as synonyms - match based on what's in bank
+    const glimmerSynonyms = ['glimmer', 'glim', 'g'];
+    if (glimmerSynonyms.includes(normalizedInput)) {
+      if (bankCurrencyItems.length > 0) {
+        // Prefer higher value currencies (crowns over shards) if multiple available
+        bankCurrencyItems.sort((a, b) => {
+          const aIsCrown = a.currencyItem.name.toLowerCase().includes('crown');
+          const bIsCrown = b.currencyItem.name.toLowerCase().includes('crown');
+          if (aIsCrown && !bIsCrown) return -1;
+          if (!aIsCrown && bIsCrown) return 1;
+          return b.currencyItem.name.length - a.currencyItem.name.length;
+        });
+        matchedCurrency = bankCurrencyItems[0].currencyItem;
+        bankCurrencyQuantity = bankCurrencyItems[0].quantity;
+      }
+    } else {
+      // For specific currency names, try to match
+      for (const item of currencyItems) {
+        const itemNameLower = item.name.toLowerCase();
+        
+        // Exact match (case-insensitive)
+        if (itemNameLower === normalizedInput) {
+          matchedCurrency = item;
+          // Find quantity in bank
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+        
+        // Check if input contains full item name or vice versa
+        if (itemNameLower.includes(normalizedInput) || normalizedInput.includes(itemNameLower)) {
+          matchedCurrency = item;
+          // Find quantity in bank
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+        
+        // Handle singular/plural variations
+        if (normalizedInput === 'shards' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+        if (normalizedInput === 'shard' && itemNameLower.includes('shard') && !itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+        if (normalizedInput === 'crowns' && itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+        if (normalizedInput === 'crown' && itemNameLower.includes('crown')) {
+          matchedCurrency = item;
+          for (const bci of bankCurrencyItems) {
+            if (bci.currencyItem.name === item.name) {
+              bankCurrencyQuantity = bci.quantity;
+              break;
+            }
+          }
+          break;
+        }
+      }
+    }
     
     if (!matchedCurrency) {
-      ws.send(JSON.stringify({ type: 'error', message: `Currency "${currencyName}" not found.` }));
+      ws.send(JSON.stringify({ type: 'error', message: `Currency "${currencyName}" not found. Available currencies in bank: ${bankCurrencyItems.map(bci => bci.currencyItem.name).join(', ') || 'none'}` }));
       return;
     }
     
-    // Get bank balance
-    const bankBalance = await db.getPlayerBankBalance(player.id);
+    // If we matched but don't have it in bank, check if it's just not in bank
+    if (bankCurrencyQuantity === 0) {
+      // Check if this currency exists in bank at all
+      const itemNameLower = matchedCurrency.name.toLowerCase();
+      let hasInBank = false;
+      if (itemNameLower.includes('crown') && bankBalance.crowns > 0) {
+        hasInBank = true;
+        bankCurrencyQuantity = bankBalance.crowns;
+      } else if (itemNameLower.includes('shard') && !itemNameLower.includes('crown') && bankBalance.shards > 0) {
+        hasInBank = true;
+        bankCurrencyQuantity = bankBalance.shards;
+      }
+      
+      if (!hasInBank) {
+        ws.send(JSON.stringify({ type: 'error', message: `You don't have any ${matchedCurrency.name} in the bank.` }));
+        return;
+      }
+    }
+    
     let amountToWithdraw = 0;
     
     if (quantity === 'all' || quantity === 'a') {
-      if (matchedCurrency.name === 'Glimmer Shard') {
-        amountToWithdraw = bankBalance.shards;
-      } else if (matchedCurrency.name === 'Glimmer Crown') {
-        amountToWithdraw = bankBalance.crowns;
-      }
+      amountToWithdraw = bankCurrencyQuantity;
     } else {
       amountToWithdraw = parseInt(quantity);
       if (isNaN(amountToWithdraw) || amountToWithdraw <= 0) {
@@ -2703,47 +2846,62 @@ async function withdrawBank(ctx, data) {
     }
     
     // Check if bank has enough
-    if (matchedCurrency.name === 'Glimmer Shard' && bankBalance.shards < amountToWithdraw) {
-      ws.send(JSON.stringify({ type: 'error', message: `Insufficient ${matchedCurrency.name} in bank.` }));
-      return;
-    }
-    if (matchedCurrency.name === 'Glimmer Crown' && bankBalance.crowns < amountToWithdraw) {
-      ws.send(JSON.stringify({ type: 'error', message: `Insufficient ${matchedCurrency.name} in bank.` }));
+    if (bankCurrencyQuantity < amountToWithdraw) {
+      ws.send(JSON.stringify({ type: 'error', message: `Insufficient ${matchedCurrency.name} in bank. You have ${bankCurrencyQuantity}.` }));
       return;
     }
     
     // Withdraw from bank and add to inventory
     const withdrawn = await db.withdrawCurrency(player.id, matchedCurrency.name, amountToWithdraw);
     
-    if (withdrawn.crowns > 0) {
-      await db.addPlayerItem(player.id, 'Glimmer Crown', withdrawn.crowns);
-    }
-    if (withdrawn.shards > 0) {
-      await db.addPlayerItem(player.id, 'Glimmer Shard', withdrawn.shards);
+    // Add withdrawn currency to inventory using dynamic currency names
+    // Note: withdrawCurrency returns {crowns, shards} which is hardcoded
+    // We'll match this to currency items dynamically
+    for (const currencyItem of currencyItems) {
+      const itemNameLower = currencyItem.name.toLowerCase();
+      if (itemNameLower.includes('crown') && withdrawn.crowns > 0) {
+        await db.addPlayerItem(player.id, currencyItem.name, withdrawn.crowns);
+      } else if (itemNameLower.includes('shard') && !itemNameLower.includes('crown') && withdrawn.shards > 0) {
+        await db.addPlayerItem(player.id, currencyItem.name, withdrawn.shards);
+      }
     }
     
+    // Build withdrawal message using actual currency names from database
     let message = `Withdrew `;
-    if (matchedCurrency.name === 'Glimmer Crown') {
-      message += `${amountToWithdraw} Glimmer Crown${amountToWithdraw !== 1 ? 's' : ''}`;
-    } else {
-      if (withdrawn.crowns > 0) {
-        message += `${withdrawn.crowns} Glimmer Crown${withdrawn.crowns !== 1 ? 's' : ''}`;
-        if (withdrawn.shards > 0) {
-          message += `, ${withdrawn.shards} Glimmer Shard${withdrawn.shards !== 1 ? 's' : ''}`;
-        }
-      } else {
-        message += `${withdrawn.shards} Glimmer Shard${withdrawn.shards !== 1 ? 's' : ''}`;
+    const withdrawnParts = [];
+    for (const currencyItem of currencyItems) {
+      const itemNameLower = currencyItem.name.toLowerCase();
+      if (itemNameLower.includes('crown') && withdrawn.crowns > 0) {
+        withdrawnParts.push(`${withdrawn.crowns} ${currencyItem.name}${withdrawn.crowns !== 1 ? 's' : ''}`);
+      } else if (itemNameLower.includes('shard') && !itemNameLower.includes('crown') && withdrawn.shards > 0) {
+        withdrawnParts.push(`${withdrawn.shards} ${currencyItem.name}${withdrawn.shards !== 1 ? 's' : ''}`);
       }
     }
+    
+    if (withdrawnParts.length > 0) {
+      message += withdrawnParts.join(', ');
+    } else {
+      message += `${amountToWithdraw} ${matchedCurrency.name}${amountToWithdraw !== 1 ? 's' : ''}`;
+    }
+    
     message += `. Bank balance: `;
     const newBalance = await db.getPlayerBankBalance(player.id);
-    if (newBalance.crowns > 0) {
-      message += `${newBalance.crowns} Glimmer Crown${newBalance.crowns !== 1 ? 's' : ''}`;
-      if (newBalance.shards > 0) {
-        message += `, ${newBalance.shards} Glimmer Shard${newBalance.shards !== 1 ? 's' : ''}`;
+    
+    // Format balance using currency items from database
+    const balanceParts = [];
+    for (const currencyItem of currencyItems) {
+      const itemNameLower = currencyItem.name.toLowerCase();
+      if (itemNameLower.includes('crown') && newBalance.crowns > 0) {
+        balanceParts.push(`${newBalance.crowns} ${currencyItem.name}${newBalance.crowns !== 1 ? 's' : ''}`);
+      } else if (itemNameLower.includes('shard') && !itemNameLower.includes('crown') && newBalance.shards > 0) {
+        balanceParts.push(`${newBalance.shards} ${currencyItem.name}${newBalance.shards !== 1 ? 's' : ''}`);
       }
+    }
+    
+    if (balanceParts.length > 0) {
+      message += balanceParts.join(', ');
     } else {
-      message += `${newBalance.shards} Glimmer Shard${newBalance.shards !== 1 ? 's' : ''}`;
+      message += '0';
     }
     
     ws.send(JSON.stringify({ type: 'message', message }));

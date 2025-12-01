@@ -479,16 +479,24 @@ function handleMessage(data) {
             editorMapRooms.push(data.room);
             // If speed mode is active, select the newly created room and keep speed mode active
             if (speedModeActive) {
-                selectedRoom = data.room;
-                selectedRooms = [data.room];
+                // Use the room object we just added to editorMapRooms
+                // It's the last item in the array since we just pushed it
+                const createdRoom = editorMapRooms[editorMapRooms.length - 1];
+                // Set selection - use the room from the array to ensure same reference
+                selectedRoom = createdRoom;
+                selectedRooms = [createdRoom];
                 // Keep speed mode active so user can continue navigating
                 speedModeActive = true;
+                // Force update to ensure selection is visible
+                updateSidePanel();
+                // Render immediately - the room is already in editorMapRooms
+                renderMapEditor();
             } else {
                 selectedRoom = null;
                 selectedRooms = [];
+                updateSidePanel();
+                renderMapEditor();
             }
-            updateSidePanel();
-            renderMapEditor();
             break;
         case 'roomUpdated':
             // Update room in editor
@@ -938,11 +946,24 @@ function displayMerchantList(items) {
 }
 
 // Normalize command input (uses first word only)
+// Returns null if command has additional parts (not a pure direction)
 function normalizeCommand(input) {
     const trimmed = input.trim();
     if (!trimmed) return null;
     const parts = trimmed.split(/\s+/);
     const key = parts[0].toLowerCase();
+    
+    // Guardrail: If there are additional parts after a directional command,
+    // don't treat it as a direction - let it fall through to other command handlers
+    if (parts.length > 1) {
+        // Check if this is a directional command
+        const direction = commandMap[key];
+        if (direction) {
+            // This is a directional command with additional text - don't treat as direction
+            return null;
+        }
+    }
+    
     return commandMap[key] || null;
 }
 
@@ -2169,9 +2190,10 @@ function executeCommand(command) {
         return;
     }
     
-    // WITHDRAW / WD <quantity|all> <currency> - withdraw currency from bank (if in bank room)
+    // WITHDRAW / WD / W <quantity|all> <currency> - withdraw currency from bank (if in bank room)
     // Note: withdraw also handles warehouse items, server routes based on room type
-    if (base === 'withdraw' || base === 'wd') {
+    // Note: 'w' alone is west (movement), but 'w [quantity] [currency]' is withdraw (has qualifier)
+    if (base === 'withdraw' || base === 'wd' || (base === 'w' && parts.length > 1)) {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             addToTerminal('Not connected to server. Please wait...', 'error');
             return;
@@ -2207,7 +2229,9 @@ function executeCommand(command) {
             return;
         }
         
-        ws.send(JSON.stringify({ type: 'withdraw', itemName, quantity }));
+        // Send both itemName (for warehouse) and currencyName (for bank)
+        // Server will route based on room type
+        ws.send(JSON.stringify({ type: 'withdraw', itemName, currencyName: itemName, quantity }));
         return;
     }
     
@@ -2679,6 +2703,13 @@ function setupMapTooltips() {
     mapCanvas.addEventListener('mouseleave', () => {
         hoveredRoom = null;
         hideMapTooltip();
+    });
+    
+    // Double-click to open map editor (god mode only)
+    mapCanvas.addEventListener('dblclick', (e) => {
+        if (godMode) {
+            window.location.href = '/map';
+        }
     });
 }
 
@@ -4800,9 +4831,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Open map editor
 function openMapEditor() {
-    if (!mapEditor) return;
+    console.log('openMapEditor called, mapEditor element:', mapEditor);
+    if (!mapEditor) {
+        console.error('mapEditor element not found!');
+        // Try to find it again
+        mapEditor = document.getElementById('mapEditor');
+        console.log('Retrying to find mapEditor:', mapEditor);
+        if (!mapEditor) {
+            console.error('mapEditor still not found after retry');
+            return;
+        }
+    }
     
+    console.log('Removing hidden class from mapEditor');
     mapEditor.classList.remove('hidden');
+    console.log('mapEditor classes after remove:', mapEditor.className);
     
     // Set canvas size - use requestAnimationFrame to ensure container is sized
     requestAnimationFrame(() => {
@@ -5308,8 +5351,17 @@ function renderMapEditor() {
                             room.y === currentRoomPos.y;
         
         // Check if room is in selected rooms array (mass selection)
-        const isSelected = selectedRooms.some(r => r.id === room.id);
-        const isSelectedSingle = selectedRoom && selectedRoom.id === room.id;
+        // Compare by id if both have id, otherwise compare by reference or coordinates
+        const isSelected = selectedRooms.some(r => {
+            if (r && r.id && room && room.id) return r.id === room.id;
+            if (r && room && r.x === room.x && r.y === room.y) return true;
+            return r === room;
+        });
+        const isSelectedSingle = selectedRoom && (
+            (selectedRoom.id && room.id && selectedRoom.id === room.id) ||
+            (selectedRoom.x === room.x && selectedRoom.y === room.y && (!selectedRoom.map_id || !room.map_id || selectedRoom.map_id === room.map_id)) ||
+            selectedRoom === room
+        );
         const isAnySelected = isSelected || isSelectedSingle;
         
         // Highlight selected room(s) - red border (takes priority)

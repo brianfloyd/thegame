@@ -70,7 +70,20 @@ const sessionMiddleware = createSessionMiddleware();
 app.use(sessionMiddleware);
 
 // Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
+// In development, disable caching to see changes immediately
+if (process.env.NODE_ENV !== 'production') {
+  app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, path) => {
+      if (path.endsWith('.js') || path.endsWith('.css') || path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  }));
+} else {
+  app.use(express.static(path.join(__dirname, 'public')));
+}
 
 // Session cleanup job - every 5 minutes
 setInterval(cleanupExpiredSessions, 5 * 60 * 1000);

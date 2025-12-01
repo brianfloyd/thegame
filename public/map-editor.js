@@ -197,7 +197,7 @@ function handleMessage(data) {
             loadMapForEditor(data.mapId);
             break;
         case 'roomCreated':
-            editorMapRooms.push({
+            const newRoomData = {
                 id: data.room.id,
                 name: data.room.name,
                 description: data.room.description,
@@ -205,15 +205,15 @@ function handleMessage(data) {
                 y: data.room.y,
                 roomType: data.room.roomType || 'normal',
                 mapId: data.room.mapId
-            });
-            if (speedModeActive && selectedRoom && selectedRoom.isNew) {
-                // Find the newly created room and select it
-                const newRoom = editorMapRooms.find(r => r.x === selectedRoom.x && r.y === selectedRoom.y);
-                if (newRoom) {
-                    selectedRoom = newRoom;
-                    selectedRooms = [newRoom];
-                    speedModeActive = true; // Keep speed mode active
-                }
+            };
+            editorMapRooms.push(newRoomData);
+            
+            if (speedModeActive) {
+                // Use the room we just added - it's the last one in the array
+                const createdRoom = editorMapRooms[editorMapRooms.length - 1];
+                selectedRoom = createdRoom;
+                selectedRooms = [createdRoom];
+                speedModeActive = true; // Keep speed mode active
             } else {
                 selectedRoom = null;
                 selectedRooms = [];
