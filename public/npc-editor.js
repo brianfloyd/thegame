@@ -388,6 +388,100 @@ function populateRewardItemDropdowns() {
             }
         });
     }
+    
+    // Populate Harvest Prerequisite Item dropdown
+    const harvestPrerequisiteSelect = document.getElementById('npcHarvestPrerequisiteItem');
+    if (harvestPrerequisiteSelect) {
+        harvestPrerequisiteSelect.innerHTML = '<option value="">None (no prerequisite)</option>';
+        allItems.forEach(item => {
+            if (item.active) { // Only show active items
+                const option = document.createElement('option');
+                option.value = item.name;
+                option.textContent = item.name;
+                if (selectedNpc && selectedNpc.harvest_prerequisite_item === item.name) {
+                    option.selected = true;
+                }
+                harvestPrerequisiteSelect.appendChild(option);
+            }
+        });
+    }
+    
+    // Populate Output Items list
+    populateOutputItemsList();
+}
+
+// Parse output_items JSON and populate the output items list
+function populateOutputItemsList() {
+    const container = document.getElementById('npcOutputItemsList');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    // Parse existing output_items JSON
+    let outputItems = {};
+    if (selectedNpc && selectedNpc.output_items) {
+        try {
+            outputItems = JSON.parse(selectedNpc.output_items);
+        } catch (e) {
+            console.error('Error parsing output_items:', e);
+            outputItems = {};
+        }
+    }
+    
+    // Create list items for each output item
+    Object.entries(outputItems).forEach(([itemName, quantity]) => {
+        addOutputItemRow(itemName, quantity);
+    });
+    
+    // If no items, show empty state
+    if (Object.keys(outputItems).length === 0) {
+        container.innerHTML = '<div class="npc-output-items-empty">No output items configured</div>';
+    }
+}
+
+// Add a new output item row
+function addOutputItemRow(itemName = '', quantity = 1) {
+    const container = document.getElementById('npcOutputItemsList');
+    if (!container) return;
+    
+    // Remove empty state message if present
+    const emptyMsg = container.querySelector('.npc-output-items-empty');
+    if (emptyMsg) emptyMsg.remove();
+    
+    const row = document.createElement('div');
+    row.className = 'npc-output-item-row';
+    row.innerHTML = `
+        <select class="npc-output-item-select">
+            <option value="">Select item...</option>
+        </select>
+        <input type="number" class="npc-output-item-qty" value="${quantity}" min="1" placeholder="Qty" style="width: 80px;">
+        <button type="button" class="npc-output-item-remove npc-small-btn">Remove</button>
+    `;
+    
+    // Populate dropdown with items
+    const select = row.querySelector('.npc-output-item-select');
+    allItems.forEach(item => {
+        if (item.active) {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = item.name;
+            if (itemName && item.name === itemName) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        }
+    });
+    
+    // Remove button handler
+    row.querySelector('.npc-output-item-remove').addEventListener('click', () => {
+        row.remove();
+        // Show empty state if no items left
+        if (container.children.length === 0) {
+            container.innerHTML = '<div class="npc-output-items-empty">No output items configured</div>';
+        }
+    });
+    
+    container.appendChild(row);
 }
 
 function renderNpcForm() {
@@ -497,6 +591,19 @@ function renderNpcForm() {
                         </select>
                     </div>
                 </div>
+                <!-- Row 2.5: Harvest Prerequisite Item (50%) + Harvest Prerequisite Message (50%) -->
+                <div class="npc-row">
+                    <div class="npc-field-group npc-field-half">
+                        <label>Harvest Prerequisite Item</label>
+                        <select id="npcHarvestPrerequisiteItem">
+                            <option value="">None (no prerequisite)</option>
+                        </select>
+                    </div>
+                    <div class="npc-field-group npc-field-half">
+                        <label>Harvest Prerequisite Message</label>
+                        <input type="text" id="npcHarvestPrerequisiteMessage" value="${selectedNpc.harvest_prerequisite_message || ''}" placeholder="You lack the required item to harvest from this creature.">
+                    </div>
+                </div>
                 <!-- Row 3: Required Stats (50%) + Required Buffs (50%) -->
                 <div class="npc-row">
                     <div class="npc-field-group npc-field-half">
@@ -515,8 +622,11 @@ function renderNpcForm() {
                         <textarea id="npcInputItems" class="npc-json-textarea">${selectedNpc.input_items || ''}</textarea>
                     </div>
                     <div class="npc-field-group npc-field-half">
-                        <label>Output Items<span class="npc-json-label"> (JSON)</span></label>
-                        <textarea id="npcOutputItems" class="npc-json-textarea">${selectedNpc.output_items || ''}</textarea>
+                        <label>Output Items</label>
+                        <div id="npcOutputItemsContainer" class="npc-output-items-container">
+                            <div id="npcOutputItemsList" class="npc-output-items-list"></div>
+                            <button type="button" id="addOutputItemBtn" class="npc-small-btn" style="margin-top: 8px;">+ Add Item</button>
+                        </div>
                     </div>
                 </div>
                 <!-- Row 5: Failure States (full width) -->
@@ -1058,10 +1168,30 @@ function saveNpc() {
     const difficulty = parseInt(document.getElementById('npcDifficulty').value, 10) || 1;
     const harvestable_time = parseInt(document.getElementById('npcHarvestable')?.value, 10) || 60000;
     const cooldown_time = parseInt(document.getElementById('npcCooldown')?.value, 10) || 120000;
+    const harvest_prerequisite_item = document.getElementById('npcHarvestPrerequisiteItem')?.value.trim() || null;
+    const harvest_prerequisite_message = document.getElementById('npcHarvestPrerequisiteMessage')?.value.trim() || null;
     const required_stats = document.getElementById('npcRequiredStats').value.trim();
     const required_buffs = document.getElementById('npcRequiredBuffs').value.trim();
     const input_items = document.getElementById('npcInputItems').value.trim();
-    const output_items = document.getElementById('npcOutputItems').value.trim();
+    
+    // Build output_items JSON from the dynamic list
+    const outputItemsList = document.getElementById('npcOutputItemsList');
+    const output_items = {};
+    if (outputItemsList) {
+        const rows = outputItemsList.querySelectorAll('.npc-output-item-row');
+        rows.forEach(row => {
+            const itemSelect = row.querySelector('.npc-output-item-select');
+            const qtyInput = row.querySelector('.npc-output-item-qty');
+            if (itemSelect && itemSelect.value && qtyInput) {
+                const itemName = itemSelect.value.trim();
+                const quantity = parseInt(qtyInput.value, 10) || 1;
+                if (itemName) {
+                    output_items[itemName] = quantity;
+                }
+            }
+        });
+    }
+    
     const failure_states = document.getElementById('npcFailureStates').value.trim();
     const display_color = document.getElementById('npcColor') ? document.getElementById('npcColor').value : '#00ff00';
     const active = document.getElementById('npcActive').value === '1' ? 1 : 0;
@@ -1096,10 +1226,12 @@ function saveNpc() {
         difficulty,
         harvestable_time,
         cooldown_time,
+        harvest_prerequisite_item: harvest_prerequisite_item || null,
+        harvest_prerequisite_message: harvest_prerequisite_message || null,
         required_stats: required_stats || null,
         required_buffs: required_buffs || null,
         input_items: input_items || null,
-        output_items: output_items || null,
+        output_items: Object.keys(output_items).length > 0 ? JSON.stringify(output_items) : null,
         failure_states: failure_states || null,
         display_color,
         active,
@@ -1229,5 +1361,12 @@ document.addEventListener('DOMContentLoaded', () => {
             ws.send(JSON.stringify({ type: 'getAllItems' }));
         }
     }, 500);
+    
+    // Add output item button handler
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'addOutputItemBtn') {
+            addOutputItemRow();
+        }
+    });
 });
 

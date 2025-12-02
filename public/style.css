@@ -3105,6 +3105,57 @@ body {
     white-space: nowrap;
 }
 
+/* Output Items Container */
+.npc-output-items-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.npc-output-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: #0a0a0a;
+}
+
+.npc-output-item-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.npc-output-item-select {
+    flex: 1;
+    padding: 6px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.npc-output-item-qty {
+    padding: 6px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.npc-output-items-empty {
+    color: #666;
+    font-style: italic;
+    text-align: center;
+    padding: 8px;
+}
+
 .npc-placement-controls-horizontal .npc-small-btn:hover {
     background: #1a3a1a;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);

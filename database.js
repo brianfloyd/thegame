@@ -435,13 +435,15 @@ async function createScriptableNPC(npc) {
     puzzle_award_once_only = false,
     puzzle_award_after_delay = false,
     puzzle_award_delay_seconds = null,
-    puzzle_award_delay_response = null
+    puzzle_award_delay_response = null,
+    harvest_prerequisite_item = null,
+    harvest_prerequisite_message = null
   } = npc;
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message]
   );
 
   return result.rows[0].id;
@@ -489,9 +491,10 @@ async function updateScriptableNPC(npc) {
       puzzle_solution_word = $18, puzzle_success_response = $19, puzzle_failure_response = $20,
       puzzle_reward_item = $21, puzzle_hint_responses = $22, puzzle_followup_responses = $23,
       puzzle_incorrect_attempt_responses = $24, puzzle_award_once_only = $25, puzzle_award_after_delay = $26,
-      puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28
-     WHERE id = $29`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, id]
+      puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28,
+      harvest_prerequisite_item = $29, harvest_prerequisite_message = $30
+     WHERE id = $31`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, id]
   );
 }
 

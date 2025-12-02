@@ -1181,6 +1181,22 @@ async function harvest(ctx, data) {
     return;
   }
   
+  // Check harvest prerequisite item (single item required for harvesting)
+  if (npcDef.harvest_prerequisite_item) {
+    const playerItems = await db.getPlayerItems(player.id);
+    const hasPrerequisite = playerItems.some(i => 
+      i.item_name.toLowerCase() === npcDef.harvest_prerequisite_item.toLowerCase()
+    );
+    
+    if (!hasPrerequisite) {
+      // Use customizable message or default
+      const message = npcDef.harvest_prerequisite_message || 
+                     `You lack the required item to harvest from ${roomNpc.name}.`;
+      ws.send(JSON.stringify({ type: 'message', message }));
+      return;
+    }
+  }
+  
   // Check required items from NPC's input_items definition (data relationship)
   let requiredItems = {};
   try {
