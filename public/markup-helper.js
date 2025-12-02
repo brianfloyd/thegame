@@ -3,7 +3,7 @@
  * Used across all editors (NPC, Map, Item, Player, etc.)
  */
 
-// High-contrast color palette (16 colors)
+// High-contrast color palette (17 colors)
 const MARKUP_COLORS = [
     { name: 'Cyan', value: '#00ffff' },
     { name: 'Magenta', value: '#ff00ff' },
@@ -20,7 +20,8 @@ const MARKUP_COLORS = [
     { name: 'White', value: '#ffffff' },
     { name: 'Silver', value: '#cccccc' },
     { name: 'Crimson', value: '#cc0000' },
-    { name: 'Emerald', value: '#00cc88' }
+    { name: 'Emerald', value: '#00cc88' },
+    { name: 'Dark Gray', value: '#666666' }
 ];
 
 // Built-in markup conventions
