@@ -1126,6 +1126,8 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
     if (activeHarvestNPC) {
         showNPCWidget(activeHarvestNPC.name, activeHarvestNPC.harvestStatus, activeHarvestNPC.harvestProgress || 0, {
             baseCycleTime: activeHarvestNPC.baseCycleTime,
+            effectiveCycleTime: activeHarvestNPC.effectiveCycleTime,
+            hitRate: activeHarvestNPC.hitRate,
             harvestableTime: activeHarvestNPC.harvestableTime,
             cooldownTime: activeHarvestNPC.cooldownTime
         });
@@ -4292,10 +4294,38 @@ function showNPCWidget(npcName, status, progress, timingData = {}) {
     const pulseEl = document.getElementById('npcWidgetPulse');
     const harvestEl = document.getElementById('npcWidgetHarvest');
     const cooldownEl = document.getElementById('npcWidgetCooldown');
+    const hitRateEl = document.getElementById('npcWidgetHitRate');
+    const resonanceNotePulse = document.getElementById('npcWidgetResonanceNote');
+    const resonanceNoteHitRate = document.getElementById('npcWidgetHitRateNote');
     
     if (pulseEl && timingData.baseCycleTime) {
-        pulseEl.textContent = `${(timingData.baseCycleTime / 1000).toFixed(1)}s`;
+        // Show effective cycle time if available (resonance bonus applied), otherwise base
+        const displayCycleTime = timingData.effectiveCycleTime || timingData.baseCycleTime;
+        pulseEl.textContent = `${(displayCycleTime / 1000).toFixed(1)}s`;
+        
+        // Show resonance note if effective cycle time is different from base
+        if (resonanceNotePulse) {
+            if (timingData.effectiveCycleTime && timingData.effectiveCycleTime !== timingData.baseCycleTime) {
+                resonanceNotePulse.style.display = 'inline';
+            } else {
+                resonanceNotePulse.style.display = 'none';
+            }
+        }
     }
+    
+    if (hitRateEl && timingData.hitRate !== undefined) {
+        hitRateEl.textContent = `${(timingData.hitRate * 100).toFixed(0)}%`;
+        
+        // Show resonance note if hit rate is less than 100%
+        if (resonanceNoteHitRate) {
+            if (timingData.hitRate < 1.0) {
+                resonanceNoteHitRate.style.display = 'inline';
+            } else {
+                resonanceNoteHitRate.style.display = 'none';
+            }
+        }
+    }
+    
     if (harvestEl && timingData.harvestableTime) {
         harvestEl.textContent = `${(timingData.harvestableTime / 1000).toFixed(0)}s`;
     }

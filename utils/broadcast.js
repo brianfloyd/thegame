@@ -177,14 +177,24 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   // Get NPCs in the room with harvest progress info
   const now = Date.now();
   const npcsInRoomRaw = await db.getNPCsInRoom(room.id);
-  const npcsInRoom = npcsInRoomRaw.map(npc => {
+  
+  // Import harvest formula utilities for effective cycle time calculation
+  let harvestFormulas = null;
+  try {
+    harvestFormulas = require('./harvestFormulas');
+  } catch (e) {
+    // Formulas module not available, use base cycle time
+  }
+  
+  const npcsInRoom = await Promise.all(npcsInRoomRaw.map(async npc => {
+    const baseCycleTime = npc.base_cycle_time || 12000;
     const npcData = {
       id: npc.id,
       name: npc.name,
       description: npc.description,
       state: npc.state,
       color: npc.display_color || npc.color || '#00ffff',
-      baseCycleTime: npc.base_cycle_time || 5000,
+      baseCycleTime: baseCycleTime,
       harvestableTime: npc.harvestableTime || 60000,
       cooldownTime: npc.cooldownTime || 120000
     };
@@ -195,6 +205,39 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       const harvestRemaining = Math.max(0, npcData.harvestableTime - harvestElapsed);
       npcData.harvestProgress = harvestRemaining / npcData.harvestableTime;
       npcData.harvestStatus = 'active';
+      
+      // Calculate effective cycle time and hit rate based on player's cached resonance
+      if (harvestFormulas && npc.state.harvesting_player_resonance) {
+        try {
+          // Get NPC definition to check if stat bonuses are enabled
+          const npcDef = await db.getScriptableNPCById(npc.npcId);
+          const enableStatBonuses = npcDef && npcDef.enable_stat_bonuses !== false;
+          
+          if (enableStatBonuses) {
+            // Calculate effective cycle time
+            const cycleConfig = await harvestFormulas.getHarvestFormulaConfig(db, 'cycle_time_reduction');
+            if (cycleConfig) {
+              const multiplier = harvestFormulas.calculateCycleTimeMultiplier(npc.state.harvesting_player_resonance, cycleConfig);
+              npcData.effectiveCycleTime = Math.round(baseCycleTime * multiplier);
+            }
+            
+            // Calculate hit rate
+            const hitConfig = await harvestFormulas.getHarvestFormulaConfig(db, 'hit_rate');
+            if (hitConfig) {
+              npcData.hitRate = harvestFormulas.calculateHitRate(npc.state.harvesting_player_resonance, hitConfig);
+            }
+          } else {
+            // Stat bonuses disabled - show 100% hit rate and base cycle time
+            npcData.hitRate = 1.0;
+          }
+        } catch (e) {
+          // Error calculating bonuses, use base values (100% hit rate)
+          npcData.hitRate = 1.0;
+        }
+      } else {
+        // No resonance cached (shouldn't happen during active harvest, but safety check)
+        npcData.hitRate = 1.0;
+      }
     } else if (npc.state.cooldown_until && now < npc.state.cooldown_until) {
       const cooldownRemaining = npc.state.cooldown_until - now;
       const cooldownElapsed = npcData.cooldownTime - cooldownRemaining;
@@ -206,7 +249,7 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     }
     
     return npcData;
-  });
+  }));
   
   // Get items on the ground in the room
   const roomItems = await db.getRoomItems(room.id);
