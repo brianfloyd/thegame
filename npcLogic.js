@@ -52,9 +52,25 @@ function runNPCCycle(npc, roomNpc) {
 /**
  * Rhythm NPC handler - PRODUCES ITEMS ONLY DURING ACTIVE HARVEST SESSION
  * Example: Pulsewood Harvester - releases resin when player harvests
+ * 
+ * IMPORTANT: This function must preserve harvest state fields (harvest_active, 
+ * harvest_start_time, harvesting_player_id, cooldown_until) as they are managed
+ * by the NPC cycle engine, not by this cycle logic.
  */
 function handleRhythm(npc, state) {
+  // Preserve harvest-related state fields before modifying state
+  const harvestActive = state.harvest_active;
+  const harvestStartTime = state.harvest_start_time;
+  const harvestingPlayerId = state.harvesting_player_id;
+  const cooldownUntil = state.cooldown_until;
+  
   state.cycles = (state.cycles || 0) + 1;
+  
+  // Restore harvest state fields (they should not be modified by cycle logic)
+  state.harvest_active = harvestActive;
+  state.harvest_start_time = harvestStartTime;
+  state.harvesting_player_id = harvestingPlayerId;
+  state.cooldown_until = cooldownUntil;
   
   // Only produce items if a harvest session is active
   if (!state.harvest_active) {

@@ -456,9 +456,9 @@ function renderNpcForm() {
                         <textarea id="npcDescription">${selectedNpc.description || ''}</textarea>
                     </div>
                 </div>
-                <!-- Row 2: Type (25%) + Base ms (25%) + Diff (25%) + Active (25%) -->
+                <!-- Row 2: Type (16.67%) + Base ms (16.67%) + Diff (16.67%) + Harvestable (16.67%) + Cooldown (16.67%) + Active (16.67%) -->
                 <div class="npc-row">
-                    <div class="npc-field-group npc-field-quarter">
+                    <div class="npc-field-group npc-field-sixth">
                         <label>Type</label>
                         <select id="npcType">
                             <option value="rhythm" ${selectedNpc.npc_type === 'rhythm' ? 'selected' : ''}>rhythm</option>
@@ -473,15 +473,23 @@ function renderNpcForm() {
                             <option value="lorekeeper" ${selectedNpc.npc_type === 'lorekeeper' ? 'selected' : ''}>lorekeeper</option>
                         </select>
                     </div>
-                    <div class="npc-field-group npc-field-quarter">
+                    <div class="npc-field-group npc-field-sixth">
                         <label>Base ms</label>
                         <input type="number" id="npcBaseCycle" value="${selectedNpc.base_cycle_time || 0}">
                     </div>
-                    <div class="npc-field-group npc-field-quarter">
+                    <div class="npc-field-group npc-field-sixth">
                         <label>Diff</label>
                         <input type="number" id="npcDifficulty" value="${selectedNpc.difficulty || 1}">
                     </div>
-                    <div class="npc-field-group npc-field-quarter">
+                    <div class="npc-field-group npc-field-sixth">
+                        <label>Harvestable (ms)</label>
+                        <input type="number" id="npcHarvestable" value="${selectedNpc.harvestable_time || selectedNpc.harvestableTime || 60000}">
+                    </div>
+                    <div class="npc-field-group npc-field-sixth">
+                        <label>Cooldown (ms)</label>
+                        <input type="number" id="npcCooldown" value="${selectedNpc.cooldown_time || selectedNpc.cooldownTime || 120000}">
+                    </div>
+                    <div class="npc-field-group npc-field-sixth">
                         <label>Active</label>
                         <select id="npcActive">
                             <option value="1" ${selectedNpc.active ? 'selected' : ''}>Yes</option>
@@ -1048,6 +1056,8 @@ function saveNpc() {
     const npc_type = document.getElementById('npcType').value;
     const base_cycle_time = parseInt(document.getElementById('npcBaseCycle').value, 10) || 0;
     const difficulty = parseInt(document.getElementById('npcDifficulty').value, 10) || 1;
+    const harvestable_time = parseInt(document.getElementById('npcHarvestable')?.value, 10) || 60000;
+    const cooldown_time = parseInt(document.getElementById('npcCooldown')?.value, 10) || 120000;
     const required_stats = document.getElementById('npcRequiredStats').value.trim();
     const required_buffs = document.getElementById('npcRequiredBuffs').value.trim();
     const input_items = document.getElementById('npcInputItems').value.trim();
@@ -1084,6 +1094,8 @@ function saveNpc() {
         npc_type,
         base_cycle_time,
         difficulty,
+        harvestable_time,
+        cooldown_time,
         required_stats: required_stats || null,
         required_buffs: required_buffs || null,
         input_items: input_items || null,

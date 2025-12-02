@@ -128,19 +128,60 @@ async function dispatch(ctx, data) {
   ctx.playerName = playerData.playerName;
   
   // Harvest interruption check (for non-safe commands)
-  if (playerData.playerId && type) {
+  // IMPORTANT: Only interrupt for commands that are NOT safe AND NOT the harvest command itself
+  // Also skip this check entirely if the command type is undefined or empty
+  if (playerData.playerId && type && typeof type === 'string') {
     const cmdType = type.toLowerCase();
     const isSafeCommand = isHarvestSafeCommand(cmdType);
     const isHarvestCmd = cmdType === 'harvest';
     
+    // Only interrupt harvest for commands that are not safe and not the harvest command
     if (!isSafeCommand && !isHarvestCmd) {
       const activeSession = await findPlayerHarvestSession(ctx.db, playerData.playerId);
       if (activeSession) {
-        await endHarvestSession(ctx.db, activeSession.roomNpcId, true);
-        ctx.ws.send(JSON.stringify({ 
-          type: 'message', 
-          message: 'Your harvesting has been interrupted.' 
-        }));
+        // Check if harvest just started (less than 2 seconds ago) - if so, don't interrupt
+        // This prevents race conditions where a command is sent immediately after harvest starts
+        const roomNpcResult = await ctx.db.query('SELECT state FROM room_npcs WHERE id = $1', [activeSession.roomNpcId]);
+        if (roomNpcResult.rows[0] && roomNpcResult.rows[0].state) {
+          try {
+            const npcState = JSON.parse(roomNpcResult.rows[0].state);
+            if (npcState.harvest_start_time && typeof npcState.harvest_start_time === 'number') {
+              const harvestAge = Date.now() - npcState.harvest_start_time;
+              if (harvestAge < 2000) {
+                // Harvest just started, don't interrupt it
+                // Continue to handler without interrupting
+              } else {
+                // Harvest has been active for more than 2 seconds, safe to interrupt
+                await endHarvestSession(ctx.db, activeSession.roomNpcId, true);
+                ctx.ws.send(JSON.stringify({ 
+                  type: 'message', 
+                  message: 'Your harvesting has been interrupted.' 
+                }));
+              }
+            } else {
+              // No harvest_start_time, proceed with interruption
+              await endHarvestSession(ctx.db, activeSession.roomNpcId, true);
+              ctx.ws.send(JSON.stringify({ 
+                type: 'message', 
+                message: 'Your harvesting has been interrupted.' 
+              }));
+            }
+          } catch (e) {
+            // If we can't parse state, proceed with interruption
+            await endHarvestSession(ctx.db, activeSession.roomNpcId, true);
+            ctx.ws.send(JSON.stringify({ 
+              type: 'message', 
+              message: 'Your harvesting has been interrupted.' 
+            }));
+          }
+        } else {
+          // No state found, proceed with interruption
+          await endHarvestSession(ctx.db, activeSession.roomNpcId, true);
+          ctx.ws.send(JSON.stringify({ 
+            type: 'message', 
+            message: 'Your harvesting has been interrupted.' 
+          }));
+        }
       }
     }
   }

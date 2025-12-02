@@ -414,6 +414,8 @@ async function createScriptableNPC(npc) {
     npc_type,
     base_cycle_time,
     difficulty = 1,
+    harvestable_time = 60000,
+    cooldown_time = 120000,
     required_stats = null,
     required_buffs = null,
     input_items = null,
@@ -437,9 +439,9 @@ async function createScriptableNPC(npc) {
   } = npc;
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response]
   );
 
   return result.rows[0].id;
@@ -453,6 +455,8 @@ async function updateScriptableNPC(npc) {
     npc_type,
     base_cycle_time,
     difficulty = 1,
+    harvestable_time = 60000,
+    cooldown_time = 120000,
     required_stats = null,
     required_buffs = null,
     input_items = null,
@@ -478,16 +482,16 @@ async function updateScriptableNPC(npc) {
 
   await query(
     `UPDATE scriptable_npcs SET
-      name = $1, description = $2, npc_type = $3, base_cycle_time = $4, difficulty = $5,
-      required_stats = $6, required_buffs = $7, input_items = $8, output_items = $9,
-      failure_states = $10, display_color = $11, active = $12,
-      puzzle_type = $13, puzzle_glow_clues = $14, puzzle_extraction_pattern = $15,
-      puzzle_solution_word = $16, puzzle_success_response = $17, puzzle_failure_response = $18,
-      puzzle_reward_item = $19, puzzle_hint_responses = $20, puzzle_followup_responses = $21,
-      puzzle_incorrect_attempt_responses = $22, puzzle_award_once_only = $23, puzzle_award_after_delay = $24,
-      puzzle_award_delay_seconds = $25, puzzle_award_delay_response = $26
-     WHERE id = $27`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, id]
+      name = $1, description = $2, npc_type = $3, base_cycle_time = $4, difficulty = $5, harvestable_time = $6, cooldown_time = $7,
+      required_stats = $8, required_buffs = $9, input_items = $10, output_items = $11,
+      failure_states = $12, display_color = $13, active = $14,
+      puzzle_type = $15, puzzle_glow_clues = $16, puzzle_extraction_pattern = $17,
+      puzzle_solution_word = $18, puzzle_success_response = $19, puzzle_failure_response = $20,
+      puzzle_reward_item = $21, puzzle_hint_responses = $22, puzzle_followup_responses = $23,
+      puzzle_incorrect_attempt_responses = $24, puzzle_award_once_only = $25, puzzle_award_after_delay = $26,
+      puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28
+     WHERE id = $29`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, id]
   );
 }
 
@@ -534,6 +538,21 @@ async function getNPCsInRoom(roomId) {
   }));
 }
 
+// Helper function to safely parse JSON with error handling
+function safeJsonParse(jsonString, defaultValue, fieldName) {
+  if (!jsonString || jsonString.trim() === '') {
+    return defaultValue;
+  }
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.error(`Error parsing JSON for field '${fieldName}':`, error.message);
+    console.error(`Invalid JSON string:`, jsonString);
+    console.error(`NPC ID:`, fieldName.includes('state') ? 'see row details' : 'N/A');
+    return defaultValue;
+  }
+}
+
 async function getAllActiveNPCs() {
   const rows = await getAll(
     `SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
@@ -545,23 +564,47 @@ async function getAllActiveNPCs() {
      WHERE rn.active = TRUE AND sn.active = TRUE`
   );
   
-  return rows.map(row => ({
-    id: row.id,
-    npcId: row.npc_id,
-    roomId: row.room_id,
-    state: row.state ? JSON.parse(row.state) : {},
-    lastCycleRun: row.last_cycle_run || 0,
-    npcType: row.npc_type,
-    baseCycleTime: row.base_cycle_time,
-    requiredStats: row.required_stats ? JSON.parse(row.required_stats) : {},
-    requiredBuffs: row.required_buffs ? JSON.parse(row.required_buffs) : [],
-    inputItems: row.input_items ? JSON.parse(row.input_items) : {},
-    outputItems: row.output_items ? JSON.parse(row.output_items) : {},
-    failureStates: row.failure_states ? JSON.parse(row.failure_states) : [],
-    color: row.display_color || '#00ffff',
-    harvestableTime: row.harvestable_time || 60000,
-    cooldownTime: row.cooldown_time || 120000
-  }));
+  return rows.map(row => {
+    try {
+      return {
+        id: row.id,
+        npcId: row.npc_id,
+        roomId: row.room_id,
+        state: safeJsonParse(row.state, {}, `state (NPC ${row.npc_id}, Room ${row.room_id})`),
+        lastCycleRun: row.last_cycle_run || 0,
+        npcType: row.npc_type,
+        baseCycleTime: row.base_cycle_time,
+        requiredStats: safeJsonParse(row.required_stats, {}, `required_stats (NPC ${row.npc_id})`),
+        requiredBuffs: safeJsonParse(row.required_buffs, [], `required_buffs (NPC ${row.npc_id})`),
+        inputItems: safeJsonParse(row.input_items, {}, `input_items (NPC ${row.npc_id})`),
+        outputItems: safeJsonParse(row.output_items, {}, `output_items (NPC ${row.npc_id})`),
+        failureStates: safeJsonParse(row.failure_states, [], `failure_states (NPC ${row.npc_id})`),
+        color: row.display_color || '#00ffff',
+        harvestableTime: row.harvestable_time || 60000,
+        cooldownTime: row.cooldown_time || 120000
+      };
+    } catch (error) {
+      console.error(`Error processing NPC row (ID: ${row.id}, NPC: ${row.npc_id}, Room: ${row.room_id}):`, error);
+      // Return a minimal valid object to prevent complete failure
+      return {
+        id: row.id,
+        npcId: row.npc_id,
+        roomId: row.room_id,
+        state: {},
+        lastCycleRun: row.last_cycle_run || 0,
+        npcType: row.npc_type,
+        baseCycleTime: row.base_cycle_time,
+        requiredStats: {},
+        requiredBuffs: [],
+        inputItems: {},
+        outputItems: {},
+        failureStates: [],
+        color: row.display_color || '#00ffff',
+        harvestableTime: row.harvestable_time || 60000,
+        cooldownTime: row.cooldown_time || 120000
+      };
+    }
+  });
 }
 
 async function validateMoonlessMeadowRoom(roomId) {

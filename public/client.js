@@ -4,10 +4,11 @@ let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
 
 // Widget system state
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode'];
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting'];
 // Default widgets for normal players: stats, compass, map, comms
 // For god mode players: stats, compass, map, godmode (replaces comms)
 let activeWidgets = ['stats', 'compass', 'map', 'comms'];
+let scriptingWidgetPosition = 'top'; // 'top' or 'bottom' - which row the scripting widget occupies
 let widgetsInitialized = false; // Track if we've set up widgets based on player type
 let restartRequested = false; // Track if server restart was requested
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
@@ -3768,9 +3769,40 @@ function toggleWidget(widgetName) {
     
     const isActive = activeWidgets.includes(widgetName);
     
+    // Special handling for scripting widget
+    if (widgetName === 'scripting') {
+        if (isActive) {
+            // Hide scripting widget
+            activeWidgets = activeWidgets.filter(w => w !== 'scripting');
+        } else {
+            // Show scripting widget - it takes 2 slots
+            // Force map and comms to be open
+            if (!activeWidgets.includes('map')) {
+                activeWidgets.push('map');
+            }
+            if (!activeWidgets.includes('comms')) {
+                activeWidgets.push('comms');
+            }
+            
+            // Remove other widgets to make room (keep map and comms)
+            // Scripting takes 2 slots, so we need to clear space
+            activeWidgets = activeWidgets.filter(w => w === 'map' || w === 'comms' || w === 'scripting');
+            activeWidgets.push('scripting');
+        }
+        updateWidgetDisplay();
+        return;
+    }
+    
     if (isActive) {
         // Hide the widget (but don't allow hiding if it would leave no widgets)
         // Also, if hiding stats, make sure we have room for automatic widgets
+        // Don't allow hiding map or comms if scripting is open
+        if (activeWidgets.includes('scripting')) {
+            if (widgetName === 'map' || widgetName === 'comms') {
+                return; // Can't hide map/comms when scripting is open
+            }
+        }
+        
         const willHaveSpace = activeWidgets.length > 1 || (npcWidgetVisible || factoryWidgetVisible);
         if (!willHaveSpace && widgetName !== 'stats') {
             // Can't hide the last toggleable widget unless it's stats
@@ -3779,9 +3811,17 @@ function toggleWidget(widgetName) {
         activeWidgets = activeWidgets.filter(w => w !== widgetName);
     } else {
         // Show the widget
-        // Calculate available slots (4 total, minus automatic widgets)
+        // If scripting is open, we can only show map or comms
+        if (activeWidgets.includes('scripting')) {
+            if (widgetName !== 'map' && widgetName !== 'comms') {
+                return; // Can't show other widgets when scripting is open
+            }
+        }
+        
+        // Calculate available slots (4 total, minus automatic widgets, minus scripting if active)
         const automaticWidgetCount = (npcWidgetVisible ? 1 : 0) + (factoryWidgetVisible ? 1 : 0);
-        const maxToggleableWidgets = 4 - automaticWidgetCount;
+        const scriptingTakesSlots = activeWidgets.includes('scripting') ? 2 : 0;
+        const maxToggleableWidgets = 4 - automaticWidgetCount - scriptingTakesSlots;
         
         if (activeWidgets.length >= maxToggleableWidgets) {
             // At max capacity - automatically remove stats and put new widget in top-left
@@ -3865,7 +3905,124 @@ function updateWidgetDisplay() {
         }
     });
     
-    // Step 2: Build list of widgets to actually display in slots
+    // Step 2: Handle scripting widget specially (takes 2 slots)
+    const scriptingIsActive = activeWidgets.includes('scripting');
+    
+    if (scriptingIsActive) {
+        // Hide all regular widgets first (except map, comms, and scripting)
+        TOGGLEABLE_WIDGETS.forEach(widgetName => {
+            const widget = document.getElementById(`widget-${widgetName}`);
+            if (widget && widgetName !== 'scripting' && widgetName !== 'map' && widgetName !== 'comms') {
+                widget.classList.add('hidden');
+            }
+        });
+        
+        // Hide auto-managed widgets
+        ['npc', 'factory'].forEach(widgetName => {
+            const widget = document.getElementById(`widget-${widgetName}`);
+            if (widget) {
+                widget.classList.add('hidden');
+            }
+        });
+        
+        // Get regular slots (0, 1, 2, 3)
+        const regularSlots = document.querySelectorAll('.widget-slot[data-slot="0"], .widget-slot[data-slot="1"], .widget-slot[data-slot="2"], .widget-slot[data-slot="3"]');
+        const scriptingTopSlot = document.querySelector('.scripting-widget-slot[data-slot="scripting-top"]');
+        const scriptingBottomSlot = document.querySelector('.scripting-widget-slot[data-slot="scripting-bottom"]');
+        const scriptingWidget = document.getElementById('widget-scripting');
+        const mapWidget = document.getElementById('widget-map');
+        const commsWidget = document.getElementById('widget-comms');
+        
+        // Hide scripting slots first
+        if (scriptingTopSlot) scriptingTopSlot.style.display = 'none';
+        if (scriptingBottomSlot) scriptingBottomSlot.style.display = 'none';
+        
+        // Position scripting widget based on scriptingWidgetPosition
+        if (scriptingWidgetPosition === 'top') {
+            // Top row: scripting takes slots 0-1, map/comms take slots 2-3
+            if (scriptingTopSlot && scriptingWidget) {
+                scriptingTopSlot.style.display = 'block';
+                if (scriptingWidget.parentElement !== scriptingTopSlot) {
+                    scriptingTopSlot.appendChild(scriptingWidget);
+                }
+                scriptingWidget.classList.remove('hidden');
+            }
+            
+            // Show map and comms in bottom row (slots 2 and 3)
+            if (mapWidget && regularSlots[2]) {
+                regularSlots[2].style.display = 'block';
+                if (mapWidget.parentElement !== regularSlots[2]) {
+                    regularSlots[2].appendChild(mapWidget);
+                }
+                mapWidget.classList.remove('hidden');
+            }
+            
+            if (commsWidget && regularSlots[3]) {
+                regularSlots[3].style.display = 'block';
+                if (commsWidget.parentElement !== regularSlots[3]) {
+                    regularSlots[3].appendChild(commsWidget);
+                }
+                commsWidget.classList.remove('hidden');
+            }
+            
+            // Hide top row regular slots (0 and 1) since scripting spans them
+            if (regularSlots[0]) regularSlots[0].style.display = 'none';
+            if (regularSlots[1]) regularSlots[1].style.display = 'none';
+        } else {
+            // Bottom row: map/comms take slots 0-1, scripting takes slots 2-3
+            if (scriptingBottomSlot && scriptingWidget) {
+                scriptingBottomSlot.style.display = 'block';
+                if (scriptingWidget.parentElement !== scriptingBottomSlot) {
+                    scriptingBottomSlot.appendChild(scriptingWidget);
+                }
+                scriptingWidget.classList.remove('hidden');
+            }
+            
+            // Show map and comms in top row (slots 0 and 1)
+            if (mapWidget && regularSlots[0]) {
+                regularSlots[0].style.display = 'block';
+                if (mapWidget.parentElement !== regularSlots[0]) {
+                    regularSlots[0].appendChild(mapWidget);
+                }
+                mapWidget.classList.remove('hidden');
+            }
+            
+            if (commsWidget && regularSlots[1]) {
+                regularSlots[1].style.display = 'block';
+                if (commsWidget.parentElement !== regularSlots[1]) {
+                    regularSlots[1].appendChild(commsWidget);
+                }
+                commsWidget.classList.remove('hidden');
+            }
+            
+            // Hide bottom row regular slots (2 and 3) since scripting spans them
+            if (regularSlots[2]) regularSlots[2].style.display = 'none';
+            if (regularSlots[3]) regularSlots[3].style.display = 'none';
+        }
+        
+        // Make scripting widget draggable to switch position
+        if (scriptingWidget) {
+            scriptingWidget.draggable = true;
+            scriptingWidget.dataset.widgetName = 'scripting';
+        }
+        
+        // Initialize drag and drop handlers
+        initWidgetDragDrop();
+        return; // Early return for scripting mode
+    }
+    
+    // Step 3: Normal widget display (scripting not active)
+    // Hide scripting widget slots
+    document.querySelectorAll('.scripting-widget-slot').forEach(slot => {
+        slot.style.display = 'none';
+    });
+    
+    // Show regular slots (0, 1, 2, 3)
+    document.querySelectorAll('.widget-slot[data-slot="0"], .widget-slot[data-slot="1"], .widget-slot[data-slot="2"], .widget-slot[data-slot="3"]').forEach(slot => {
+        slot.style.display = 'block';
+    });
+    
+    // Build list of widgets to actually display in slots
     // Auto-managed widgets (factory, npc) take priority, then activeWidgets
     let widgetsToShow = [];
     
@@ -3890,7 +4047,7 @@ function updateWidgetDisplay() {
     // Limit to 4 slots
     widgetsToShow = widgetsToShow.slice(0, 4);
     
-    // Step 3: Hide ALL widgets first (clean slate)
+    // Step 4: Hide ALL widgets first (clean slate)
     // Hide all toggleable widgets
     TOGGLEABLE_WIDGETS.forEach(widgetName => {
         const widget = document.getElementById(`widget-${widgetName}`);
@@ -3908,8 +4065,9 @@ function updateWidgetDisplay() {
     // Hide empty widget placeholders
     document.querySelectorAll('.widget-empty').forEach(w => w.classList.add('hidden'));
     
-    // Step 4: Show widgets in their slots
-    slots.forEach((slot, index) => {
+    // Step 5: Show widgets in their slots
+    const regularSlots = document.querySelectorAll('.widget-slot[data-slot]:not([data-slot^="scripting"])');
+    regularSlots.forEach((slot, index) => {
         if (index < widgetsToShow.length) {
             const widgetName = widgetsToShow[index];
             const widgetId = `widget-${widgetName}`;
@@ -4011,6 +4169,28 @@ function initWidgetDragDrop() {
         
         const widgetName = e.dataTransfer.getData('text/plain');
         if (!widgetName) return;
+        
+        // Special handling for scripting widget - detect row change
+        if (widgetName === 'scripting' && activeWidgets.includes('scripting')) {
+            const slotData = slot.dataset.slot;
+            if (slotData === 'scripting-top' || slotData === 'scripting-bottom') {
+                // Toggle scripting widget position
+                scriptingWidgetPosition = slotData === 'scripting-top' ? 'top' : 'bottom';
+                updateWidgetDisplay();
+                return;
+            }
+            // If dropped on a regular slot, determine which row
+            const slotIndex = parseInt(slotData) || 0;
+            if (slotIndex < 2 && scriptingWidgetPosition !== 'top') {
+                scriptingWidgetPosition = 'top';
+                updateWidgetDisplay();
+                return;
+            } else if (slotIndex >= 2 && scriptingWidgetPosition !== 'bottom') {
+                scriptingWidgetPosition = 'bottom';
+                updateWidgetDisplay();
+                return;
+            }
+        }
         
         // Get slot index
         const slotIndex = parseInt(slot.dataset.slot) || 0;

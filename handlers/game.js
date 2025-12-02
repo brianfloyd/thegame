@@ -389,6 +389,10 @@ async function authenticateSession(ctx, data) {
     }));
   }
 
+  // Automatically trigger look command to display current room (as if player typed 'look')
+  // This ensures the room description is shown after the backscroll
+  await look({ ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId }, {});
+
   console.log(`Player ${playerName} connected (${connectionId}) in room ${room.name}`);
   return { authenticated: true, connectionId };
 }
@@ -1235,8 +1239,27 @@ async function harvest(ctx, data) {
   npcState.harvest_start_time = now;
   npcState.cooldown_until = null;
   
+  // Get NPC definition to verify harvestableTime
+  const harvestableTime = npcDef.harvestable_time || 60000;
+  console.log(`[Harvest] Starting harvest for player ${player.name} on ${roomNpc.name} (room_npc ${roomNpc.id}), harvestableTime=${harvestableTime}ms`);
+  
   // Update NPC state in database
   await db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);
+  
+  // Verify the state was saved correctly
+  const verifyResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpc.id]);
+  if (verifyResult.rows[0]) {
+    try {
+      const savedState = verifyResult.rows[0].state ? JSON.parse(verifyResult.rows[0].state) : {};
+      if (savedState.harvest_active && savedState.harvest_start_time) {
+        console.log(`[Harvest] State saved correctly: harvest_active=${savedState.harvest_active}, harvest_start_time=${savedState.harvest_start_time}`);
+      } else {
+        console.error(`[Harvest] ERROR: State not saved correctly! harvest_active=${savedState.harvest_active}, harvest_start_time=${savedState.harvest_start_time}`);
+      }
+    } catch (e) {
+      console.error(`[Harvest] ERROR: Failed to parse saved state:`, e);
+    }
+  }
   
   ws.send(JSON.stringify({ type: 'message', message: `You begin harvesting the ${roomNpc.name}.` }));
 }

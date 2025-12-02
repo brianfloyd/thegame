@@ -2530,6 +2530,72 @@ body {
     background: rgba(0, 255, 0, 0.1);
 }
 
+/* Scripting Widget Styles */
+.scripting-widget-slot {
+    position: relative;
+    overflow: hidden;
+}
+
+.scripting-widget-slot[data-slot="scripting-top"] {
+    grid-column: 1 / 3;
+    grid-row: 1;
+}
+
+.scripting-widget-slot[data-slot="scripting-bottom"] {
+    grid-column: 1 / 3;
+    grid-row: 2;
+}
+
+#widget-scripting {
+    border: 2px solid #00ff00;
+    background: rgba(0, 0, 0, 0.9);
+}
+
+#widget-scripting .widget-header {
+    color: #ffff00;
+    font-weight: bold;
+    text-align: center;
+}
+
+.scripting-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 20px;
+}
+
+.scripting-action-btn {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    font-family: 'Courier New', monospace;
+}
+
+.scripting-action-btn:hover {
+    background: rgba(0, 255, 0, 0.3);
+    border-color: #ffff00;
+    color: #ffff00;
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.3);
+}
+
+.scripting-action-btn:active {
+    background: rgba(0, 255, 0, 0.4);
+    transform: scale(0.98);
+}
+
+.scripting-action-btn svg {
+    fill: currentColor;
+}
+
 /* Map Editor Overlay */
 .map-editor-overlay {
     position: fixed;
@@ -2557,6 +2623,15 @@ body {
     display: flex;
     flex-direction: column;
     padding: 10px;
+}
+
+/* NPC Editor: Full screen when NPC is loaded */
+#npcEditor.npc-detail-mode .map-editor-container {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    padding: 0;
 }
 
 .map-editor-header {
@@ -2672,8 +2747,29 @@ body {
 
 /* NPC Editor detail mode: hide list, expand form */
 #npcEditor.npc-detail-mode #npcEditorSidePanel {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+}
+
+/* NPC Editor detail mode: hide list container */
+#npcEditor.npc-detail-mode #npcListContainer {
+    display: none !important;
+}
+
+/* NPC Editor detail mode: make content full width */
+#npcEditor.npc-detail-mode .map-editor-content {
+    flex: 1;
+    display: flex;
+    gap: 0;
     width: 100%;
-    max-width: 100%;
+}
+
+/* NPC Editor detail mode: ensure side panel takes full available space */
+#npcEditor.npc-detail-mode .map-editor-side-panel {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: none !important;
 }
 
 /* NPC Editor: Fixed header, scrollable form */
@@ -2685,6 +2781,12 @@ body {
     border-bottom: 2px solid #00ff00;
 }
 
+/* NPC Editor detail mode: adjust header padding */
+#npcEditor.npc-detail-mode .map-editor-header {
+    padding: 15px 20px;
+    margin-bottom: 0;
+}
+
 #npcEditor .map-editor-toolbar {
     position: sticky;
     top: 60px; /* Adjust based on header height */
@@ -2692,6 +2794,12 @@ body {
     background: #1a1a1a;
     border-bottom: 1px solid #00ff00;
     padding: 8px;
+}
+
+/* NPC Editor detail mode: adjust toolbar padding */
+#npcEditor.npc-detail-mode .map-editor-toolbar {
+    padding: 12px 20px;
+    margin-bottom: 0;
 }
 
 #npcEditor #npcSidePanelContent {
@@ -2707,6 +2815,12 @@ body {
     overflow-x: hidden;
     padding: 10px;
     max-height: calc(100vh - 140px);
+}
+
+/* NPC Editor detail mode: full height scrollable area */
+#npcEditor.npc-detail-mode .npc-editor-scrollable {
+    padding: 20px;
+    max-height: calc(100vh - 120px);
 }
 
 .npc-editor-title {
@@ -2744,6 +2858,14 @@ body {
 
 .npc-field-quarter {
     flex: 0 0 calc(25% - 6px);
+}
+
+.npc-field-fifth {
+    flex: 0 0 calc(20% - 6px);
+}
+
+.npc-field-sixth {
+    flex: 0 0 calc(16.67% - 6px);
 }
 
 .npc-field-third {
@@ -3022,6 +3144,14 @@ body {
     font-family: 'Courier New', monospace;
     display: flex;
     flex-direction: column;
+}
+
+/* NPC Editor detail mode: ensure side panel takes full available space */
+#npcEditor.npc-detail-mode .map-editor-side-panel {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
 }
 
 /* Item Editor: Make side panel use remaining space */
