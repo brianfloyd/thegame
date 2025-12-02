@@ -179,15 +179,14 @@ async function createPlayer(name, accountId) {
     throw new Error('Starting room (town square) not found');
   }
   
-  // Create player with Hebron's stats (10/10/10/10/10, 0 abilities, 50/50 HP, 10/10 Mana)
+  // Create player with new stats (5/5/5/5, 0 abilities)
   const result = await query(
     `INSERT INTO players (
       name, current_room_id,
-      stat_brute_strength, stat_life_force, stat_cunning, stat_intelligence, stat_wisdom,
-      ability_crafting, ability_lockpicking, ability_stealth, ability_dodge, ability_critical_hit,
-      resource_hit_points, resource_max_hit_points, resource_mana, resource_max_mana,
-      flag_god_mode, flag_always_first_time
-    ) VALUES ($1, $2, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 0, 0)
+      stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen,
+      ability_crafting, ability_attunement, ability_endurance, ability_commerce,
+      assignable_points, flag_god_mode, flag_always_first_time
+    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0)
     RETURNING id, name, current_room_id`,
     [name, townSquare.id]
   );
@@ -216,10 +215,9 @@ async function updatePlayerRoom(roomId, playerName) {
 
 async function updatePlayer(player) {
   const allowedFields = [
-    'stat_brute_strength', 'stat_life_force', 'stat_cunning', 'stat_intelligence', 'stat_wisdom',
-    'ability_crafting', 'ability_lockpicking', 'ability_stealth', 'ability_dodge', 'ability_critical_hit',
-    'resource_hit_points', 'resource_max_hit_points', 'resource_mana', 'resource_max_mana',
-    'resource_max_encumbrance', 'flag_god_mode', 'current_room_id'
+    'stat_ingenuity', 'stat_resonance', 'stat_fortitude', 'stat_acumen',
+    'ability_crafting', 'ability_attunement', 'ability_endurance', 'ability_commerce',
+    'resource_max_encumbrance', 'assignable_points', 'flag_god_mode', 'current_room_id'
   ];
   
   const updates = [];
@@ -344,6 +342,15 @@ function getPlayerStats(player) {
       .join(' ');
   };
 
+  // Add assignable_points if it exists
+  if (player.assignable_points !== undefined) {
+    stats.assignablePoints = {
+      value: player.assignable_points,
+      displayName: 'Assignable Points',
+      category: 'special'
+    };
+  }
+  
   for (const key of Object.keys(player)) {
     if (key.startsWith('stat_')) {
       const baseName = key.replace('stat_', '');
@@ -1729,8 +1736,8 @@ async function getAccountById(accountId) {
 }
 
 /**
- * Check if account is within grace period (2 weeks) for unverified accounts
- * Returns true if account is verified OR if account was created within last 2 weeks
+ * Check if account is within grace period (7 days) for unverified accounts
+ * Returns true if account is verified OR if account was created within last 7 days
  */
 async function isAccountWithinGracePeriod(accountId) {
   const account = await getAccountById(accountId);
@@ -1739,9 +1746,46 @@ async function isAccountWithinGracePeriod(accountId) {
   // If verified, always allow
   if (account.email_verified) return true;
   
-  // Check if account was created within last 2 weeks (14 days)
-  const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
-  return account.created_at >= twoWeeksAgo;
+  // Check if account was created within last 7 days
+  const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  return account.created_at >= sevenDaysAgo;
+}
+
+/**
+ * Calculate days remaining in grace period for unverified accounts
+ * Returns null if account is verified, or number of days remaining (0-7, 0 if expired)
+ */
+async function getDaysRemainingForVerification(accountId) {
+  const account = await getAccountById(accountId);
+  if (!account) return null;
+  
+  // If verified, return null (no grace period needed)
+  if (account.email_verified) return null;
+  
+  // Ensure created_at is a number (handle both string and number formats)
+  const accountCreatedAt = typeof account.created_at === 'string' 
+    ? parseInt(account.created_at, 10) 
+    : Number(account.created_at);
+  
+  // Validate the timestamp is reasonable (should be a millisecond timestamp)
+  if (isNaN(accountCreatedAt) || accountCreatedAt <= 0) {
+    console.error(`Invalid created_at timestamp for account ${accountId}: ${account.created_at}`);
+    return 7; // Default to 7 days if timestamp is invalid
+  }
+  
+  const now = Date.now();
+  
+  // Calculate milliseconds since account creation
+  const msSinceCreation = now - accountCreatedAt;
+  
+  // Calculate days since creation (using floor to get full days elapsed)
+  const daysSinceCreation = Math.floor(msSinceCreation / (24 * 60 * 60 * 1000));
+  
+  // Calculate days remaining (7 days total grace period)
+  // Use Math.max to ensure it never goes below 0
+  const daysRemaining = Math.max(0, 7 - daysSinceCreation);
+  
+  return daysRemaining;
 }
 
 /**
@@ -1966,6 +2010,54 @@ async function clearTerminalHistory(playerId) {
 }
 
 // ============================================================
+// Stat and Ability Metadata Functions
+// ============================================================
+
+/**
+ * Get metadata for a single stat
+ * @param {string} statName - Stat name without stat_ prefix (e.g., 'ingenuity')
+ * @returns {object|null} Metadata object with description or null if not found
+ */
+async function getStatMetadata(statName) {
+  return getOne('SELECT * FROM stat_metadata WHERE stat_name = $1', [statName]);
+}
+
+/**
+ * Get metadata for a single ability
+ * @param {string} abilityName - Ability name without ability_ prefix (e.g., 'crafting')
+ * @returns {object|null} Metadata object with description or null if not found
+ */
+async function getAbilityMetadata(abilityName) {
+  return getOne('SELECT * FROM ability_metadata WHERE ability_name = $1', [abilityName]);
+}
+
+/**
+ * Get all stat metadata as a map
+ * @returns {Map<string, string>} Map of stat_name -> description
+ */
+async function getAllStatMetadata() {
+  const rows = await getAll('SELECT stat_name, description FROM stat_metadata');
+  const metadata = new Map();
+  for (const row of rows) {
+    metadata.set(row.stat_name, row.description);
+  }
+  return metadata;
+}
+
+/**
+ * Get all ability metadata as a map
+ * @returns {Map<string, string>} Map of ability_name -> description
+ */
+async function getAllAbilityMetadata() {
+  const rows = await getAll('SELECT ability_name, description FROM ability_metadata');
+  const metadata = new Map();
+  for (const row of rows) {
+    metadata.set(row.ability_name, row.description);
+  }
+  return metadata;
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -2104,6 +2196,7 @@ module.exports = {
   addCharacterToAccount,
   removeCharacterFromAccount,
   isAccountWithinGracePeriod,
+  getDaysRemainingForVerification,
   
   // Email Verification
   createEmailVerificationToken,
@@ -2120,5 +2213,11 @@ module.exports = {
   // Terminal History
   saveTerminalMessage,
   getTerminalHistory,
-  clearTerminalHistory
+  clearTerminalHistory,
+  
+  // Stat and Ability Metadata
+  getStatMetadata,
+  getAbilityMetadata,
+  getAllStatMetadata,
+  getAllAbilityMetadata
 };

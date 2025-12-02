@@ -144,13 +144,13 @@ ON CONFLICT (map_id, x, y) DO NOTHING;
 
 -- Players (Fliz with god mode, Hebron without)
 -- Note: current_room_id=1 assumes town square is ID 1 - may need adjustment based on actual IDs
-INSERT INTO players (name, current_room_id, stat_brute_strength, stat_life_force, stat_cunning, stat_intelligence, stat_wisdom, ability_crafting, ability_lockpicking, ability_stealth, ability_dodge, ability_critical_hit, resource_hit_points, resource_max_hit_points, resource_mana, resource_max_mana, flag_god_mode)
-SELECT 'Fliz', r.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 0, 0, 1
+INSERT INTO players (name, current_room_id, stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen, ability_crafting, ability_attunement, ability_endurance, ability_commerce, assignable_points, flag_god_mode)
+SELECT 'Fliz', r.id, 5, 5, 5, 5, 0, 0, 0, 0, 5, 1
 FROM rooms r WHERE r.name = 'town square' AND r.map_id = 1
 ON CONFLICT (name) DO UPDATE SET flag_god_mode = 1;
 
-INSERT INTO players (name, current_room_id, stat_brute_strength, stat_life_force, stat_cunning, stat_intelligence, stat_wisdom, ability_crafting, ability_lockpicking, ability_stealth, ability_dodge, ability_critical_hit, resource_hit_points, resource_max_hit_points, resource_mana, resource_max_mana, flag_god_mode)
-SELECT 'Hebron', r.id, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 50, 50, 10, 10, 0
+INSERT INTO players (name, current_room_id, stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen, ability_crafting, ability_attunement, ability_endurance, ability_commerce, assignable_points, flag_god_mode)
+SELECT 'Hebron', r.id, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0
 FROM rooms r WHERE r.name = 'town square' AND r.map_id = 1
 ON CONFLICT (name) DO NOTHING;
 

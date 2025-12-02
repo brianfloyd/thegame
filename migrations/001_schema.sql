@@ -39,23 +39,19 @@ CREATE TABLE IF NOT EXISTS players (
     name TEXT NOT NULL UNIQUE,
     current_room_id INTEGER NOT NULL REFERENCES rooms(id),
     -- Stats (attributes)
-    stat_brute_strength INTEGER NOT NULL DEFAULT 10,
-    stat_life_force INTEGER NOT NULL DEFAULT 10,
-    stat_cunning INTEGER NOT NULL DEFAULT 10,
-    stat_intelligence INTEGER NOT NULL DEFAULT 10,
-    stat_wisdom INTEGER NOT NULL DEFAULT 10,
+    stat_ingenuity INTEGER NOT NULL DEFAULT 5,
+    stat_resonance INTEGER NOT NULL DEFAULT 5,
+    stat_fortitude INTEGER NOT NULL DEFAULT 5,
+    stat_acumen INTEGER NOT NULL DEFAULT 5,
     -- Abilities
     ability_crafting INTEGER NOT NULL DEFAULT 0,
-    ability_lockpicking INTEGER NOT NULL DEFAULT 0,
-    ability_stealth INTEGER NOT NULL DEFAULT 0,
-    ability_dodge INTEGER NOT NULL DEFAULT 0,
-    ability_critical_hit INTEGER NOT NULL DEFAULT 0,
+    ability_attunement INTEGER NOT NULL DEFAULT 0,
+    ability_endurance INTEGER NOT NULL DEFAULT 0,
+    ability_commerce INTEGER NOT NULL DEFAULT 0,
     -- Resources
-    resource_hit_points INTEGER NOT NULL DEFAULT 50,
-    resource_max_hit_points INTEGER NOT NULL DEFAULT 50,
-    resource_mana INTEGER NOT NULL DEFAULT 0,
-    resource_max_mana INTEGER NOT NULL DEFAULT 0,
     resource_max_encumbrance INTEGER NOT NULL DEFAULT 100,
+    -- Assignable Points
+    assignable_points INTEGER NOT NULL DEFAULT 5,
     -- Flags
     flag_god_mode INTEGER NOT NULL DEFAULT 0
 );
@@ -130,6 +126,7 @@ CREATE TABLE IF NOT EXISTS room_type_colors (
     room_type TEXT PRIMARY KEY,
     color TEXT NOT NULL DEFAULT '#00ff00'
 );
+
 
 
 

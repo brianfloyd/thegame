@@ -13,3 +13,8 @@ ON CONFLICT (room_type) DO NOTHING;
 -- All room types in the database are preserved
 
 
+
+
+
+
+

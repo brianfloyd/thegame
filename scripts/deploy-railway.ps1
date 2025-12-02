@@ -142,3 +142,8 @@ Write-Host "3. Verify all environment variables are set correctly"
 Write-Host "4. Test the application at your Railway URL"
 
 
+
+
+
+
+

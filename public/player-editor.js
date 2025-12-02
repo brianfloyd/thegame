@@ -332,20 +332,14 @@ function showPlayerForm(player) {
 function savePlayer(playerId) {
     const player = {
         id: playerId,
-        stat_brute_strength: parseInt(document.getElementById('stat_brute_strength').value) || 10,
-        stat_life_force: parseInt(document.getElementById('stat_life_force').value) || 10,
-        stat_cunning: parseInt(document.getElementById('stat_cunning').value) || 10,
-        stat_intelligence: parseInt(document.getElementById('stat_intelligence').value) || 10,
-        stat_wisdom: parseInt(document.getElementById('stat_wisdom').value) || 10,
+        stat_ingenuity: parseInt(document.getElementById('stat_ingenuity').value) || 5,
+        stat_resonance: parseInt(document.getElementById('stat_resonance').value) || 5,
+        stat_fortitude: parseInt(document.getElementById('stat_fortitude').value) || 5,
+        stat_acumen: parseInt(document.getElementById('stat_acumen').value) || 5,
         ability_crafting: parseInt(document.getElementById('ability_crafting').value) || 0,
-        ability_lockpicking: parseInt(document.getElementById('ability_lockpicking').value) || 0,
-        ability_stealth: parseInt(document.getElementById('ability_stealth').value) || 0,
-        ability_dodge: parseInt(document.getElementById('ability_dodge').value) || 0,
-        ability_critical_hit: parseInt(document.getElementById('ability_critical_hit').value) || 0,
-        resource_hit_points: parseInt(document.getElementById('resource_hit_points').value) || 50,
-        resource_max_hit_points: parseInt(document.getElementById('resource_max_hit_points').value) || 50,
-        resource_mana: parseInt(document.getElementById('resource_mana').value) || 0,
-        resource_max_mana: parseInt(document.getElementById('resource_max_mana').value) || 0,
+        ability_attunement: parseInt(document.getElementById('ability_attunement').value) || 0,
+        ability_endurance: parseInt(document.getElementById('ability_endurance').value) || 0,
+        ability_commerce: parseInt(document.getElementById('ability_commerce').value) || 0,
         resource_max_encumbrance: parseInt(document.getElementById('resource_max_encumbrance').value) || 100,
         flag_god_mode: document.getElementById('flag_god_mode').checked ? 1 : 0
     };

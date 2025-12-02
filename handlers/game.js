@@ -3400,6 +3400,100 @@ function escapeHtml(text) {
     .replace(/'/g, '&#039;');
 }
 
+/**
+ * Assign attribute point (increment or decrement)
+ * Increment: increases stat by 1, decreases assignable_points by 1
+ * Decrement: decreases stat by 1, increases assignable_points by 1
+ */
+async function assignAttributePoint(ctx, data) {
+  const { statKey, action } = data;
+  const { db, connectionId, connectedPlayers } = ctx;
+  
+  if (!statKey || !action) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: 'Missing statKey or action' }));
+    return;
+  }
+  
+  if (action !== 'increment' && action !== 'decrement') {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: 'Invalid action. Must be increment or decrement' }));
+    return;
+  }
+  
+  // Get player data
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  // Get current player data
+  const player = await db.getPlayerById(playerData.playerId);
+  if (!player) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: 'Player not found in database' }));
+    return;
+  }
+  
+  // Validate stat column name (whitelist to prevent SQL injection)
+  const allowedStatColumns = ['stat_ingenuity', 'stat_resonance', 'stat_fortitude', 'stat_acumen'];
+  if (!allowedStatColumns.includes(statKey)) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: `Invalid stat: ${statKey}` }));
+    return;
+  }
+  
+  // Validate stat column exists in player data
+  if (player[statKey] === undefined && player[statKey] !== 0) {
+    ctx.ws.send(JSON.stringify({ type: 'error', message: `Stat ${statKey} not found` }));
+    return;
+  }
+  
+  const currentStatValue = player[statKey] || 0;
+  const currentAssignablePoints = player.assignable_points || 0;
+  
+  // Validate increment: need assignable points > 0
+  if (action === 'increment') {
+    if (currentAssignablePoints <= 0) {
+      ctx.ws.send(JSON.stringify({ type: 'error', message: 'No assignable points available' }));
+      return;
+    }
+    
+    // Update: increment stat, decrement assignable_points
+    // Use parameterized query with whitelisted column name
+    await db.query(
+      `UPDATE players SET ${statKey} = ${statKey} + 1, assignable_points = assignable_points - 1 WHERE id = $1`,
+      [playerData.playerId]
+    );
+  }
+  
+  // Validate decrement: need stat > 1 (minimum is 1)
+  if (action === 'decrement') {
+    if (currentStatValue <= 1) {
+      ctx.ws.send(JSON.stringify({ type: 'error', message: 'Cannot decrease stat below 1' }));
+      return;
+    }
+    
+    // Update: decrement stat, increment assignable_points
+    await db.query(
+      `UPDATE players SET ${statKey} = ${statKey} - 1, assignable_points = assignable_points + 1 WHERE id = $1`,
+      [playerData.playerId]
+    );
+  }
+  
+  // Get updated player data
+  const updatedPlayer = await db.getPlayerById(playerData.playerId);
+  
+  // Send updated stats
+  const playerStats = db.getPlayerStats(updatedPlayer);
+  if (playerStats) {
+    playerStats.playerName = updatedPlayer.name;
+    playerStats.currentEncumbrance = await db.getPlayerCurrentEncumbrance(playerData.playerId);
+  }
+  
+  ctx.ws.send(JSON.stringify({
+    type: 'playerStats',
+    stats: playerStats || {}
+  }));
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -3428,6 +3522,7 @@ module.exports = {
   sell,
   wealth,
   who,
-  saveTerminalMessage
+  saveTerminalMessage,
+  assignAttributePoint
 };
 

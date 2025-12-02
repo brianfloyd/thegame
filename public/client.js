@@ -2454,6 +2454,9 @@ function updatePlayerStats(stats) {
     
     statsContent.innerHTML = '';
     
+    // Get assignable points first (before processing other stats)
+    const assignablePoints = stats.assignablePoints?.value || 0;
+    
     // Group stats by category
     const statsByCategory = {
         stats: [],
@@ -2469,23 +2472,44 @@ function updatePlayerStats(stats) {
             // Skip max values (they're handled with their base resource)
             if (key.startsWith('max')) return;
             
-            statsByCategory[stat.category].push({
-                key: key,
-                displayName: stat.displayName,
-                value: stat.value
-            });
+            // Skip assignablePoints (handled separately)
+            if (key === 'assignablePoints') return;
+            
+            // Only process known categories
+            if (statsByCategory[stat.category]) {
+                statsByCategory[stat.category].push({
+                    key: key,
+                    displayName: stat.displayName,
+                    value: stat.value
+                });
+            }
         }
     });
     
-    // Render Attributes (stats)
-    if (statsByCategory.stats.length > 0) {
-        const statsSection = createStatSection('Attributes', statsByCategory.stats);
-    statsContent.appendChild(statsSection);
+    // Render Assignable Points if available
+    if (stats.assignablePoints !== undefined) {
+        const assignableSection = document.createElement('div');
+        assignableSection.className = 'stats-section assignable-points-section';
+        const assignableTitle = document.createElement('div');
+        assignableTitle.className = 'stats-section-title';
+        assignableTitle.textContent = 'Assignable Points';
+        assignableSection.appendChild(assignableTitle);
+        const assignableValue = document.createElement('div');
+        assignableValue.className = 'stat-item';
+        assignableValue.innerHTML = `<span class="stat-value">${assignablePoints}</span>`;
+        assignableSection.appendChild(assignableValue);
+        statsContent.appendChild(assignableSection);
     }
     
-    // Render Abilities
+    // Render Attributes (stats) - with controls if assignable points > 0
+    if (statsByCategory.stats.length > 0) {
+        const statsSection = createStatSection('Attributes', statsByCategory.stats, assignablePoints > 0, assignablePoints);
+        statsContent.appendChild(statsSection);
+    }
+    
+    // Render Abilities (no controls)
     if (statsByCategory.abilities.length > 0) {
-        const abilitiesSection = createStatSection('Abilities', statsByCategory.abilities);
+        const abilitiesSection = createStatSection('Abilities', statsByCategory.abilities, false);
         statsContent.appendChild(abilitiesSection);
     }
     
@@ -2533,7 +2557,9 @@ function updatePlayerStats(stats) {
 }
 
 // Helper function to create a stat section (Attributes or Abilities)
-function createStatSection(title, items) {
+// showControls: true for attributes (if assignable points > 0), false for abilities
+// assignablePoints: current assignable points value (for button state)
+function createStatSection(title, items, showControls = false, assignablePoints = 0) {
     const section = document.createElement('div');
     section.className = 'stats-section';
     
@@ -2550,16 +2576,83 @@ function createStatSection(title, items) {
         label.className = 'stat-label';
         label.textContent = item.displayName + ':';
         
+        const valueContainer = document.createElement('div');
+        valueContainer.style.display = 'flex';
+        valueContainer.style.alignItems = 'center';
+        valueContainer.style.gap = '8px';
+        
         const value = document.createElement('span');
         value.className = 'stat-value';
         value.textContent = item.value;
+        value.setAttribute('data-stat-key', item.key);
+        
+        // Only show controls for attributes (when showControls is true)
+        if (showControls) {
+            // Stat controls group (increment/decrement buttons)
+            const controlsGroup = document.createElement('div');
+            controlsGroup.className = 'stat-controls';
+            controlsGroup.setAttribute('data-stat-key', item.key);
+            
+            const decrementBtn = document.createElement('button');
+            decrementBtn.className = 'stat-control-btn';
+            decrementBtn.textContent = '−';
+            // Decrement disabled if stat value is 1 or less (can't go below 1)
+            decrementBtn.disabled = !showControls || item.value <= 1;
+            decrementBtn.setAttribute('aria-label', `Decrease ${item.displayName}`);
+            decrementBtn.setAttribute('data-action', 'decrement');
+            decrementBtn.setAttribute('data-stat-key', item.key);
+            
+            const incrementBtn = document.createElement('button');
+            incrementBtn.className = 'stat-control-btn';
+            incrementBtn.textContent = '+';
+            // Increment disabled if no assignable points available
+            incrementBtn.disabled = !showControls || assignablePoints <= 0;
+            incrementBtn.setAttribute('aria-label', `Increase ${item.displayName}`);
+            incrementBtn.setAttribute('data-action', 'increment');
+            incrementBtn.setAttribute('data-stat-key', item.key);
+            
+            // Add click handlers
+            incrementBtn.addEventListener('click', () => {
+                handleAttributePointChange(item.key, 'increment');
+            });
+            
+            decrementBtn.addEventListener('click', () => {
+                handleAttributePointChange(item.key, 'decrement');
+            });
+            
+            controlsGroup.appendChild(decrementBtn);
+            controlsGroup.appendChild(incrementBtn);
+            
+            valueContainer.appendChild(value);
+            valueContainer.appendChild(controlsGroup);
+        } else {
+            // No controls for abilities
+            valueContainer.appendChild(value);
+        }
         
         statItem.appendChild(label);
-        statItem.appendChild(value);
+        statItem.appendChild(valueContainer);
         section.appendChild(statItem);
     });
     
     return section;
+}
+
+// Handle attribute point assignment (increment/decrement)
+function handleAttributePointChange(statKey, action) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        addToTerminal('Not connected to server. Please wait...', 'error');
+        return;
+    }
+    
+    // Convert camelCase back to database column name (e.g., 'ingenuity' -> 'stat_ingenuity')
+    const dbColumnName = `stat_${statKey}`;
+    
+    ws.send(JSON.stringify({
+        type: 'assignAttributePoint',
+        statKey: dbColumnName,
+        action: action // 'increment' or 'decrement'
+    }));
 }
 
 // Helper function to create a resource section (HP, Mana with bars)

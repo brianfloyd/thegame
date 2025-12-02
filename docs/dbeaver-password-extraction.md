@@ -47,3 +47,8 @@ If password doesn't work:
 5. **Extract password** using the method above
 6. **Update DBeaver** with the new password
 
+
+
+
+
+

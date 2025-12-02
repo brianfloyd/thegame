@@ -30,3 +30,8 @@ COMMENT ON TABLE email_verification_tokens IS 'Tokens for email verification. Ex
 COMMENT ON TABLE password_reset_tokens IS 'Tokens for password reset. Expires after 1 hour.';
 
 
+
+
+
+
+

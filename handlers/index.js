@@ -42,6 +42,7 @@ const handlerMap = {
   wealth: gameHandlers.wealth,
   who: gameHandlers.who,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
+  assignAttributePoint: gameHandlers.assignAttributePoint,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

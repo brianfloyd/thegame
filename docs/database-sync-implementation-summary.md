@@ -127,3 +127,8 @@ These tables are hardcoded in the `PROTECTED_TABLES` array and are explicitly ex
 - See `docs/database-sync-quick-reference.md` for quick commands
 - Run `npm run test-sync-safety` to verify safety
 
+
+
+
+
+

@@ -153,15 +153,15 @@ function createCharacterSelectionHandler(db) {
       return res.status(401).json({ success: false, error: 'Please log in first' });
     }
     
-    // Check if account is within grace period (2 weeks for unverified accounts)
-    // Allow unverified accounts to play for 2 weeks before requiring verification
+    // Check if account is within grace period (7 days for unverified accounts)
+    // Allow unverified accounts to play for 7 days before requiring verification
     const withinGracePeriod = await db.isAccountWithinGracePeriod(req.session.accountId);
     if (!withinGracePeriod) {
       const account = await db.getAccountById(req.session.accountId);
       if (account && !account.email_verified) {
         return res.status(403).json({ 
           success: false, 
-          error: 'Email verification required. Please verify your email address to continue playing. Check your inbox for the verification link.' 
+          error: 'Email verification required. Please verify your email address to continue playing. Check your inbox for the verification link, or use the "Resend Verification Email" button on the character selection screen.' 
         });
       }
     }

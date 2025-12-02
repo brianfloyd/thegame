@@ -47,6 +47,33 @@ function setupRoutes(app, options) {
     });
   });
   
+  // Stat and ability metadata endpoint
+  app.get('/api/stat-ability-metadata', async (req, res) => {
+    try {
+      const statMetadata = await db.getAllStatMetadata();
+      const abilityMetadata = await db.getAllAbilityMetadata();
+      
+      // Convert Maps to objects for JSON serialization
+      const statsObj = {};
+      for (const [key, value] of statMetadata.entries()) {
+        statsObj[key] = value;
+      }
+      
+      const abilitiesObj = {};
+      for (const [key, value] of abilityMetadata.entries()) {
+        abilitiesObj[key] = value;
+      }
+      
+      res.json({
+        stats: statsObj,
+        abilities: abilitiesObj
+      });
+    } catch (error) {
+      console.error('Error fetching stat/ability metadata:', error);
+      res.status(500).json({ error: 'Failed to fetch metadata' });
+    }
+  });
+  
   // Session validation endpoint - checks if current session is still valid
   app.get('/api/session-valid', optionalSession, (req, res) => {
     if (!req.session.accountId) {

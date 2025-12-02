@@ -160,3 +160,8 @@ BASE_URL=http://localhost:3434
    - It will try multiple configurations automatically
    - Follow its recommendations
 
+
+
+
+
+

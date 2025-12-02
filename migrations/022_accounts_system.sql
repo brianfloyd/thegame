@@ -29,3 +29,8 @@ COMMENT ON TABLE accounts IS 'User accounts with email/password authentication. 
 COMMENT ON TABLE user_characters IS 'Links accounts to player characters. One account can have multiple characters.';
 
 
+
+
+
+
+

@@ -16,3 +16,8 @@ CREATE INDEX IF NOT EXISTS idx_terminal_history_created_at ON terminal_history(p
 COMMENT ON TABLE terminal_history IS 'Stores terminal output history for players. Last 1000 lines per player are kept. Noob character (flag_always_first_time) does not persist history.';
 
 
+
+
+
+
+

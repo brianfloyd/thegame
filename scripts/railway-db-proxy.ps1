@@ -37,3 +37,8 @@ if (-not $railwayInstalled) {
 Write-Host "Starting Railway database proxy..." -ForegroundColor Green
 railway connect postgres
 
+
+
+
+
+

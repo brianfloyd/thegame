@@ -1341,7 +1341,7 @@ body {
 }
 
 .encumbrance-display {
-    font-size: 12px;
+    font-size: 1em;
     margin-left: 8px;
 }
 
@@ -1866,54 +1866,97 @@ body {
 }
 
 .stats-section {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 }
 
 .stats-section-title {
     color: #ffff00;
     font-weight: bold;
-    margin-bottom: 5px;
-    font-size: 0.85em;
+    margin-bottom: 4px;
+    font-size: 1.2em;
     text-transform: uppercase;
 }
 
 .stat-item {
     display: flex;
     justify-content: space-between;
-    margin: 3px 0;
+    align-items: center;
+    margin: 2px 0;
     color: #00ff00;
-    font-size: 0.8em;
+    font-size: 1.1em;
 }
 
 .stat-label {
     color: #00ffff;
+    font-size: 1.1em;
 }
 
 .stat-value {
     color: #00ff00;
     font-weight: bold;
+    font-size: 1.1em;
+    min-width: 30px;
+    text-align: right;
 }
 
-.hp-bar, .mana-bar {
-    width: 100%;
-    height: 8px;
+.assignable-points-section {
+    border-bottom: 1px solid #333;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+}
+
+/* Stat controls (increment/decrement buttons) - can be hidden for future implementation */
+.stat-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.stat-control-btn {
+    background: #1a1a1a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+}
+
+.stat-control-btn:hover:not(:disabled) {
+    background: #2a2a2a;
+    border-color: #00ffff;
+    color: #00ffff;
+}
+
+.stat-control-btn:active:not(:disabled) {
     background: #0a0a0a;
-    border: 1px solid #333;
-    border-radius: 2px;
+}
+
+.stat-control-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    border-color: #333;
+    color: #666;
+}
+
+/* Stat controls are visible but disabled - can be enabled in future by removing :disabled state */
+
+/* HP and Mana bars removed - no longer used */
+
+/* Stat and Ability Descriptions */
+.stat-description {
+    font-size: 0.85em;
+    color: #888;
     margin-top: 2px;
-    overflow: hidden;
-}
-
-.hp-fill {
-    height: 100%;
-    background: #ff0000;
-    transition: width 0.3s;
-}
-
-.mana-fill {
-    height: 100%;
-    background: #0000ff;
-    transition: width 0.3s;
+    margin-left: 10px;
+    font-style: italic;
 }
 
 /* Encumbrance Bar */
@@ -1933,7 +1976,7 @@ body {
 }
 
 .encumbrance-level {
-    font-size: 0.8em;
+    font-size: 1em;
     font-weight: bold;
 }
 

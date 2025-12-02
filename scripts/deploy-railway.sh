@@ -131,3 +131,8 @@ echo "3. Verify all environment variables are set correctly"
 echo "4. Test the application at your Railway URL"
 
 
+
+
+
+
+
