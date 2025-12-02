@@ -175,6 +175,12 @@ function handleMessage(data) {
                 populateRewardItemDropdowns();
             }
             break;
+        case 'harvestFormulaConfigs':
+            showFormulaConfigModal(data.configs || []);
+            break;
+        case 'harvestFormulaConfigUpdated':
+            showEditorNotification('Formula config updated successfully!');
+            break;
         case 'error':
             showEditorNotification(data.message, 'error');
             break;
@@ -891,6 +897,39 @@ function renderNpcForm() {
                     </div>
                 </div>
                 
+                <!-- Advanced Section (Stat Bonuses) -->
+                <div id="advancedSection" class="advanced-section">
+                    <div class="npc-section-title">Advanced Settings</div>
+                    <!-- Row ADV1: Stat Bonus Checkboxes -->
+                    <div class="npc-row">
+                        <div class="npc-field-group" style="flex: 0 0 auto; min-width: 200px; max-width: 250px;">
+                            <label style="margin-bottom: 8px;">Stat Bonuses</label>
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+                                    <input type="checkbox" id="npcEnableResonanceBonuses" ${selectedNpc.enable_resonance_bonuses !== false ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+                                    <span>Resonance (cycle time & hit rate)</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+                                    <input type="checkbox" id="npcEnableFortitudeBonuses" ${selectedNpc.enable_fortitude_bonuses !== false ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+                                    <span>Fortitude (cooldown & harvest time)</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="npc-field-group" style="flex: 1 1 auto;">
+                            <label>Formula Config</label>
+                            <button type="button" id="openFormulaConfigBtn" class="npc-small-btn" style="width: 100%;">Edit Global Formulas</button>
+                        </div>
+                    </div>
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <p class="npc-help-text" style="color: #888; font-size: 11px; margin: 0;">
+                                Resonance affects harvest cycle time and hit rate. Fortitude affects cooldown reduction and harvest duration increase.
+                                Higher stats = better bonuses.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Save Button -->
                 <div class="npc-row npc-save-row">
                     <button id="saveNpcBtn">Save NPC</button>
@@ -1049,6 +1088,14 @@ function renderNpcForm() {
     
     // Enable JavaScript-based textarea resizing
     enableTextareaResize();
+    
+    // Wire up formula config button
+    const openFormulaConfigBtn = document.getElementById('openFormulaConfigBtn');
+    if (openFormulaConfigBtn) {
+        openFormulaConfigBtn.addEventListener('click', () => {
+            openFormulaConfigEditor();
+        });
+    }
 }
 
 // Enable JavaScript-based textarea resizing with custom drag handles
@@ -1217,6 +1264,10 @@ function saveNpc() {
     const puzzle_award_after_delay = document.getElementById('npcPuzzleAwardAfterDelay')?.checked || false;
     const puzzle_award_delay_seconds = puzzle_award_after_delay ? parseInt(document.getElementById('npcPuzzleAwardDelaySeconds')?.value, 10) || 3600 : null;
     const puzzle_award_delay_response = puzzle_award_after_delay ? (document.getElementById('npcPuzzleAwardDelayResponse')?.value.trim() || null) : null;
+    
+    // Advanced settings
+    const enable_resonance_bonuses = document.getElementById('npcEnableResonanceBonuses')?.checked !== false;
+    const enable_fortitude_bonuses = document.getElementById('npcEnableFortitudeBonuses')?.checked !== false;
 
     const payloadNpc = {
         name,
@@ -1248,7 +1299,9 @@ function saveNpc() {
         puzzle_award_once_only,
         puzzle_award_after_delay,
         puzzle_award_delay_seconds,
-        puzzle_award_delay_response
+        puzzle_award_delay_response,
+        enable_resonance_bonuses,
+        enable_fortitude_bonuses
     };
 
     // Add Lore Keeper data if this is a lorekeeper type
@@ -1328,6 +1381,11 @@ document.addEventListener('DOMContentLoaded', () => {
         closeNpcEditorBtn.addEventListener('click', () => {
             closeNpcEditor();
         });
+        
+        // Add markup button (μ) next to close button
+        if (typeof createMarkupButton !== 'undefined') {
+            createMarkupButton('NPC Editor', closeNpcEditorBtn);
+        }
     }
 
     const createNewNpcBtn = document.getElementById('createNewNpcBtn');
@@ -1369,4 +1427,350 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// ============================================================
+// Formula Config Editor
+// ============================================================
+
+let formulaConfigs = [];
+
+function openFormulaConfigEditor() {
+    // Request formula configs from server
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getHarvestFormulaConfigs' }));
+    } else {
+        showEditorNotification('Not connected to server', 'error');
+    }
+}
+
+function showFormulaConfigModal(configs) {
+    formulaConfigs = configs;
+    
+    // Remove existing modal if any
+    const existing = document.getElementById('formulaConfigModal');
+    if (existing) existing.remove();
+    
+    const modal = document.createElement('div');
+    modal.id = 'formulaConfigModal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+    `;
+    
+    const cycleConfig = configs.find(c => c.config_key === 'cycle_time_reduction') || {};
+    const hitConfig = configs.find(c => c.config_key === 'hit_rate') || {};
+    const cooldownConfig = configs.find(c => c.config_key === 'cooldown_time_reduction') || {};
+    const harvestableConfig = configs.find(c => c.config_key === 'harvestable_time_increase') || {};
+    
+    modal.innerHTML = `
+        <div class="formula-config-content" style="
+            background: #001a00;
+            border: 2px solid #00ff00;
+            padding: 20px;
+            max-width: 700px;
+            max-height: 90vh;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            color: #00ff00;
+        ">
+            <h2 style="margin-top: 0; border-bottom: 1px solid #006600; padding-bottom: 10px;">Harvest Formula Configuration</h2>
+            
+            <div class="formula-section" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <h3 style="margin-top: 0; color: #00ffff;">Cycle Time Reduction</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 15px;">
+                    ${cycleConfig.description || 'Reduces time between item production cycles during harvest.'}
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Resonance</label>
+                        <input type="number" id="cycleMinResonance" value="${cycleConfig.min_resonance || 5}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Value (%)</label>
+                        <input type="number" id="cycleMinValue" value="${((cycleConfig.min_value || 0.05) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Curve Exponent</label>
+                        <input type="number" id="cycleCurveExponent" value="${cycleConfig.curve_exponent || 2}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Resonance</label>
+                        <input type="number" id="cycleMaxResonance" value="${cycleConfig.max_resonance || 100}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Value (%)</label>
+                        <input type="number" id="cycleMaxValue" value="${((cycleConfig.max_value || 0.75) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                </div>
+                <div id="cyclePreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+            
+            <div class="formula-section" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <h3 style="margin-top: 0; color: #ffa500;">Hit Rate</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 15px;">
+                    ${hitConfig.description || 'Chance to successfully produce items each harvest cycle.'}
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Resonance</label>
+                        <input type="number" id="hitMinResonance" value="${hitConfig.min_resonance || 5}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Value (%)</label>
+                        <input type="number" id="hitMinValue" value="${((hitConfig.min_value || 0.5) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Curve Exponent</label>
+                        <input type="number" id="hitCurveExponent" value="${hitConfig.curve_exponent || 2}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Resonance</label>
+                        <input type="number" id="hitMaxResonance" value="${hitConfig.max_resonance || 100}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Value (%)</label>
+                        <input type="number" id="hitMaxValue" value="${((hitConfig.max_value || 1.0) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                </div>
+                <div id="hitPreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+            
+            <div class="formula-section" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <h3 style="margin-top: 0; color: #ff8800;">Cooldown Time Reduction</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 15px;">
+                    ${cooldownConfig.description || 'Reduces cooldown time after harvest based on Fortitude.'}
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Fortitude</label>
+                        <input type="number" id="cooldownMinResonance" value="${cooldownConfig.min_resonance || 5}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Value (%)</label>
+                        <input type="number" id="cooldownMinValue" value="${((cooldownConfig.min_value || 0.05) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Curve Exponent</label>
+                        <input type="number" id="cooldownCurveExponent" value="${cooldownConfig.curve_exponent || 2}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Fortitude</label>
+                        <input type="number" id="cooldownMaxResonance" value="${cooldownConfig.max_resonance || 100}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Value (%)</label>
+                        <input type="number" id="cooldownMaxValue" value="${((cooldownConfig.max_value || 0.75) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                </div>
+                <div id="cooldownPreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+            
+            <div class="formula-section" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <h3 style="margin-top: 0; color: #ff00ff;">Harvestable Time Increase</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 15px;">
+                    ${harvestableConfig.description || 'Increases total harvest duration based on Fortitude.'}
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Fortitude</label>
+                        <input type="number" id="harvestableMinResonance" value="${harvestableConfig.min_resonance || 5}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Value (%)</label>
+                        <input type="number" id="harvestableMinValue" value="${((harvestableConfig.min_value || 0.05) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Curve Exponent</label>
+                        <input type="number" id="harvestableCurveExponent" value="${harvestableConfig.curve_exponent || 2}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Fortitude</label>
+                        <input type="number" id="harvestableMaxResonance" value="${harvestableConfig.max_resonance || 100}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Value (%)</label>
+                        <input type="number" id="harvestableMaxValue" value="${((harvestableConfig.max_value || 0.5) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                    </div>
+                </div>
+                <div id="harvestablePreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="formulaConfigPreviewBtn" style="background: #003300; border: 1px solid #00ff00; color: #00ff00; padding: 8px 16px; cursor: pointer;">Preview</button>
+                <button id="formulaConfigSaveBtn" style="background: #004400; border: 1px solid #00ff00; color: #00ff00; padding: 8px 16px; cursor: pointer;">Save</button>
+                <button id="formulaConfigCancelBtn" style="background: #330000; border: 1px solid #ff0000; color: #ff6666; padding: 8px 16px; cursor: pointer;">Cancel</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Event listeners
+    document.getElementById('formulaConfigCancelBtn').addEventListener('click', () => {
+        modal.remove();
+    });
+    
+    document.getElementById('formulaConfigPreviewBtn').addEventListener('click', () => {
+        updateFormulaPreview();
+    });
+    
+    document.getElementById('formulaConfigSaveBtn').addEventListener('click', () => {
+        saveFormulaConfigs();
+        modal.remove();
+    });
+    
+    // Initial preview
+    updateFormulaPreview();
+}
+
+function updateFormulaPreview() {
+    // Cycle time reduction preview
+    const cycleMinRes = parseInt(document.getElementById('cycleMinResonance')?.value) || 5;
+    const cycleMinVal = (parseFloat(document.getElementById('cycleMinValue')?.value) || 5) / 100;
+    const cycleMaxRes = parseInt(document.getElementById('cycleMaxResonance')?.value) || 100;
+    const cycleMaxVal = (parseFloat(document.getElementById('cycleMaxValue')?.value) || 75) / 100;
+    const cycleExp = parseFloat(document.getElementById('cycleCurveExponent')?.value) || 2;
+    
+    const cyclePreview = document.getElementById('cyclePreview');
+    if (cyclePreview) {
+        const samples = [5, 25, 50, 75, 100];
+        const cycleResults = samples.map(res => {
+            const norm = Math.max(0, Math.min(1, (res - cycleMinRes) / (cycleMaxRes - cycleMinRes)));
+            const val = cycleMinVal + (cycleMaxVal - cycleMinVal) * Math.pow(norm, cycleExp);
+            return `Res ${res}: ${(val * 100).toFixed(1)}% reduction`;
+        });
+        cyclePreview.textContent = cycleResults.join(' | ');
+    }
+    
+    // Hit rate preview
+    const hitMinRes = parseInt(document.getElementById('hitMinResonance')?.value) || 5;
+    const hitMinVal = (parseFloat(document.getElementById('hitMinValue')?.value) || 50) / 100;
+    const hitMaxRes = parseInt(document.getElementById('hitMaxResonance')?.value) || 100;
+    const hitMaxVal = (parseFloat(document.getElementById('hitMaxValue')?.value) || 100) / 100;
+    const hitExp = parseFloat(document.getElementById('hitCurveExponent')?.value) || 2;
+    
+    const hitPreview = document.getElementById('hitPreview');
+    if (hitPreview) {
+        const samples = [5, 25, 50, 75, 100];
+        const hitResults = samples.map(res => {
+            const norm = Math.max(0, Math.min(1, (res - hitMinRes) / (hitMaxRes - hitMinRes)));
+            const val = hitMinVal + (hitMaxVal - hitMinVal) * Math.pow(norm, hitExp);
+            return `Res ${res}: ${(val * 100).toFixed(1)}% hit`;
+        });
+        hitPreview.textContent = hitResults.join(' | ');
+    }
+    
+    // Cooldown time reduction preview
+    const cooldownMinRes = parseInt(document.getElementById('cooldownMinResonance')?.value) || 5;
+    const cooldownMinVal = (parseFloat(document.getElementById('cooldownMinValue')?.value) || 5) / 100;
+    const cooldownMaxRes = parseInt(document.getElementById('cooldownMaxResonance')?.value) || 100;
+    const cooldownMaxVal = (parseFloat(document.getElementById('cooldownMaxValue')?.value) || 75) / 100;
+    const cooldownExp = parseFloat(document.getElementById('cooldownCurveExponent')?.value) || 2;
+    
+    const cooldownPreview = document.getElementById('cooldownPreview');
+    if (cooldownPreview) {
+        const samples = [5, 25, 50, 75, 100];
+        const cooldownResults = samples.map(fort => {
+            const norm = Math.max(0, Math.min(1, (fort - cooldownMinRes) / (cooldownMaxRes - cooldownMinRes)));
+            const val = cooldownMinVal + (cooldownMaxVal - cooldownMinVal) * Math.pow(norm, cooldownExp);
+            return `Fort ${fort}: ${(val * 100).toFixed(1)}% reduction`;
+        });
+        cooldownPreview.textContent = cooldownResults.join(' | ');
+    }
+    
+    // Harvestable time increase preview
+    const harvestableMinRes = parseInt(document.getElementById('harvestableMinResonance')?.value) || 5;
+    const harvestableMinVal = (parseFloat(document.getElementById('harvestableMinValue')?.value) || 5) / 100;
+    const harvestableMaxRes = parseInt(document.getElementById('harvestableMaxResonance')?.value) || 100;
+    const harvestableMaxVal = (parseFloat(document.getElementById('harvestableMaxValue')?.value) || 50) / 100;
+    const harvestableExp = parseFloat(document.getElementById('harvestableCurveExponent')?.value) || 2;
+    
+    const harvestablePreview = document.getElementById('harvestablePreview');
+    if (harvestablePreview) {
+        const samples = [5, 25, 50, 75, 100];
+        const harvestableResults = samples.map(fort => {
+            const norm = Math.max(0, Math.min(1, (fort - harvestableMinRes) / (harvestableMaxRes - harvestableMinRes)));
+            const val = harvestableMinVal + (harvestableMaxVal - harvestableMinVal) * Math.pow(norm, harvestableExp);
+            return `Fort ${fort}: ${(val * 100).toFixed(1)}% increase`;
+        });
+        harvestablePreview.textContent = harvestableResults.join(' | ');
+    }
+}
+
+function saveFormulaConfigs() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        showEditorNotification('Not connected to server', 'error');
+        return;
+    }
+    
+    // Cycle time reduction config
+    const cycleConfig = {
+        config_key: 'cycle_time_reduction',
+        min_resonance: parseInt(document.getElementById('cycleMinResonance')?.value) || 5,
+        min_value: (parseFloat(document.getElementById('cycleMinValue')?.value) || 5) / 100,
+        max_resonance: parseInt(document.getElementById('cycleMaxResonance')?.value) || 100,
+        max_value: (parseFloat(document.getElementById('cycleMaxValue')?.value) || 75) / 100,
+        curve_exponent: parseFloat(document.getElementById('cycleCurveExponent')?.value) || 2
+    };
+    
+    // Hit rate config
+    const hitConfig = {
+        config_key: 'hit_rate',
+        min_resonance: parseInt(document.getElementById('hitMinResonance')?.value) || 5,
+        min_value: (parseFloat(document.getElementById('hitMinValue')?.value) || 50) / 100,
+        max_resonance: parseInt(document.getElementById('hitMaxResonance')?.value) || 100,
+        max_value: (parseFloat(document.getElementById('hitMaxValue')?.value) || 100) / 100,
+        curve_exponent: parseFloat(document.getElementById('hitCurveExponent')?.value) || 2
+    };
+    
+    // Cooldown time reduction config
+    const cooldownConfig = {
+        config_key: 'cooldown_time_reduction',
+        min_resonance: parseInt(document.getElementById('cooldownMinResonance')?.value) || 5,
+        min_value: (parseFloat(document.getElementById('cooldownMinValue')?.value) || 5) / 100,
+        max_resonance: parseInt(document.getElementById('cooldownMaxResonance')?.value) || 100,
+        max_value: (parseFloat(document.getElementById('cooldownMaxValue')?.value) || 75) / 100,
+        curve_exponent: parseFloat(document.getElementById('cooldownCurveExponent')?.value) || 2
+    };
+    
+    // Harvestable time increase config
+    const harvestableConfig = {
+        config_key: 'harvestable_time_increase',
+        min_resonance: parseInt(document.getElementById('harvestableMinResonance')?.value) || 5,
+        min_value: (parseFloat(document.getElementById('harvestableMinValue')?.value) || 5) / 100,
+        max_resonance: parseInt(document.getElementById('harvestableMaxResonance')?.value) || 100,
+        max_value: (parseFloat(document.getElementById('harvestableMaxValue')?.value) || 50) / 100,
+        curve_exponent: parseFloat(document.getElementById('harvestableCurveExponent')?.value) || 2
+    };
+    
+    ws.send(JSON.stringify({
+        type: 'updateHarvestFormulaConfig',
+        config: cycleConfig
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'updateHarvestFormulaConfig',
+        config: hitConfig
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'updateHarvestFormulaConfig',
+        config: cooldownConfig
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'updateHarvestFormulaConfig',
+        config: harvestableConfig
+    }));
+    
+    showEditorNotification('Formula configurations saved!');
+}
 

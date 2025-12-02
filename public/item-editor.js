@@ -586,9 +586,17 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     
     // Close button
-    document.getElementById('closeItemEditor').addEventListener('click', () => {
-        window.location.href = '/game';
-    });
+    const closeItemEditorBtn = document.getElementById('closeItemEditor');
+    if (closeItemEditorBtn) {
+        closeItemEditorBtn.addEventListener('click', () => {
+            window.location.href = '/game';
+        });
+        
+        // Add markup button (μ) next to close button
+        if (typeof createMarkupButton !== 'undefined') {
+            createMarkupButton('Item Editor', closeItemEditorBtn);
+        }
+    }
     
     // Create new item button
     document.getElementById('createNewItemBtn').addEventListener('click', showCreateForm);

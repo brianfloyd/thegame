@@ -1857,6 +1857,11 @@ document.addEventListener('DOMContentLoaded', () => {
         closeEditorBtn.addEventListener('click', () => {
             closeMapEditor();
         });
+        
+        // Add markup button (μ) next to close button
+        if (typeof createMarkupButton !== 'undefined') {
+            createMarkupButton('Map Editor', closeEditorBtn);
+        }
     }
 
     // Create new map button

@@ -438,13 +438,14 @@ async function createScriptableNPC(npc) {
     puzzle_award_delay_response = null,
     harvest_prerequisite_item = null,
     harvest_prerequisite_message = null,
-    enable_stat_bonuses = true
+    enable_resonance_bonuses = true,
+    enable_fortitude_bonuses = true
   } = npc;
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_stat_bonuses, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_stat_bonuses]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses]
   );
 
   return result.rows[0].id;
@@ -481,7 +482,8 @@ async function updateScriptableNPC(npc) {
     puzzle_award_after_delay = false,
     puzzle_award_delay_seconds = null,
     puzzle_award_delay_response = null,
-    enable_stat_bonuses = true
+    enable_resonance_bonuses = true,
+    enable_fortitude_bonuses = true
   } = npc;
 
   await query(
@@ -495,9 +497,9 @@ async function updateScriptableNPC(npc) {
       puzzle_incorrect_attempt_responses = $24, puzzle_award_once_only = $25, puzzle_award_after_delay = $26,
       puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28,
       harvest_prerequisite_item = $29, harvest_prerequisite_message = $30,
-      enable_stat_bonuses = $31
-     WHERE id = $32`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_stat_bonuses, id]
+      enable_resonance_bonuses = $31, enable_fortitude_bonuses = $32
+     WHERE id = $33`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, id]
   );
 }
 
@@ -505,6 +507,7 @@ async function getNPCsInRoom(roomId) {
   const rows = await getAll(
     `SELECT rn.id, rn.npc_id, rn.state, rn.slot,
             sn.name, sn.description, sn.display_color, sn.base_cycle_time, sn.harvestable_time, sn.cooldown_time,
+            sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses,
             sn.puzzle_type, sn.puzzle_glow_clues, sn.puzzle_extraction_pattern,
             sn.puzzle_solution_word, sn.puzzle_success_response, sn.puzzle_failure_response,
             sn.puzzle_reward_item, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
@@ -528,6 +531,8 @@ async function getNPCsInRoom(roomId) {
     base_cycle_time: row.base_cycle_time || 12000,
     harvestableTime: row.harvestable_time || 60000,
     cooldownTime: row.cooldown_time || 120000,
+    enable_resonance_bonuses: row.enable_resonance_bonuses !== false,
+    enable_fortitude_bonuses: row.enable_fortitude_bonuses !== false,
     puzzleType: row.puzzle_type || 'none',
     puzzleGlowClues: row.puzzle_glow_clues ? JSON.parse(row.puzzle_glow_clues) : null,
     puzzleExtractionPattern: row.puzzle_extraction_pattern ? JSON.parse(row.puzzle_extraction_pattern) : null,
@@ -565,7 +570,8 @@ async function getAllActiveNPCs() {
     `SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
             sn.npc_type, sn.base_cycle_time, sn.required_stats, 
             sn.required_buffs, sn.input_items, sn.output_items, sn.failure_states,
-            sn.display_color, sn.harvestable_time, sn.cooldown_time, sn.enable_stat_bonuses
+            sn.display_color, sn.harvestable_time, sn.cooldown_time, 
+            sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.active = TRUE AND sn.active = TRUE`
@@ -589,7 +595,8 @@ async function getAllActiveNPCs() {
         color: row.display_color || '#00ffff',
         harvestableTime: row.harvestable_time || 60000,
         cooldownTime: row.cooldown_time || 120000,
-        enableStatBonuses: row.enable_stat_bonuses !== false // Default to true
+        enableResonanceBonuses: row.enable_resonance_bonuses !== false, // Default to true
+        enableFortitudeBonuses: row.enable_fortitude_bonuses !== false // Default to true
       };
     } catch (error) {
       console.error(`Error processing NPC row (ID: ${row.id}, NPC: ${row.npc_id}, Room: ${row.room_id}):`, error);

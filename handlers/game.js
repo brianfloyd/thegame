@@ -806,7 +806,7 @@ async function look(ctx, data) {
     return;
   }
 
-  // Build description output for all matching NPCs
+  // Build description output for all matching NPCs (with markup support)
   const lines = matches.map(npc => {
     const desc = npc.description || 'You see nothing special.';
     return `${npc.name}: ${desc}`;
@@ -814,7 +814,8 @@ async function look(ctx, data) {
 
   ws.send(JSON.stringify({
     type: 'message',
-    message: lines.join('\n')
+    message: lines.join('\n'),
+    html: true // Enable HTML rendering for markup
   }));
 }
 
@@ -1249,15 +1250,35 @@ async function harvest(ctx, data) {
     return;
   }
   
-  // Start harvest session - track start time
+  // Start harvest session - track start time and cache player's stats
   npcState.harvest_active = true;
   npcState.harvesting_player_id = player.id;
   npcState.harvest_start_time = now;
   npcState.cooldown_until = null;
+  // Cache player's resonance and fortitude stats for the entire harvest session
+  // This ensures consistent bonuses throughout the harvest
+  npcState.harvesting_player_resonance = player.stat_resonance || 5;
+  npcState.harvesting_player_fortitude = player.stat_fortitude || 5;
   
-  // Get NPC definition to verify harvestableTime
-  const harvestableTime = npcDef.harvestable_time || 60000;
-  console.log(`[Harvest] Starting harvest for player ${player.name} on ${roomNpc.name} (room_npc ${roomNpc.id}), harvestableTime=${harvestableTime}ms`);
+  // Get NPC definition to verify harvestableTime and calculate effective harvestable time
+  const baseHarvestableTime = npcDef.harvestable_time || 60000;
+  
+  // Calculate effective harvestable time based on fortitude (if enabled)
+  let effectiveHarvestableTime = baseHarvestableTime;
+  if (npcDef && npcDef.enable_fortitude_bonuses !== false && npcState.harvesting_player_fortitude) {
+    try {
+      const { calculateEffectiveHarvestableTime } = require('../utils/harvestFormulas');
+      effectiveHarvestableTime = await calculateEffectiveHarvestableTime(baseHarvestableTime, npcState.harvesting_player_fortitude, db);
+      console.log(`[Harvest] Harvestable time increase applied: base=${baseHarvestableTime}ms, effective=${effectiveHarvestableTime}ms, fortitude=${npcState.harvesting_player_fortitude}`);
+    } catch (err) {
+      console.error(`[Harvest] Error calculating harvestable time increase:`, err);
+    }
+  }
+  
+  // Store effective harvestable time in state for use by cycle engine
+  npcState.effective_harvestable_time = effectiveHarvestableTime;
+  
+  console.log(`[Harvest] Starting harvest for player ${player.name} on ${roomNpc.name} (room_npc ${roomNpc.id}), harvestableTime=${effectiveHarvestableTime}ms, resonance=${npcState.harvesting_player_resonance}, fortitude=${npcState.harvesting_player_fortitude}`);
   
   // Update NPC state in database
   await db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);

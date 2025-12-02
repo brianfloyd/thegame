@@ -77,6 +77,8 @@ const handlerMap = {
   getNpcPlacementMaps: npcEditorHandlers.getNpcPlacementMaps,
   addNpcToRoom: npcEditorHandlers.addNpcToRoom,
   removeNpcFromRoom: npcEditorHandlers.removeNpcFromRoom,
+  getHarvestFormulaConfigs: npcEditorHandlers.getHarvestFormulaConfigs,
+  updateHarvestFormulaConfig: npcEditorHandlers.updateHarvestFormulaConfig,
   
   // Item editor handlers
   getAllItems: itemEditorHandlers.getAllItems,

@@ -8,3 +8,5 @@ UPDATE scriptable_npcs
 SET harvest_prerequisite_message = 'You lack the required item to harvest from this creature.'
 WHERE harvest_prerequisite_message IS NULL;
 
+
+

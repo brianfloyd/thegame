@@ -202,8 +202,15 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     // Calculate harvest/cooldown progress
     if (npc.state.harvest_active && npc.state.harvest_start_time) {
       const harvestElapsed = now - npc.state.harvest_start_time;
-      const harvestRemaining = Math.max(0, npcData.harvestableTime - harvestElapsed);
-      npcData.harvestProgress = harvestRemaining / npcData.harvestableTime;
+      
+      // Use effective harvestable time if available (fortitude bonus), otherwise base
+      const baseHarvestableTime = npcData.harvestableTime;
+      const effectiveHarvestableTime = npc.state.effective_harvestable_time || baseHarvestableTime;
+      npcData.baseHarvestableTime = baseHarvestableTime; // Set base for widget display
+      npcData.effectiveHarvestableTime = effectiveHarvestableTime; // Set effective for widget display
+      
+      const harvestRemaining = Math.max(0, effectiveHarvestableTime - harvestElapsed);
+      npcData.harvestProgress = harvestRemaining / effectiveHarvestableTime;
       npcData.harvestStatus = 'active';
       
       // Calculate effective cycle time and hit rate based on player's cached resonance
@@ -211,9 +218,9 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
         try {
           // Get NPC definition to check if stat bonuses are enabled
           const npcDef = await db.getScriptableNPCById(npc.npcId);
-          const enableStatBonuses = npcDef && npcDef.enable_stat_bonuses !== false;
+          const enableResonanceBonuses = npcDef && npcDef.enable_resonance_bonuses !== false;
           
-          if (enableStatBonuses) {
+          if (enableResonanceBonuses) {
             // Calculate effective cycle time
             const cycleConfig = await harvestFormulas.getHarvestFormulaConfig(db, 'cycle_time_reduction');
             if (cycleConfig) {
@@ -227,7 +234,7 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
               npcData.hitRate = harvestFormulas.calculateHitRate(npc.state.harvesting_player_resonance, hitConfig);
             }
           } else {
-            // Stat bonuses disabled - show 100% hit rate and base cycle time
+            // Resonance bonuses disabled - show 100% hit rate and base cycle time
             npcData.hitRate = 1.0;
           }
         } catch (e) {
@@ -240,8 +247,35 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       }
     } else if (npc.state.cooldown_until && now < npc.state.cooldown_until) {
       const cooldownRemaining = npc.state.cooldown_until - now;
-      const cooldownElapsed = npcData.cooldownTime - cooldownRemaining;
-      npcData.harvestProgress = cooldownElapsed / npcData.cooldownTime;
+      const baseCooldownTime = npcData.cooldownTime;
+      npcData.baseCooldownTime = baseCooldownTime; // Set base for widget display
+      
+      // Calculate effective cooldown time based on fortitude (if enabled and we have cached fortitude)
+      let effectiveCooldownTime = baseCooldownTime;
+      if (harvestFormulas && npc.state.harvesting_player_fortitude !== undefined && npc.state.harvesting_player_fortitude !== null) {
+        try {
+          const npcDef = await db.getScriptableNPCById(npc.npcId);
+          const enableFortitudeBonuses = npcDef && npcDef.enable_fortitude_bonuses !== false;
+          
+          if (enableFortitudeBonuses) {
+            const cooldownConfig = await harvestFormulas.getHarvestFormulaConfig(db, 'cooldown_time_reduction');
+            if (cooldownConfig) {
+              const multiplier = harvestFormulas.calculateCycleTimeMultiplier(npc.state.harvesting_player_fortitude, cooldownConfig);
+              effectiveCooldownTime = Math.round(baseCooldownTime * multiplier);
+            }
+          }
+        } catch (e) {
+          console.error(`[broadcast] Error calculating cooldown reduction:`, e);
+          // Error calculating, use base
+        }
+      }
+      
+      // Always set effective cooldown time (even if same as base) for widget display
+      npcData.effectiveCooldownTime = effectiveCooldownTime;
+      
+      // Calculate progress based on effective cooldown
+      const cooldownElapsed = effectiveCooldownTime - cooldownRemaining;
+      npcData.harvestProgress = cooldownElapsed / effectiveCooldownTime;
       npcData.harvestStatus = 'cooldown';
     } else {
       npcData.harvestProgress = 1.0;

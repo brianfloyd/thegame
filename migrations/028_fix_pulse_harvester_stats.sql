@@ -37,3 +37,5 @@ BEGIN
     RAISE NOTICE 'Fixed % NPC(s) with invalid JSON in required_stats', invalid_json_count;
 END $$;
 
+
+

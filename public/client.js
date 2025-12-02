@@ -350,11 +350,16 @@ function handleMessage(data) {
         case 'message':
             if (data.message) {
                 if (data.html) {
-                    // Support HTML formatting for messages
+                    // Support HTML formatting for messages with markup parsing
                     const terminalContent = document.getElementById('terminalContent');
                     const msgDiv = document.createElement('div');
                     msgDiv.className = 'info-message';
-                    msgDiv.innerHTML = data.message;
+                    // Apply markup parsing if available (for NPC descriptions, room descriptions, etc.)
+                    if (typeof parseMarkup !== 'undefined') {
+                        msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
+                    } else {
+                        msgDiv.innerHTML = data.message;
+                    }
                     terminalContent.appendChild(msgDiv);
                     terminalContent.scrollTop = terminalContent.scrollHeight;
                     
@@ -364,11 +369,21 @@ function handleMessage(data) {
                             type: 'saveTerminalMessage',
                             message: data.message,
                             messageType: 'info',
-                            messageHtml: data.message
+                            messageHtml: msgDiv.innerHTML
                         }));
                     }
                 } else {
-                    addToTerminal(data.message, 'info');
+                    // Apply markup parsing to plain text messages too
+                    if (typeof parseMarkup !== 'undefined') {
+                        const terminalContent = document.getElementById('terminalContent');
+                        const msgDiv = document.createElement('div');
+                        msgDiv.className = 'info-message';
+                        msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
+                        terminalContent.appendChild(msgDiv);
+                        terminalContent.scrollTop = terminalContent.scrollHeight;
+                    } else {
+                        addToTerminal(data.message, 'info');
+                    }
                 }
             }
             break;
@@ -1048,10 +1063,15 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         terminalContent.appendChild(roomNameDiv);
         saveTerminalContentToHistory(displayName, 'info');
         
-        // Display room description
+        // Display room description (with markup parsing)
         const roomDescDiv = document.createElement('div');
         roomDescDiv.className = 'room-description';
-        roomDescDiv.textContent = room.description;
+        if (typeof parseMarkup !== 'undefined' && room.description) {
+            // Apply markup parsing to room description
+            roomDescDiv.innerHTML = parseMarkup(room.description, '#00ffff');
+        } else {
+            roomDescDiv.textContent = room.description;
+        }
         terminalContent.appendChild(roomDescDiv);
         saveTerminalContentToHistory(room.description, 'info');
         
@@ -1128,8 +1148,10 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
             baseCycleTime: activeHarvestNPC.baseCycleTime,
             effectiveCycleTime: activeHarvestNPC.effectiveCycleTime,
             hitRate: activeHarvestNPC.hitRate,
-            harvestableTime: activeHarvestNPC.harvestableTime,
-            cooldownTime: activeHarvestNPC.cooldownTime
+            baseHarvestableTime: activeHarvestNPC.baseHarvestableTime || activeHarvestNPC.harvestableTime,
+            effectiveHarvestableTime: activeHarvestNPC.effectiveHarvestableTime,
+            baseCooldownTime: activeHarvestNPC.baseCooldownTime || activeHarvestNPC.cooldownTime,
+            effectiveCooldownTime: activeHarvestNPC.effectiveCooldownTime
         });
     } else {
         hideNPCWidget();
@@ -4326,11 +4348,37 @@ function showNPCWidget(npcName, status, progress, timingData = {}) {
         }
     }
     
-    if (harvestEl && timingData.harvestableTime) {
-        harvestEl.textContent = `${(timingData.harvestableTime / 1000).toFixed(0)}s`;
+    const harvestNote = document.getElementById('npcWidgetHarvestNote');
+    if (harvestEl && timingData.baseHarvestableTime) {
+        // Show effective harvestable time if available (fortitude bonus applied), otherwise base
+        const displayHarvestableTime = timingData.effectiveHarvestableTime || timingData.baseHarvestableTime;
+        // Use 1 decimal place to show partial second increases
+        harvestEl.textContent = `${(displayHarvestableTime / 1000).toFixed(1)}s`;
+        
+        // Show fortitude note if effective harvestable time is different from base
+        if (harvestNote) {
+            if (timingData.effectiveHarvestableTime && timingData.effectiveHarvestableTime !== timingData.baseHarvestableTime) {
+                harvestNote.style.display = 'inline';
+            } else {
+                harvestNote.style.display = 'none';
+            }
+        }
     }
-    if (cooldownEl && timingData.cooldownTime) {
-        cooldownEl.textContent = `${(timingData.cooldownTime / 1000).toFixed(0)}s`;
+    const cooldownNote = document.getElementById('npcWidgetCooldownNote');
+    if (cooldownEl && timingData.baseCooldownTime) {
+        // Show effective cooldown time if available (fortitude bonus applied), otherwise base
+        const displayCooldownTime = timingData.effectiveCooldownTime || timingData.baseCooldownTime;
+        // Use 1 decimal place to show partial second reductions (e.g., 9.5s instead of rounding to 10s)
+        cooldownEl.textContent = `${(displayCooldownTime / 1000).toFixed(1)}s`;
+        
+        // Show fortitude note if effective cooldown time is different from base
+        if (cooldownNote) {
+            if (timingData.effectiveCooldownTime && timingData.effectiveCooldownTime !== timingData.baseCooldownTime) {
+                cooldownNote.style.display = 'inline';
+            } else {
+                cooldownNote.style.display = 'none';
+            }
+        }
     }
     
     updateWidgetDisplay();

@@ -74,6 +74,20 @@ function calculateHitRate(resonance, config) {
 }
 
 /**
+ * Calculate harvestable time multiplier based on player fortitude
+ * Returns the multiplier to apply to base harvestable time (e.g., 1.05 means 5% increase)
+ * 
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {object} config - Harvestable time increase config from database
+ * @returns {number} Harvestable time multiplier (1.0 to max, e.g., 1.5 for 50% increase)
+ */
+function calculateHarvestableTimeMultiplier(fortitude, config) {
+  const increase = calculateExponentialCurve(fortitude, config);
+  // Return multiplier (1 + increase), e.g., 0.05 increase = 1.05 multiplier
+  return 1 + increase;
+}
+
+/**
  * Check if a harvest attempt hits (produces items) based on hit rate
  * Uses enhanced randomness with entropy to prevent predictable patterns
  * 
@@ -217,6 +231,25 @@ async function checkHarvestHit(resonance, db) {
 }
 
 /**
+ * Calculate effective harvestable time for a harvest session
+ * 
+ * @param {number} baseHarvestableTime - Base harvestable time in milliseconds
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {object} db - Database module
+ * @returns {number} Effective harvestable time in milliseconds
+ */
+async function calculateEffectiveHarvestableTime(baseHarvestableTime, fortitude, db) {
+  const config = await getHarvestFormulaConfig(db, 'harvestable_time_increase');
+  if (!config) {
+    // No config found, return base harvestable time
+    return baseHarvestableTime;
+  }
+  
+  const multiplier = calculateHarvestableTimeMultiplier(fortitude, config);
+  return Math.round(baseHarvestableTime * multiplier);
+}
+
+/**
  * Get a human-readable summary of the formula effects at different resonance levels
  * Useful for displaying in UI
  * 
@@ -240,11 +273,13 @@ module.exports = {
   calculateCycleTimeMultiplier,
   calculateHitRate,
   rollHarvestHit,
+  calculateHarvestableTimeMultiplier,
   getHarvestFormulaConfig,
   getAllHarvestFormulaConfigs,
   refreshConfigCache,
   clearConfigCache,
   calculateEffectiveCycleTime,
+  calculateEffectiveHarvestableTime,
   checkHarvestHit,
   getFormulaSummary
 };

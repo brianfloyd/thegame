@@ -745,6 +745,143 @@ The following 10 NPCs have been added to the database:
   - NPC definitions editable globally
   - Actual room placement (`room_npcs`) remains restricted to rooms in the **Moonless Meadow** map
 
+## Harvest Bonus System (Stat-Based)
+
+### Overview
+The Harvest Bonus System allows player stats to affect harvesting mechanics. Resonance and Fortitude provide different bonuses:
+
+**Resonance Bonuses:**
+1. **Cycle Time Reduction**: Faster item production cycles during harvest
+2. **Hit Rate**: Higher chance to successfully produce items each cycle
+
+**Fortitude Bonuses:**
+1. **Cooldown Time Reduction**: Faster cooldown recovery after harvest ends
+2. **Harvestable Time Increase**: Longer total harvest duration
+
+### Database Schema
+
+#### `harvest_formula_config` Table
+| Column | Type | Description |
+|--------|------|-------------|
+| id | SERIAL | Primary key |
+| config_key | TEXT UNIQUE | 'cycle_time_reduction', 'hit_rate', 'cooldown_time_reduction', or 'harvestable_time_increase' |
+| description | TEXT | Human-readable description |
+| min_resonance | INTEGER | Stat value for minimum effect (default: 5) - applies to Resonance for cycle/hit, Fortitude for cooldown/harvestable |
+| min_value | NUMERIC(5,4) | Minimum effect value (e.g., 0.05 = 5%) |
+| max_resonance | INTEGER | Stat value for maximum effect (default: 100) |
+| max_value | NUMERIC(5,4) | Maximum effect value (e.g., 0.75 = 75%) |
+| curve_exponent | NUMERIC(5,2) | Exponent for exponential curve (default: 2.0) |
+| updated_at | BIGINT | Timestamp of last update |
+
+#### `scriptable_npcs` Table Addition
+| Column | Type | Description |
+|--------|------|-------------|
+| enable_resonance_bonuses | BOOLEAN | Whether this NPC uses resonance bonuses (cycle time & hit rate) (default: TRUE) |
+| enable_fortitude_bonuses | BOOLEAN | Whether this NPC uses fortitude bonuses (cooldown & harvestable time) (default: TRUE) |
+
+### Formula System
+
+#### Exponential Curve Formula
+```
+normalized = (resonance - minResonance) / (maxResonance - minResonance)
+value = minValue + (maxValue - minValue) * (normalized ^ exponent)
+```
+
+#### Default Configuration
+
+**Cycle Time Reduction:**
+- Min Resonance: 5, Min Value: 5% reduction
+- Max Resonance: 100, Max Value: 75% reduction
+- Curve Exponent: 2.0 (slow start, accelerating gains)
+- At resonance 5: cycles at 95% of base time
+- At resonance 100: cycles at 25% of base time
+
+**Hit Rate:**
+- Min Resonance: 5, Min Value: 50% hit rate
+- Max Resonance: 100, Max Value: 100% hit rate
+- Curve Exponent: 2.0
+- At resonance 5: 50% chance to produce items each cycle
+- At resonance 100: 100% chance (never misses)
+
+**Cooldown Time Reduction:**
+- Min Fortitude: 5, Min Value: 5% reduction
+- Max Fortitude: 100, Max Value: 75% reduction
+- Curve Exponent: 2.0
+- At fortitude 5: cooldown at 95% of base time
+- At fortitude 100: cooldown at 25% of base time
+
+**Harvestable Time Increase:**
+- Min Fortitude: 5, Min Value: 5% increase
+- Max Fortitude: 100, Max Value: 50% increase
+- Curve Exponent: 2.0
+- At fortitude 5: harvestable time at 105% of base time
+- At fortitude 100: harvestable time at 150% of base time
+
+### Implementation Details
+
+#### Harvest Session
+- Player's resonance and fortitude are cached when harvest starts (`harvesting_player_resonance` and `harvesting_player_fortitude` in NPC state)
+- Cached values used throughout entire harvest session (consistent bonuses)
+- Prevents mid-harvest stat changes from affecting current session
+- Effective harvestable time calculated at harvest start and stored in `effective_harvestable_time`
+
+#### Cycle Time Calculation
+```javascript
+effectiveCycleTime = baseCycleTime * (1 - cycleTimeReduction)
+```
+
+#### Cooldown Time Calculation
+```javascript
+effectiveCooldownTime = baseCooldownTime * (1 - cooldownTimeReduction)
+```
+
+#### Harvestable Time Calculation
+```javascript
+effectiveHarvestableTime = baseHarvestableTime * (1 + harvestableTimeIncrease)
+```
+
+#### Hit Rate Check
+- Each cycle, random roll determines if items are produced
+- Miss: "Your harvest from <NPC> misses this cycle." message sent to player
+- Hit: Items produced and dropped normally
+
+### NPC Editor Integration
+
+#### Advanced Settings Section
+- **Resonance (Pulse & Hit Rate)**: Checkbox to enable/disable resonance bonuses for this NPC
+- **Fortitude (Cooldown & Harvest Time)**: Checkbox to enable/disable fortitude bonuses for this NPC
+- **Edit Global Formulas**: Button opens formula configuration modal
+
+#### Formula Config Modal
+- Edit all four formulas: cycle time reduction, hit rate, cooldown time reduction, and harvestable time increase
+- Preview shows calculated values at sample stat levels (5, 25, 50, 75, 100)
+- Changes take effect immediately (cache cleared on save)
+
+### WebSocket Messages
+
+#### Client → Server
+- `{ type: 'getHarvestFormulaConfigs' }` - Get all formula configs
+- `{ type: 'updateHarvestFormulaConfig', config: { config_key, min_resonance, min_value, max_resonance, max_value, curve_exponent } }` - Update a formula config
+
+#### Server → Client
+- `{ type: 'harvestFormulaConfigs', configs: [...] }` - All formula configs
+- `{ type: 'harvestFormulaConfigUpdated', config_key }` - Confirmation of update
+
+### Database Functions (`database.js`)
+- `getHarvestFormulaConfig(configKey)` - Get config by key
+- `getAllHarvestFormulaConfigs()` - Get all configs
+- `updateHarvestFormulaConfig(configKey, updates)` - Update config values
+
+### Utility Functions (`utils/harvestFormulas.js`)
+- `calculateExponentialCurve(statValue, config)` - Core formula calculation
+- `calculateCycleTimeMultiplier(resonance, config)` - Returns cycle time multiplier (for resonance)
+- `calculateHitRate(resonance, config)` - Returns hit rate probability (for resonance)
+- `calculateHarvestableTimeMultiplier(fortitude, config)` - Returns harvestable time multiplier (for fortitude)
+- `calculateEffectiveHarvestableTime(baseHarvestableTime, fortitude, db)` - Calculates effective harvestable time
+- `checkHarvestHit(resonance, db)` - Roll for hit/miss
+- `getHarvestFormulaConfig(db, configKey)` - Get config with caching
+- `clearConfigCache()` - Clear cache after config updates
+
 ## Lore Keeper System
 
 ### Overview

@@ -331,6 +331,58 @@ async function removeNpcFromRoom(ctx, data) {
   }
 }
 
+/**
+ * Get all harvest formula configs
+ */
+async function getHarvestFormulaConfigs(ctx, data) {
+  const { ws, db } = ctx;
+  
+  try {
+    const configs = await db.getAllHarvestFormulaConfigs();
+    ws.send(JSON.stringify({
+      type: 'harvestFormulaConfigs',
+      configs
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get formula configs: ' + err.message }));
+  }
+}
+
+/**
+ * Update a harvest formula config
+ */
+async function updateHarvestFormulaConfig(ctx, data) {
+  const { ws, db } = ctx;
+  const { config } = data;
+  
+  if (!config || !config.config_key) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid config data' }));
+    return;
+  }
+  
+  try {
+    const { clearConfigCache } = require('../utils/harvestFormulas');
+    
+    await db.updateHarvestFormulaConfig(config.config_key, {
+      min_resonance: config.min_resonance,
+      min_value: config.min_value,
+      max_resonance: config.max_resonance,
+      max_value: config.max_value,
+      curve_exponent: config.curve_exponent
+    });
+    
+    // Clear the cache so new values take effect immediately
+    clearConfigCache();
+    
+    ws.send(JSON.stringify({
+      type: 'harvestFormulaConfigUpdated',
+      config_key: config.config_key
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to update formula config: ' + err.message }));
+  }
+}
+
 module.exports = {
   getAllNPCs,
   createNPC,
@@ -339,6 +391,8 @@ module.exports = {
   getNpcPlacementRooms,
   getNpcPlacementMaps,
   addNpcToRoom,
-  removeNpcFromRoom
+  removeNpcFromRoom,
+  getHarvestFormulaConfigs,
+  updateHarvestFormulaConfig
 };
 
