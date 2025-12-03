@@ -58,6 +58,7 @@ const handlerMap = {
   getPathDetails: gameHandlers.getPathDetails,
   startPathExecution: gameHandlers.startPathExecution,
   stopPathExecution: gameHandlers.stopPathExecution,
+  continuePathExecution: gameHandlers.continuePathExecution,
   getMapData: gameHandlers.getMapData,
   
   // Map editor handlers

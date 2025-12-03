@@ -2633,7 +2633,7 @@ body {
     background: rgba(0, 255, 0, 0.2);
     border: 2px solid #00ff00;
     color: #00ff00;
-    padding: 12px 20px;
+    padding: 4px 8px;
     cursor: pointer;
     border-radius: 4px;
     display: flex;
@@ -2641,6 +2641,22 @@ body {
     justify-content: center;
     transition: all 0.2s;
     font-family: 'Courier New', monospace;
+    font-size: 10px;
+    min-height: 20px;
+    width: 40px;
+    height: 20px;
+}
+
+.automation-icon-btn {
+    width: 40px;
+    height: 20px;
+    padding: 2px 4px;
+    min-height: 20px;
+}
+
+.automation-icon-btn svg {
+    width: 16px;
+    height: 16px;
 }
 
 .scripting-action-btn:hover {
@@ -2657,6 +2673,66 @@ body {
 
 .scripting-action-btn svg {
     fill: currentColor;
+}
+
+/* Stop button - normal button style, but text in octagon shape */
+.automation-stop-btn {
+    background: rgba(0, 255, 0, 0.2) !important;
+    border: 2px solid #00ff00 !important;
+    color: #00ff00 !important;
+    position: relative;
+    width: 40px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    padding: 0 !important;
+    font-size: 9px !important;
+}
+
+.automation-stop-btn:hover {
+    background: rgba(0, 255, 0, 0.3) !important;
+    border-color: #ffff00 !important;
+    color: #ffff00 !important;
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.3);
+}
+
+.automation-stop-btn .stop-text {
+    position: relative;
+    z-index: 1;
+    font-size: 9px;
+    line-height: 1;
+    display: inline-block;
+    background: rgba(255, 0, 0, 0.3);
+    color: #ff0000;
+    border: 1px solid #ff0000;
+    padding: 1px 3px;
+    /* Equilateral octagon shape for the text container */
+    clip-path: polygon(
+        30% 0%, 
+        70% 0%, 
+        100% 30%, 
+        100% 70%, 
+        70% 100%, 
+        30% 100%, 
+        0% 70%, 
+        0% 30%
+    );
+}
+
+/* Continue and Start buttons - standard widget button size */
+.automation-continue-btn,
+#startPathBtn {
+    width: 40px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    padding: 2px 4px !important;
+    font-size: 9px !important;
+    line-height: 1;
+}
+
+.automation-continue-btn {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
 }
 
 .scripting-select {

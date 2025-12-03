@@ -33,6 +33,8 @@ let pathingCursorRoom = null;
 let allPlayerPaths = []; // All paths/loops for the player
 let selectedPathId = null; // Currently selected path/loop
 let isPathExecuting = false; // Execution state
+let isPathPaused = false; // Paused state (stopped mid-execution)
+let pausedPathRoomId = null; // Room ID where path was paused
 let pathPreviewData = null; // Preview route data
 
 // Communication widget state
@@ -334,6 +336,8 @@ function handleMessage(data) {
         case 'pathExecutionStarted':
             // Path/Loop execution started
             isPathExecuting = true;
+            isPathPaused = false;
+            pausedPathRoomId = null;
             addToTerminal(data.message || 'Path/Loop execution started.', 'success');
             updatePathExecutionUI();
             // Close preview dialog if open
@@ -341,6 +345,14 @@ function handleMessage(data) {
             if (previewDialog) {
                 previewDialog.style.display = 'none';
             }
+            break;
+        case 'pathExecutionResumed':
+            // Path/Loop execution resumed (from continue)
+            isPathExecuting = true;
+            isPathPaused = false;
+            pausedPathRoomId = null;
+            addToTerminal(data.message || 'Path/Loop execution resumed.', 'success');
+            updatePathExecutionUI();
             break;
         case 'pathExecutionComplete':
             // Path execution completed (paths only, loops don't complete)
@@ -365,6 +377,15 @@ function handleMessage(data) {
             break;
         case 'roomUpdate':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            // Check if path is paused and player has moved to a different room
+            if (isPathPaused && pausedPathRoomId && data.room) {
+                if (data.room.id !== pausedPathRoomId) {
+                    // Player has moved from paused room - clear pause state
+                    isPathPaused = false;
+                    pausedPathRoomId = null;
+                    updatePathExecutionUI();
+                }
+            }
             // Track if we're in a warehouse room
             isInWarehouseRoom = data.room.roomType === 'warehouse';
             // Handle factory widget state
@@ -2993,6 +3014,21 @@ function movePlayer(direction) {
         return;
     }
     
+    // If path is paused and player manually moves, clear pause state
+    if (isPathPaused && pausedPathRoomId) {
+        const currentRoom = mapRooms.find(r => 
+            r.mapId === currentMapId && 
+            r.x === currentRoomPos.x && 
+            r.y === currentRoomPos.y
+        );
+        if (currentRoom && currentRoom.id !== pausedPathRoomId) {
+            // Player has moved from paused room - clear pause state
+            isPathPaused = false;
+            pausedPathRoomId = null;
+            updatePathExecutionUI();
+        }
+    }
+    
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         addToTerminal('Not connected to server. Please wait...', 'error');
         return;
@@ -3832,10 +3868,14 @@ function startPathExecution() {
         return;
     }
     
-    if (isPathExecuting) {
+    if (isPathExecuting && !isPathPaused) {
         addToTerminal('Path/Loop execution is already active.', 'error');
         return;
     }
+    
+    // Clear any pause state when starting fresh
+    isPathPaused = false;
+    pausedPathRoomId = null;
     
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ 
@@ -3848,8 +3888,64 @@ function startPathExecution() {
 function stopPathExecution() {
     if (!isPathExecuting) return;
     
+    // Get current room ID for pause tracking
+    const currentRoom = mapRooms.find(r => 
+        r.mapId === currentMapId && 
+        r.x === currentRoomPos.x && 
+        r.y === currentRoomPos.y
+    );
+    
+    if (currentRoom) {
+        pausedPathRoomId = currentRoom.id;
+        isPathPaused = true;
+    }
+    
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'stopPathExecution' }));
+    }
+}
+
+function continuePathExecution() {
+    console.log('[continuePathExecution] Called - isPathPaused:', isPathPaused, 'selectedPathId:', selectedPathId);
+    
+    if (!isPathPaused || !selectedPathId) {
+        console.log('[continuePathExecution] Validation failed');
+        addToTerminal('No paused path to continue.', 'error');
+        return;
+    }
+    
+    // Check if still in the same room
+    const currentRoom = mapRooms.find(r => 
+        r.mapId === currentMapId && 
+        r.x === currentRoomPos.x && 
+        r.y === currentRoomPos.y
+    );
+    
+    console.log('[continuePathExecution] Current room:', currentRoom?.id, 'Paused room:', pausedPathRoomId);
+    
+    if (!currentRoom || currentRoom.id !== pausedPathRoomId) {
+        // Player has moved - can't continue
+        addToTerminal('Cannot continue: You have moved from where you stopped. Please restart the path.', 'error');
+        isPathPaused = false;
+        pausedPathRoomId = null;
+        updatePathExecutionUI();
+        return;
+    }
+    
+    // Resume execution - navigation will be locked again
+    isPathPaused = false;
+    pausedPathRoomId = null;
+    
+    console.log('[continuePathExecution] Sending continuePathExecution message, pathId:', selectedPathId);
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ 
+            type: 'continuePathExecution',
+            pathId: selectedPathId
+        }));
+    } else {
+        console.error('[continuePathExecution] WebSocket not ready');
+        addToTerminal('Not connected to server.', 'error');
     }
 }
 
@@ -3857,19 +3953,28 @@ function updatePathExecutionUI() {
     const dropdown = document.getElementById('pathLoopSelect');
     const startBtn = document.getElementById('startPathBtn');
     const stopBtn = document.getElementById('stopPathBtn');
+    const continueBtn = document.getElementById('continuePathBtn');
     
-    if (!dropdown || !startBtn || !stopBtn) return;
+    if (!dropdown || !startBtn || !stopBtn || !continueBtn) return;
     
     if (isPathExecuting) {
         // Execution active
         dropdown.disabled = true;
         startBtn.style.display = 'none';
         stopBtn.style.display = 'block';
+        continueBtn.style.display = 'none';
+    } else if (isPathPaused) {
+        // Execution paused
+        dropdown.disabled = true;
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+        continueBtn.style.display = 'block';
     } else {
         // Execution inactive
         dropdown.disabled = false;
         startBtn.style.display = 'block';
         stopBtn.style.display = 'none';
+        continueBtn.style.display = 'none';
         startBtn.disabled = !selectedPathId;
     }
 }
@@ -6751,6 +6856,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const stopPathBtn = document.getElementById('stopPathBtn');
         if (stopPathBtn) {
             stopPathBtn.addEventListener('click', stopPathExecution);
+        }
+        
+        const continuePathBtn = document.getElementById('continuePathBtn');
+        if (continuePathBtn) {
+            console.log('[Setup] Adding event listener to continuePathBtn');
+            continuePathBtn.addEventListener('click', () => {
+                console.log('[continuePathBtn] Click event fired');
+                continuePathExecution();
+            });
+        } else {
+            console.error('[Setup] continuePathBtn not found!');
         }
         
         const closePathPreviewBtn = document.getElementById('closePathPreviewBtn');

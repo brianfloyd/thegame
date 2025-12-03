@@ -493,38 +493,45 @@ async function move(ctx, data) {
   
   // Check path execution first (higher priority)
   if (playerData && playerData.pathExecution && playerData.pathExecution.isActive) {
-    const { steps, currentStep, isLooping } = playerData.pathExecution;
-    // Calculate the actual step index (handle loop wrapping) - same logic as executeNextPathStep
-    let actualStep = currentStep;
-    if (currentStep >= steps.length && isLooping) {
-      actualStep = currentStep % steps.length;
-    }
-    if (actualStep < steps.length && steps.length > 0) {
-      const expectedStep = steps[actualStep];
-      const moveDirection = data.direction ? data.direction.toUpperCase() : null;
-      const expectedDirection = expectedStep.direction ? expectedStep.direction.toUpperCase() : null;
-      // If this move matches the expected step, allow it (it's from path execution)
-      console.log(`[Path Execution Check] currentStep=${currentStep}, actualStep=${actualStep}, moveDirection=${moveDirection}, expectedDirection=${expectedDirection}, stepCount=${steps.length}, isLooping=${isLooping}`);
-      if (moveDirection && expectedDirection && moveDirection === expectedDirection) {
-        // This is the path execution move, allow it to proceed
-        console.log(`[Path Execution] Move allowed: ${moveDirection}`);
+    // If paused, allow manual movement
+    if (playerData.pathExecution.isPaused) {
+      // Path is paused - allow manual movement
+      // This will clear the pause state on the client side if player moves
+    } else {
+      // Path is active and not paused - check if this is an execution move
+      const { steps, currentStep, isLooping } = playerData.pathExecution;
+      // Calculate the actual step index (handle loop wrapping) - same logic as executeNextPathStep
+      let actualStep = currentStep;
+      if (currentStep >= steps.length && isLooping) {
+        actualStep = currentStep % steps.length;
+      }
+      if (actualStep < steps.length && steps.length > 0) {
+        const expectedStep = steps[actualStep];
+        const moveDirection = data.direction ? data.direction.toUpperCase() : null;
+        const expectedDirection = expectedStep.direction ? expectedStep.direction.toUpperCase() : null;
+        // If this move matches the expected step, allow it (it's from path execution)
+        console.log(`[Path Execution Check] currentStep=${currentStep}, actualStep=${actualStep}, moveDirection=${moveDirection}, expectedDirection=${expectedDirection}, stepCount=${steps.length}, isLooping=${isLooping}`);
+        if (moveDirection && expectedDirection && moveDirection === expectedDirection) {
+          // This is the path execution move, allow it to proceed
+          console.log(`[Path Execution] Move allowed: ${moveDirection}`);
+        } else {
+          // Manual move attempt during path execution - block it
+          console.log(`[Path Execution] Move blocked: direction mismatch or missing data`);
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
+          }));
+          return;
+        }
       } else {
-        // Manual move attempt during path execution - block it
-        console.log(`[Path Execution] Move blocked: direction mismatch or missing data`);
+        // Should not happen, but block manual moves
+        console.log(`[Path Execution] Move blocked: invalid step index`);
         ws.send(JSON.stringify({ 
           type: 'error', 
           message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
         }));
         return;
       }
-    } else {
-      // Should not happen, but block manual moves
-      console.log(`[Path Execution] Move blocked: invalid step index`);
-      ws.send(JSON.stringify({ 
-        type: 'error', 
-        message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
-      }));
-      return;
     }
   } else if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
     // Check if this move is part of auto-navigation (matches current step)
@@ -4450,8 +4457,8 @@ async function executeNextPathStep(ctx, connectionId) {
   const { db, connectedPlayers, factoryWidgetState, warehouseWidgetState, sessionId } = ctx;
   const playerData = connectedPlayers.get(connectionId);
   
-  if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive) {
-    return; // Path execution not active or cleared
+  if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive || playerData.pathExecution.isPaused) {
+    return; // Path execution not active, cleared, or paused
   }
   
   const { steps, currentStep, isLooping } = playerData.pathExecution;
@@ -4560,7 +4567,7 @@ function clearPathExecution(connectedPlayers, connectionId) {
 }
 
 /**
- * Stop path/loop execution
+ * Stop path/loop execution (pause)
  */
 async function stopPathExecution(ctx, data) {
   const { ws, connectedPlayers, connectionId } = ctx;
@@ -4570,11 +4577,81 @@ async function stopPathExecution(ctx, data) {
     return;
   }
 
-  clearPathExecution(connectedPlayers, connectionId);
+  // Store pause state (don't clear pathExecution, just mark as paused)
+  if (playerData.pathExecution && playerData.pathExecution.isActive) {
+    playerData.pathExecution.isPaused = true;
+    // Clear timeout but keep execution state
+    if (playerData.pathExecution.timeoutId) {
+      clearTimeout(playerData.pathExecution.timeoutId);
+      playerData.pathExecution.timeoutId = null;
+    }
+  } else {
+    clearPathExecution(connectedPlayers, connectionId);
+  }
   
   ws.send(JSON.stringify({ 
     type: 'pathExecutionStopped',
-    message: 'Path/Loop execution stopped.'
+    message: 'Path/Loop execution paused.'
+  }));
+}
+
+/**
+ * Continue path/loop execution after pause
+ */
+async function continuePathExecution(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  
+  console.log('[continuePathExecution] Called - connectionId:', connectionId, 'data:', data);
+  
+  if (!playerData || !playerData.playerId) {
+    console.log('[continuePathExecution] Not authenticated');
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  const { pathId } = data;
+  if (!pathId) {
+    console.log('[continuePathExecution] No pathId provided');
+    ws.send(JSON.stringify({ type: 'error', message: 'Path ID required' }));
+    return;
+  }
+
+  console.log('[continuePathExecution] Checking pathExecution state:', {
+    exists: !!playerData.pathExecution,
+    isPaused: playerData.pathExecution?.isPaused,
+    pathId: playerData.pathExecution?.pathId,
+    requestedPathId: pathId
+  });
+
+  // Check if path execution exists and is paused
+  if (!playerData.pathExecution || !playerData.pathExecution.isPaused) {
+    console.log('[continuePathExecution] No paused path execution found');
+    ws.send(JSON.stringify({ type: 'error', message: 'No paused path execution to continue' }));
+    return;
+  }
+
+  // Verify path ID matches
+  if (playerData.pathExecution.pathId !== pathId) {
+    console.log('[continuePathExecution] Path ID mismatch');
+    ws.send(JSON.stringify({ type: 'error', message: 'Path ID mismatch' }));
+    return;
+  }
+
+  console.log('[continuePathExecution] Resuming execution from step:', playerData.pathExecution.currentStep);
+
+  // Resume execution
+  playerData.pathExecution.isPaused = false;
+  playerData.pathExecution.isActive = true;
+  
+  // Continue from current step (don't reset, just continue)
+  executeNextPathStep(ctx, connectionId);
+  
+  console.log('[continuePathExecution] Sending pathExecutionResumed message');
+  
+  ws.send(JSON.stringify({ 
+    type: 'pathExecutionResumed',
+    message: 'Path/Loop execution resumed.'
   }));
 }
 
@@ -4592,6 +4669,7 @@ module.exports = {
   getPathDetails,
   startPathExecution,
   stopPathExecution,
+  continuePathExecution,
   move,
   look,
   inventory,
