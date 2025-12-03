@@ -226,6 +226,14 @@ wss.on('connection', (ws, req) => {
         }
       }
       
+      // Clear auto-navigation state
+      if (playerData.autoNavigation) {
+        if (playerData.autoNavigation.timeoutId) {
+          clearTimeout(playerData.autoNavigation.timeoutId);
+        }
+        playerData.autoNavigation = null;
+      }
+      
       // Drop factory widget items and remove poofable items when player disconnects
       if (roomId) {
         const factoryState = factoryWidgetState.get(connId);

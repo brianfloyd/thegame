@@ -13,3 +13,5 @@ VALUES (
     2.00
 ) ON CONFLICT (config_key) DO NOTHING;
 
+
+

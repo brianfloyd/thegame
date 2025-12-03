@@ -185,8 +185,8 @@ async function createPlayer(name, accountId) {
       name, current_room_id,
       stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen,
       ability_crafting, ability_attunement, ability_endurance, ability_commerce,
-      assignable_points, flag_god_mode, flag_always_first_time
-    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0)
+      assignable_points, flag_god_mode, flag_always_first_time, auto_navigation_time_ms
+    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0, 1000)
     RETURNING id, name, current_room_id`,
     [name, townSquare.id]
   );
@@ -217,7 +217,8 @@ async function updatePlayer(player) {
   const allowedFields = [
     'stat_ingenuity', 'stat_resonance', 'stat_fortitude', 'stat_acumen',
     'ability_crafting', 'ability_attunement', 'ability_endurance', 'ability_commerce',
-    'resource_max_encumbrance', 'assignable_points', 'flag_god_mode', 'current_room_id'
+    'resource_max_encumbrance', 'assignable_points', 'flag_god_mode', 'current_room_id',
+    'auto_navigation_time_ms'
   ];
   
   const updates = [];

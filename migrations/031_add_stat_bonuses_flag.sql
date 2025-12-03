@@ -9,3 +9,5 @@ UPDATE scriptable_npcs
 SET enable_stat_bonuses = TRUE
 WHERE enable_stat_bonuses IS NULL;
 
+
+

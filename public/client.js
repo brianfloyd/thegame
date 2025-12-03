@@ -457,12 +457,17 @@ function handleMessage(data) {
         case 'message':
             if (data.message) {
                 if (data.html) {
-                    // Support HTML formatting for messages with markup parsing
+                    // Support HTML formatting for messages
                     const terminalContent = document.getElementById('terminalContent');
                     const msgDiv = document.createElement('div');
                     msgDiv.className = 'info-message';
-                    // Apply markup parsing if available (for NPC descriptions, room descriptions, etc.)
-                    if (typeof parseMarkup !== 'undefined') {
+                    // Check if message contains HTML table (like who command) - don't parse markup for those
+                    const isHtmlTable = data.message.includes('<table') || data.message.includes('<div class="who-list">');
+                    if (isHtmlTable) {
+                        // Direct HTML insertion for tables (who command, etc.)
+                        msgDiv.innerHTML = data.message;
+                    } else if (typeof parseMarkup !== 'undefined') {
+                        // Apply markup parsing for other HTML messages (NPC descriptions, room descriptions, etc.)
                         msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
                     } else {
                         msgDiv.innerHTML = data.message;
@@ -502,6 +507,43 @@ function handleMessage(data) {
             break;
         case 'jumpRooms':
             populateJumpRooms(data.rooms);
+            break;
+        case 'autoPathMaps':
+            populateAutoPathMaps(data.maps);
+            break;
+        case 'autoPathRooms':
+            populateAutoPathRooms(data.rooms);
+            break;
+        case 'autoPathCalculated':
+            if (data.path) {
+                autoNavigationPath = data.path;
+                displayAutoPathSummary(data.path);
+            } else {
+                addToTerminal(data.message || 'Failed to calculate path', 'error');
+            }
+            break;
+        case 'autoNavigationStarted':
+            isAutoNavigating = true;
+            updateCompassButtonsState();
+            if (data.message) {
+                addToTerminal(data.message, 'info');
+            }
+            break;
+        case 'autoNavigationComplete':
+            isAutoNavigating = false;
+            autoNavigationPath = null;
+            updateCompassButtonsState();
+            if (data.message) {
+                addToTerminal(data.message, 'info');
+            }
+            break;
+        case 'autoNavigationFailed':
+            isAutoNavigating = false;
+            autoNavigationPath = null;
+            updateCompassButtonsState();
+            if (data.message) {
+                addToTerminal(data.message, 'error');
+            }
             break;
         case 'mapEditorData':
             // Check if this is for target map selection in connect mode
@@ -2529,6 +2571,11 @@ function executeCommand(command) {
 
     const normalized = normalizeCommand(raw);
     if (normalized) {
+        // Block movement commands during auto-navigation
+        if (isAutoNavigating) {
+            addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
+            return;
+        }
         movePlayer(normalized);
     } else {
         addToTerminal(`Unknown command: ${command}`, 'error');
@@ -2538,15 +2585,23 @@ function executeCommand(command) {
 // Handle compass button clicks
 document.querySelectorAll('.compass-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        if (!btn.disabled) {
+        if (!btn.disabled && !isAutoNavigating) {
             const direction = btn.getAttribute('data-direction');
             movePlayer(direction);
+        } else if (isAutoNavigating) {
+            addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
         }
     });
 });
 
 // Handle keypad movement in main game
 function handleKeypadMovement(key) {
+    // Block keypad movement during auto-navigation
+    if (isAutoNavigating) {
+        addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
+        return;
+    }
+    
     // Keypad to direction mapping (same as map editor)
     // 7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE
     const keypadDirectionMap = {
@@ -2568,6 +2623,12 @@ function handleKeypadMovement(key) {
 
 // Move player
 function movePlayer(direction) {
+    // Block movement during auto-navigation
+    if (isAutoNavigating) {
+        addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
+        return;
+    }
+    
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         addToTerminal('Not connected to server. Please wait...', 'error');
         return;
@@ -4036,6 +4097,9 @@ function updateWidgetDisplay() {
         }
     });
     
+    // Update compass button states based on auto-navigation
+    updateCompassButtonsState();
+    
     // Step 2: Handle scripting widget specially (takes 2 slots)
     const scriptingIsActive = activeWidgets.includes('scripting');
     
@@ -5084,6 +5148,331 @@ function onJumpCanvasClick(e) {
     }
 }
 
+// ============================================================
+// AUTO-PATH PANEL
+// ============================================================
+
+let isAutoNavigating = false;
+let autoNavigationPath = null;
+let autoPathMaps = [];
+let autoPathRooms = [];
+let autoPathCanvas = null;
+let autoPathCtx = null;
+let autoPathSelectedMap = null;
+let autoPathSelectedRoom = null;
+const AUTO_PATH_CELL_SIZE = 15;
+
+function openAutoPathPanel() {
+    const panel = document.getElementById('autoPathPanel');
+    if (!panel) return;
+    
+    panel.classList.remove('hidden');
+    
+    // Initialize canvas
+    autoPathCanvas = document.getElementById('autoPathMapCanvas');
+    autoPathCtx = autoPathCanvas.getContext('2d');
+    
+    // Request map list from server
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getAutoPathMaps' }));
+    }
+    
+    // Setup event listeners
+    const closeBtn = document.getElementById('closeAutoPathPanel');
+    if (closeBtn) {
+        closeBtn.onclick = closeAutoPathPanel;
+    }
+    
+    const mapSelector = document.getElementById('autoPathMapSelect');
+    if (mapSelector) {
+        mapSelector.onchange = onAutoPathMapSelected;
+    }
+    
+    // Canvas click and hover handlers
+    if (autoPathCanvas) {
+        autoPathCanvas.onclick = onAutoPathCanvasClick;
+        autoPathCanvas.onmousemove = onAutoPathCanvasHover;
+    }
+    
+    // GO button handler
+    const goBtn = document.getElementById('autoPathGoBtn');
+    if (goBtn) {
+        goBtn.onclick = startAutoNavigation;
+    }
+}
+
+function closeAutoPathPanel() {
+    const panel = document.getElementById('autoPathPanel');
+    if (panel) {
+        panel.classList.add('hidden');
+    }
+    autoPathMaps = [];
+    autoPathRooms = [];
+    autoPathSelectedMap = null;
+    autoPathSelectedRoom = null;
+    const summary = document.getElementById('autoPathSummary');
+    if (summary) {
+        summary.style.display = 'none';
+    }
+}
+
+function populateAutoPathMaps(maps) {
+    autoPathMaps = maps;
+    const selector = document.getElementById('autoPathMapSelect');
+    if (!selector) return;
+    
+    selector.innerHTML = '<option value="">Select a map...</option>';
+    maps.forEach(map => {
+        const option = document.createElement('option');
+        option.value = map.id;
+        option.textContent = map.name;
+        selector.appendChild(option);
+    });
+}
+
+function onAutoPathMapSelected(e) {
+    const mapId = parseInt(e.target.value);
+    if (!mapId) {
+        autoPathRooms = [];
+        autoPathSelectedMap = null;
+        clearAutoPathCanvas();
+        return;
+    }
+    
+    autoPathSelectedMap = mapId;
+    
+    // Request rooms for this map
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getAutoPathRooms', mapId }));
+    }
+}
+
+function populateAutoPathRooms(rooms) {
+    autoPathRooms = rooms;
+    renderAutoPathMap();
+}
+
+function clearAutoPathCanvas() {
+    if (!autoPathCtx || !autoPathCanvas) return;
+    autoPathCtx.fillStyle = '#050505';
+    autoPathCtx.fillRect(0, 0, autoPathCanvas.width, autoPathCanvas.height);
+}
+
+function renderAutoPathMap() {
+    if (!autoPathCtx || !autoPathCanvas || autoPathRooms.length === 0) {
+        clearAutoPathCanvas();
+        return;
+    }
+    
+    // Get container dimensions
+    const container = autoPathCanvas.parentElement;
+    if (!container) return;
+    
+    const containerWidth = container.clientWidth - 30; // Account for padding
+    const containerHeight = container.clientHeight - 30;
+    
+    // Calculate bounds
+    const minX = Math.min(...autoPathRooms.map(r => r.x));
+    const maxX = Math.max(...autoPathRooms.map(r => r.x));
+    const minY = Math.min(...autoPathRooms.map(r => r.y));
+    const maxY = Math.max(...autoPathRooms.map(r => r.y));
+    
+    const gridWidth = maxX - minX + 1;
+    const gridHeight = maxY - minY + 1;
+    
+    // Calculate cell size to fit container, but maintain minimum size
+    const cellSizeX = Math.floor((containerWidth - 40) / gridWidth);
+    const cellSizeY = Math.floor((containerHeight - 40) / gridHeight);
+    const cellSize = Math.max(Math.min(cellSizeX, cellSizeY, AUTO_PATH_CELL_SIZE), 8); // Min 8px, max original size
+    
+    // Size canvas to fit container
+    const canvasWidth = Math.min(gridWidth * cellSize + 40, containerWidth);
+    const canvasHeight = Math.min(gridHeight * cellSize + 40, containerHeight);
+    
+    autoPathCanvas.width = canvasWidth;
+    autoPathCanvas.height = canvasHeight;
+    
+    // Store cell size for click detection
+    autoPathCanvas.dataset.cellSize = cellSize;
+    
+    // Clear canvas
+    autoPathCtx.fillStyle = '#050505';
+    autoPathCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    // Calculate offset to center the map
+    const offsetX = Math.floor((canvasWidth - gridWidth * cellSize) / 2);
+    const offsetY = Math.floor((canvasHeight - gridHeight * cellSize) / 2);
+    
+    // Store rendering info for click detection
+    autoPathCanvas.dataset.minX = minX;
+    autoPathCanvas.dataset.maxY = maxY;
+    autoPathCanvas.dataset.offsetX = offsetX;
+    autoPathCanvas.dataset.offsetY = offsetY;
+    autoPathCanvas.dataset.cellSize = cellSize;
+    
+    // Draw rooms
+    autoPathRooms.forEach(room => {
+        const screenX = offsetX + (room.x - minX) * cellSize;
+        const screenY = offsetY + (maxY - room.y) * cellSize;
+        
+        // Check if current player is in this room
+        // Note: currentRoomPos and currentMapId are set when map data is received
+        const isCurrentRoom = currentRoomPos && currentMapId &&
+                              room.x === currentRoomPos.x && 
+                              room.y === currentRoomPos.y &&
+                              autoPathSelectedMap === currentMapId;
+        
+        // Check if this is the selected destination room
+        const isSelectedRoom = autoPathSelectedRoom && autoPathSelectedRoom.id === room.id;
+        
+        // Room fill color
+        if (isCurrentRoom) {
+            autoPathCtx.fillStyle = '#00ff00';
+        } else if (isSelectedRoom) {
+            autoPathCtx.fillStyle = '#ff8800';
+        } else if (room.connected_map_id) {
+            autoPathCtx.fillStyle = '#ffffff';
+        } else {
+            autoPathCtx.fillStyle = '#666';
+        }
+        
+        const roomSize = cellSize - 2;
+        autoPathCtx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        
+        // Border
+        if (isCurrentRoom) {
+            autoPathCtx.strokeStyle = '#ffff00';
+            autoPathCtx.lineWidth = 2;
+        } else if (isSelectedRoom) {
+            autoPathCtx.strokeStyle = '#ff8800';
+            autoPathCtx.lineWidth = 2;
+        } else {
+            autoPathCtx.strokeStyle = '#333';
+            autoPathCtx.lineWidth = 1;
+        }
+        autoPathCtx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+    });
+}
+
+function getAutoPathRoomAtPosition(canvasX, canvasY) {
+    if (!autoPathCanvas || autoPathRooms.length === 0) return null;
+    
+    const minX = parseInt(autoPathCanvas.dataset.minX);
+    const maxY = parseInt(autoPathCanvas.dataset.maxY);
+    const offsetX = parseInt(autoPathCanvas.dataset.offsetX);
+    const offsetY = parseInt(autoPathCanvas.dataset.offsetY);
+    const cellSize = parseFloat(autoPathCanvas.dataset.cellSize) || AUTO_PATH_CELL_SIZE;
+    
+    // Convert canvas coords to grid coords
+    const gridX = Math.floor((canvasX - offsetX) / cellSize) + minX;
+    const gridY = maxY - Math.floor((canvasY - offsetY) / cellSize);
+    
+    // Find room at these coordinates
+    return autoPathRooms.find(r => r.x === gridX && r.y === gridY);
+}
+
+function onAutoPathCanvasHover(e) {
+    if (!autoPathCanvas) return;
+    const rect = autoPathCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const room = getAutoPathRoomAtPosition(x, y);
+    const infoEl = document.getElementById('autoPathHoverInfo');
+    
+    if (room) {
+        infoEl.innerHTML = `<span class="room-name">${room.name}</span> <span class="room-coords">(${room.x}, ${room.y})</span> - Click to set destination`;
+        autoPathCanvas.style.cursor = 'pointer';
+    } else {
+        infoEl.textContent = 'Select a map, then click a room to set destination';
+        autoPathCanvas.style.cursor = 'crosshair';
+    }
+}
+
+function onAutoPathCanvasClick(e) {
+    if (!autoPathCanvas) return;
+    const rect = autoPathCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const room = getAutoPathRoomAtPosition(x, y);
+    
+    if (room) {
+        autoPathSelectedRoom = room;
+        renderAutoPathMap();
+        
+        // Calculate path
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ 
+                type: 'calculateAutoPath', 
+                targetRoomId: room.id 
+            }));
+        }
+    }
+}
+
+function displayAutoPathSummary(path) {
+    const summary = document.getElementById('autoPathSummary');
+    const stepsDiv = document.getElementById('autoPathSteps');
+    
+    if (!summary || !stepsDiv) return;
+    
+    if (!path || path.length === 0) {
+        stepsDiv.innerHTML = '<div class="path-step">Already at destination!</div>';
+    } else {
+        stepsDiv.innerHTML = '';
+        let lastMapId = null;
+        path.forEach((step, index) => {
+            const stepDiv = document.createElement('div');
+            stepDiv.className = 'path-step';
+            
+            // Show map transition if map changed
+            let mapTransition = '';
+            if (step.mapId && step.mapId !== lastMapId && lastMapId !== null) {
+                mapTransition = `<span class="path-map-transition">→ Entering ${step.mapName || 'Unknown Map'}</span><br>`;
+            }
+            lastMapId = step.mapId;
+            
+            stepDiv.innerHTML = mapTransition + `<span class="path-direction">${step.direction}</span> → <span class="path-room">${step.roomName}</span>`;
+            stepsDiv.appendChild(stepDiv);
+        });
+    }
+    
+    summary.style.display = 'block';
+}
+
+function startAutoNavigation() {
+    if (!autoNavigationPath || autoNavigationPath.length === 0) {
+        addToTerminal('No path to navigate', 'error');
+        return;
+    }
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ 
+            type: 'startAutoNavigation', 
+            path: autoNavigationPath 
+        }));
+        isAutoNavigating = true;
+        updateCompassButtonsState();
+        closeAutoPathPanel();
+        addToTerminal('Auto-navigation started. Movement commands are now blocked.', 'info');
+    }
+}
+
+function updateCompassButtonsState() {
+    document.querySelectorAll('.compass-btn').forEach(btn => {
+        if (isAutoNavigating) {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            btn.style.cursor = 'not-allowed';
+        } else {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+        }
+    });
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     // Hide player selection if we're on game.html (game view is always visible there)
@@ -5095,6 +5484,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize widget toggle bar
         initWidgetToggleBar();
         updateWidgetDisplay();
+        
+        // Setup scripting widget walk button
+        const scriptingWalkBtn = document.getElementById('scripting-walk-btn');
+        if (scriptingWalkBtn) {
+            scriptingWalkBtn.addEventListener('click', () => {
+                openAutoPathPanel();
+            });
+        }
         
         // Run a delayed sync to catch any widgets that might be visible but not in activeWidgets
         // This fixes cases where widgets are shown by default or by other code

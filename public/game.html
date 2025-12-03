@@ -247,7 +247,7 @@
                         <div class="widget scripting-widget" id="widget-scripting" data-widget="scripting">
                             <div class="widget-header">Scripting</div>
                             <div class="widget-content scripting-content">
-                                <button class="scripting-action-btn" id="scripting-walk-btn" title="Walk">
+                                <button class="scripting-action-btn" id="scripting-walk-btn" title="Auto-Path">
                                     <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6.5 6V13h-3v-2c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H5v-2c0-1.1-.9-2-2-2s-2 .9-2 2v6c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2zm-1 3.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
                                 </button>
                             </div>
@@ -261,6 +261,32 @@
         </div>
     </div>
     
+    <!-- Auto-Path Panel -->
+    <div id="autoPathPanel" class="auto-path-panel hidden">
+        <div class="auto-path-container">
+            <div class="auto-path-header">
+                <h3>Auto-Path to Destination</h3>
+                <button id="closeAutoPathPanel" class="auto-path-close">×</button>
+            </div>
+            <div class="auto-path-toolbar">
+                <select id="autoPathMapSelect" class="auto-path-map-selector">
+                    <option value="">Select a map...</option>
+                </select>
+            </div>
+            <div class="auto-path-content">
+                <canvas id="autoPathMapCanvas"></canvas>
+            </div>
+            <div class="auto-path-info">
+                <span id="autoPathHoverInfo">Select a map, then click a room to set destination</span>
+            </div>
+            <div id="autoPathSummary" class="auto-path-summary" style="display: none;">
+                <div class="auto-path-summary-title">Path Summary</div>
+                <div id="autoPathSteps" class="auto-path-steps"></div>
+                <button id="autoPathGoBtn" class="auto-path-go-btn">GO</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Jump Widget (God Mode only) -->
     <div id="jumpWidget" class="jump-widget-overlay hidden">
         <div class="jump-widget-container">

@@ -23,3 +23,5 @@ ADD COLUMN IF NOT EXISTS puzzle_award_delay_response TEXT DEFAULT NULL;
 
 
 
+
+

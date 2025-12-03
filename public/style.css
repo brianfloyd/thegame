@@ -3576,6 +3576,199 @@ body {
     color: #ffff00;
 }
 
+/* Auto-Path Panel Styles */
+.auto-path-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auto-path-panel.hidden {
+    display: none;
+}
+
+.auto-path-container {
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
+    width: 90vw;
+    max-width: 1200px;
+    height: 90vh;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+}
+
+.auto-path-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    border-bottom: 1px solid #333;
+    background: #111;
+}
+
+.auto-path-header h3 {
+    color: #00ff00;
+    font-size: 16px;
+    margin: 0;
+}
+
+.auto-path-close {
+    background: none;
+    border: 1px solid #ff0000;
+    color: #ff0000;
+    font-size: 20px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.auto-path-close:hover {
+    background: #330000;
+}
+
+.auto-path-toolbar {
+    padding: 10px 15px;
+    border-bottom: 1px solid #333;
+    background: #0d0d0d;
+}
+
+.auto-path-map-selector {
+    width: 100%;
+    padding: 8px;
+    background: #111;
+    border: 1px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+}
+
+.auto-path-map-selector:focus {
+    outline: none;
+    border-color: #00ff00;
+}
+
+.auto-path-content {
+    flex: 1;
+    padding: 15px;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    position: relative;
+}
+
+#autoPathMapCanvas {
+    background: #050505;
+    border: 1px solid #222;
+    cursor: crosshair;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+}
+
+.auto-path-info {
+    padding: 10px 15px;
+    border-top: 1px solid #333;
+    background: #0d0d0d;
+    color: #888;
+    font-size: 12px;
+    text-align: center;
+}
+
+.auto-path-info .room-name {
+    color: #00ffff;
+}
+
+.auto-path-info .room-coords {
+    color: #ffff00;
+}
+
+.auto-path-summary {
+    padding: 15px;
+    border-top: 1px solid #333;
+    background: #0d0d0d;
+    max-height: 300px;
+    display: flex;
+    flex-direction: column;
+}
+
+.auto-path-summary-title {
+    color: #00ff00;
+    font-weight: bold;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.auto-path-steps {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+    color: #00ff00;
+    font-size: 12px;
+    font-family: 'Courier New', monospace;
+}
+
+.auto-path-steps .path-step {
+    padding: 4px 8px;
+    border-bottom: 1px solid #003300;
+}
+
+.auto-path-steps .path-step:last-child {
+    border-bottom: none;
+}
+
+.auto-path-steps .path-direction {
+    color: #ffff00;
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+.auto-path-steps .path-room {
+    color: #00ffff;
+}
+
+.auto-path-steps .path-map-transition {
+    color: #ff8800;
+    font-weight: bold;
+    font-style: italic;
+}
+
+.auto-path-go-btn {
+    width: 100%;
+    padding: 10px;
+    background: #003300;
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.auto-path-go-btn:hover {
+    background: #006600;
+}
+
+.auto-path-go-btn:disabled {
+    background: #111;
+    border-color: #333;
+    color: #666;
+    cursor: not-allowed;
+}
+
 /* Merchant List Styles */
 .merchant-list-section {
     margin: 10px 0;

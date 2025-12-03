@@ -275,6 +275,15 @@ function showPlayerForm(player) {
                         </div>
                     </div>
                     
+                    <!-- Auto-Path Settings Row -->
+                    <div class="player-section-label">Auto-Path Settings</div>
+                    <div class="player-row">
+                        <div class="player-field">
+                            <label>Nav Delay (ms)</label>
+                            <input type="number" id="auto_navigation_time_ms" value="${player.auto_navigation_time_ms || 1000}" min="100" max="10000" title="Delay between movements during auto-navigation (milliseconds)">
+                        </div>
+                    </div>
+                    
                     <!-- Flags Row -->
                     <div class="player-row player-flags-row">
                         <label class="player-checkbox">
@@ -332,16 +341,17 @@ function showPlayerForm(player) {
 function savePlayer(playerId) {
     const player = {
         id: playerId,
-        stat_ingenuity: parseInt(document.getElementById('stat_ingenuity').value) || 5,
-        stat_resonance: parseInt(document.getElementById('stat_resonance').value) || 5,
-        stat_fortitude: parseInt(document.getElementById('stat_fortitude').value) || 5,
-        stat_acumen: parseInt(document.getElementById('stat_acumen').value) || 5,
-        ability_crafting: parseInt(document.getElementById('ability_crafting').value) || 0,
-        ability_attunement: parseInt(document.getElementById('ability_attunement').value) || 0,
-        ability_endurance: parseInt(document.getElementById('ability_endurance').value) || 0,
-        ability_commerce: parseInt(document.getElementById('ability_commerce').value) || 0,
-        resource_max_encumbrance: parseInt(document.getElementById('resource_max_encumbrance').value) || 100,
-        flag_god_mode: document.getElementById('flag_god_mode').checked ? 1 : 0
+        stat_ingenuity: parseInt(document.getElementById('stat_ingenuity')?.value) || 5,
+        stat_resonance: parseInt(document.getElementById('stat_resonance')?.value) || 5,
+        stat_fortitude: parseInt(document.getElementById('stat_fortitude')?.value) || 5,
+        stat_acumen: parseInt(document.getElementById('stat_acumen')?.value) || 5,
+        ability_crafting: parseInt(document.getElementById('ability_crafting')?.value) || 0,
+        ability_attunement: parseInt(document.getElementById('ability_attunement')?.value) || 0,
+        ability_endurance: parseInt(document.getElementById('ability_endurance')?.value) || 0,
+        ability_commerce: parseInt(document.getElementById('ability_commerce')?.value) || 0,
+        resource_max_encumbrance: parseInt(document.getElementById('resource_max_encumbrance')?.value) || 100,
+        auto_navigation_time_ms: parseInt(document.getElementById('auto_navigation_time_ms')?.value) || 1000,
+        flag_god_mode: document.getElementById('flag_god_mode')?.checked ? 1 : 0
     };
     
     ws.send(JSON.stringify({ type: 'updatePlayer', player }));

@@ -1717,3 +1717,56 @@ A player can be in one of these states:
 - Combat system utilizing stats and abilities
 - Map zoom and pan controls
 - Room labels on map
+
+## Auto-Pathing Feature
+
+### Overview
+The Auto-Pathing feature allows players to select a destination room and automatically navigate there step-by-step. It is accessed through the Scripting widget and provides a visual map interface for selecting destinations.
+
+### Database Schema
+
+#### `players` Table Addition
+- `auto_navigation_time_ms` (INTEGER) - Delay between movements during auto-navigation in milliseconds (default: 1000)
+
+### Features
+
+1. **Map and Room Selection**
+   - Players can select a map from a dropdown
+   - A visual map canvas displays all rooms in the selected map
+   - Players click on a room to set it as the destination
+   - Current player location is highlighted in green
+   - Selected destination is highlighted in orange
+
+2. **Path Calculation**
+   - Uses Breadth-First Search (BFS) algorithm to find shortest path
+   - Works across multiple maps using connecting rooms
+   - Path includes map transitions when crossing between maps
+   - Returns ordered list of rooms, directions, and map information
+   - Path summary displays map transitions and is scrollable
+
+3. **Auto-Navigation**
+   - When "GO" button is pressed, auto-navigation begins
+   - Movement commands are blocked during auto-navigation
+   - Compass widget buttons are disabled during auto-navigation
+   - Numpad movement is blocked during auto-navigation
+   - Auto-navigation continues until destination is reached or an error occurs
+   - Each movement step waits for `auto_navigation_time_ms` milliseconds before proceeding
+
+4. **Player Configuration**
+   - `auto_navigation_time_ms` can be edited in the Player Editor
+   - Default value is 1000ms (1 second)
+   - Valid range: 100ms to 10000ms
+
+5. **Termination Rules**
+   - Auto-navigation ends when:
+     - Player reaches the destination
+     - A movement fails (wall hit, missing link, etc.)
+     - Player disconnects
+   - On termination, movement commands are unblocked
+
+### Technical Implementation
+
+- **Pathfinding**: `utils/pathfinding.js` - BFS algorithm for finding paths between rooms, supports cross-map navigation via connecting rooms
+- **Server Handlers**: `handlers/game.js` - Handles map/room requests, path calculation, and auto-navigation execution
+- **Client UI**: `public/client.js` - Manages auto-path panel, map rendering, and movement blocking
+- **Database**: Migration `034_add_auto_navigation_time.sql` adds the `auto_navigation_time_ms` column

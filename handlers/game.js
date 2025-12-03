@@ -478,6 +478,35 @@ async function move(ctx, data) {
     return;
   }
 
+  // Check if auto-navigation is active
+  const playerData = connectedPlayers.get(connectionId);
+  if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
+    // Check if this move is part of auto-navigation (matches current step)
+    const { path, currentStep } = playerData.autoNavigation;
+    if (currentStep < path.length) {
+      const expectedStep = path[currentStep];
+      const moveDirection = data.direction ? data.direction.toUpperCase() : null;
+      // If this move matches the expected step, allow it (it's from auto-navigation)
+      if (moveDirection === expectedStep.direction.toUpperCase()) {
+        // This is the auto-navigation move, allow it to proceed
+      } else {
+        // Manual move attempt during auto-navigation - block it
+        ws.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'Auto-navigation is active. Please wait for it to complete.' 
+        }));
+        return;
+      }
+    } else {
+      // Path complete but auto-navigation still active - block manual moves
+      ws.send(JSON.stringify({ 
+        type: 'error', 
+        message: 'Auto-navigation is active. Please wait for it to complete.' 
+      }));
+      return;
+    }
+  }
+
   const player = await db.getPlayerByName(playerName);
   if (!player) {
     ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
@@ -499,7 +528,7 @@ async function move(ctx, data) {
   }
   
   // Check if player has a movement cooldown in progress
-  const playerData = connectedPlayers.get(connectionId);
+  // playerData already declared above for auto-navigation check
   const now = Date.now();
   
   if (playerData && playerData.nextMoveTime && now < playerData.nextMoveTime) {
@@ -593,7 +622,17 @@ async function move(ctx, data) {
       'U': 'up', 'UP': 'up', 'D': 'down', 'DOWN': 'down'
     };
     const directionName = directionNames[direction] || direction.toLowerCase();
-    ws.send(JSON.stringify({ type: 'error', message: `Ouch! You walked into the wall to the ${directionName}.` }));
+    
+    // If auto-navigation is active, stop it
+    if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
+      clearAutoNavigation(connectedPlayers, connectionId);
+      ws.send(JSON.stringify({ 
+        type: 'autoNavigationFailed',
+        message: `Auto-navigation stopped: ${directionName} path blocked.` 
+      }));
+    } else {
+      ws.send(JSON.stringify({ type: 'error', message: `Ouch! You walked into the wall to the ${directionName}.` }));
+    }
     return;
   }
 
@@ -804,6 +843,16 @@ async function move(ctx, data) {
   await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, targetRoom.id);
 
   console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
+  
+  // Continue auto-navigation if active
+  if (playerData.autoNavigation && playerData.autoNavigation.isActive) {
+    // Increment step
+    playerData.autoNavigation.currentStep++;
+    playerData.autoNavigation.timeoutId = null;
+    
+    // Continue to next step
+    executeNextAutoNavigationStep(ctx, connectionId);
+  }
 }
 
 /**
@@ -3600,6 +3649,229 @@ async function assignAttributePoint(ctx, data) {
   }));
 }
 
+/**
+ * Get all maps for auto-path selection
+ */
+async function getAutoPathMaps(ctx, data) {
+  const { ws, db } = ctx;
+  
+  try {
+    const maps = await db.getAllMaps();
+    ws.send(JSON.stringify({ type: 'autoPathMaps', maps }));
+  } catch (err) {
+    console.error('Get auto-path maps error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get maps' }));
+  }
+}
+
+/**
+ * Get all rooms in a map for auto-path selection
+ */
+async function getAutoPathRooms(ctx, data) {
+  const { ws, db } = ctx;
+  const { mapId } = data;
+  
+  if (!mapId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Map ID required' }));
+    return;
+  }
+  
+  try {
+    const rooms = await db.getRoomsByMap(mapId);
+    ws.send(JSON.stringify({ type: 'autoPathRooms', rooms }));
+  } catch (err) {
+    console.error('Get auto-path rooms error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get rooms' }));
+  }
+}
+
+/**
+ * Calculate path from player's current room to target room
+ */
+async function calculateAutoPath(ctx, data) {
+  const { ws, db, playerName } = ctx;
+  const { targetRoomId } = data;
+  
+  if (!targetRoomId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Target room ID required' }));
+    return;
+  }
+  
+  if (!playerName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  try {
+    const player = await db.getPlayerByName(playerName);
+    if (!player) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+      return;
+    }
+    
+    const currentRoomId = player.current_room_id;
+    const { findPath } = require('../utils/pathfinding');
+    
+    const path = await findPath(currentRoomId, targetRoomId, db);
+    
+    if (path === null) {
+      ws.send(JSON.stringify({ 
+        type: 'error', 
+        message: 'No path found to destination.' 
+      }));
+      return;
+    }
+    
+    ws.send(JSON.stringify({ 
+      type: 'autoPathCalculated', 
+      path,
+      success: true 
+    }));
+  } catch (err) {
+    console.error('Calculate auto-path error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to calculate path' }));
+  }
+}
+
+/**
+ * Start auto-navigation along a calculated path
+ */
+async function startAutoNavigation(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId, playerName } = ctx;
+  const { path } = data;
+  
+  if (!path || !Array.isArray(path) || path.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid path' }));
+    return;
+  }
+  
+  if (!playerName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  try {
+    const playerData = connectedPlayers.get(connectionId);
+    if (!playerData) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Player not connected' }));
+      return;
+    }
+    
+    // Store auto-navigation state
+    playerData.autoNavigation = {
+      path,
+      currentStep: 0,
+      isActive: true,
+      timeoutId: null
+    };
+    
+    // Begin first movement step
+    executeNextAutoNavigationStep(ctx, connectionId);
+    
+    ws.send(JSON.stringify({ 
+      type: 'autoNavigationStarted',
+      message: 'Auto-navigation started. Movement commands are now blocked.'
+    }));
+  } catch (err) {
+    console.error('Start auto-navigation error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to start auto-navigation' }));
+  }
+}
+
+/**
+ * Execute the next step in auto-navigation
+ */
+async function executeNextAutoNavigationStep(ctx, connectionId) {
+  const { db, connectedPlayers, ws, factoryWidgetState, warehouseWidgetState, sessionId, playerName } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData || !playerData.autoNavigation || !playerData.autoNavigation.isActive) {
+    return; // Auto-navigation not active or cleared
+  }
+  
+  const { path, currentStep } = playerData.autoNavigation;
+  
+  // Check if we've completed the path
+  if (currentStep >= path.length) {
+    // Navigation complete
+    playerData.autoNavigation = null;
+    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      playerData.ws.send(JSON.stringify({ 
+        type: 'autoNavigationComplete',
+        message: 'Auto-navigation complete! You have reached your destination.'
+      }));
+    }
+    return;
+  }
+  
+  // Get the next step
+  const step = path[currentStep];
+  
+  // Get player to check auto_navigation_time_ms
+  const player = await db.getPlayerByName(playerData.playerName);
+  const delayMs = (player && player.auto_navigation_time_ms) ? player.auto_navigation_time_ms : 1000;
+  
+  // Wait for delay, then execute move
+  const timeoutId = setTimeout(async () => {
+    // Check if auto-navigation is still active
+    if (!playerData.autoNavigation || !playerData.autoNavigation.isActive) {
+      return;
+    }
+    
+    // Call move handler directly (not via WebSocket)
+    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      try {
+        // Ensure ctx has all required properties for move handler
+        const moveCtx = {
+          ws: playerData.ws,
+          db,
+          connectedPlayers,
+          factoryWidgetState,
+          warehouseWidgetState,
+          connectionId,
+          sessionId,
+          playerName: playerData.playerName
+        };
+        
+        // Call move handler directly - it will check auto-navigation state and allow the move
+        await move(moveCtx, { direction: step.direction });
+        
+        // Note: currentStep is incremented in the move handler after successful move
+        // The move handler calls executeNextAutoNavigationStep to continue
+      } catch (err) {
+        // Move failed - stop auto-navigation
+        console.error('Auto-navigation move error:', err);
+        clearAutoNavigation(connectedPlayers, connectionId);
+        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+          playerData.ws.send(JSON.stringify({ 
+            type: 'autoNavigationFailed',
+            message: 'Auto-navigation stopped due to an error: ' + (err.message || err.toString())
+          }));
+        }
+      }
+    } else {
+      // WebSocket closed - stop auto-navigation
+      clearAutoNavigation(connectedPlayers, connectionId);
+    }
+  }, delayMs);
+  
+  // Store timeout ID for cleanup
+  playerData.autoNavigation.timeoutId = timeoutId;
+}
+
+/**
+ * Clear auto-navigation state (called on failure or disconnect)
+ */
+function clearAutoNavigation(connectedPlayers, connectionId) {
+  const playerData = connectedPlayers.get(connectionId);
+  if (playerData && playerData.autoNavigation) {
+    if (playerData.autoNavigation.timeoutId) {
+      clearTimeout(playerData.autoNavigation.timeoutId);
+    }
+    playerData.autoNavigation = null;
+  }
+}
+
 module.exports = {
   authenticateSession,
   move,
@@ -3629,6 +3901,10 @@ module.exports = {
   wealth,
   who,
   saveTerminalMessage,
-  assignAttributePoint
+  assignAttributePoint,
+  getAutoPathMaps,
+  getAutoPathRooms,
+  calculateAutoPath,
+  startAutoNavigation
 };
 

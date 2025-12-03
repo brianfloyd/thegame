@@ -43,6 +43,10 @@ const handlerMap = {
   who: gameHandlers.who,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
   assignAttributePoint: gameHandlers.assignAttributePoint,
+  getAutoPathMaps: gameHandlers.getAutoPathMaps,
+  getAutoPathRooms: gameHandlers.getAutoPathRooms,
+  calculateAutoPath: gameHandlers.calculateAutoPath,
+  startAutoNavigation: gameHandlers.startAutoNavigation,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,
