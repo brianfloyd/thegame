@@ -101,55 +101,67 @@ async function sendPlayerStats(connectedPlayers, db, connectionId) {
  * Get available exits for a room
  * @param {object} db - Database module
  * @param {object} room - Room object with coordinates and map info
- * @returns {object} Object with direction keys and boolean values
+ * @returns {string[]} Array of available direction abbreviations (e.g., ["N", "S", "E", "W", "NE", "SW"])
  */
 async function getExits(db, room) {
-  const exits = {
-    north: false,
-    south: false,
-    east: false,
-    west: false,
-    northeast: false,
-    northwest: false,
-    southeast: false,
-    southwest: false,
-    up: false,
-    down: false
+  const exits = [];
+  const directionMap = {
+    north: 'N',
+    south: 'S',
+    east: 'E',
+    west: 'W',
+    northeast: 'NE',
+    northwest: 'NW',
+    southeast: 'SE',
+    southwest: 'SW',
+    up: 'U',
+    down: 'D'
   };
   
   // Check for map connections first
   if (room.connection_direction === 'N' && room.connected_map_id) {
-    exits.north = true;
+    exits.push('N');
   }
   if (room.connection_direction === 'S' && room.connected_map_id) {
-    exits.south = true;
+    exits.push('S');
   }
   if (room.connection_direction === 'E' && room.connected_map_id) {
-    exits.east = true;
+    exits.push('E');
   }
   if (room.connection_direction === 'W' && room.connected_map_id) {
-    exits.west = true;
+    exits.push('W');
   }
   
   // Check for adjacent rooms in same map (only if no map connection in that direction)
-  if (!exits.north) {
-    exits.north = (await db.getRoomByCoords(room.map_id, room.x, room.y + 1)) != null;
+  if (!exits.includes('N')) {
+    const northRoom = await db.getRoomByCoords(room.map_id, room.x, room.y + 1);
+    if (northRoom) exits.push('N');
   }
-  if (!exits.south) {
-    exits.south = (await db.getRoomByCoords(room.map_id, room.x, room.y - 1)) != null;
+  if (!exits.includes('S')) {
+    const southRoom = await db.getRoomByCoords(room.map_id, room.x, room.y - 1);
+    if (southRoom) exits.push('S');
   }
-  if (!exits.east) {
-    exits.east = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y)) != null;
+  if (!exits.includes('E')) {
+    const eastRoom = await db.getRoomByCoords(room.map_id, room.x + 1, room.y);
+    if (eastRoom) exits.push('E');
   }
-  if (!exits.west) {
-    exits.west = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y)) != null;
+  if (!exits.includes('W')) {
+    const westRoom = await db.getRoomByCoords(room.map_id, room.x - 1, room.y);
+    if (westRoom) exits.push('W');
   }
   
   // Diagonal directions (no map connections for these yet)
-  exits.northeast = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y + 1)) != null;
-  exits.northwest = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y + 1)) != null;
-  exits.southeast = (await db.getRoomByCoords(room.map_id, room.x + 1, room.y - 1)) != null;
-  exits.southwest = (await db.getRoomByCoords(room.map_id, room.x - 1, room.y - 1)) != null;
+  const neRoom = await db.getRoomByCoords(room.map_id, room.x + 1, room.y + 1);
+  if (neRoom) exits.push('NE');
+  
+  const nwRoom = await db.getRoomByCoords(room.map_id, room.x - 1, room.y + 1);
+  if (nwRoom) exits.push('NW');
+  
+  const seRoom = await db.getRoomByCoords(room.map_id, room.x + 1, room.y - 1);
+  if (seRoom) exits.push('SE');
+  
+  const swRoom = await db.getRoomByCoords(room.map_id, room.x - 1, room.y - 1);
+  if (swRoom) exits.push('SW');
   
   return exits;
 }
@@ -169,6 +181,9 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   if (!playerData || !playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
     return;
   }
+
+  // Import message cache
+  const messageCache = require('./messageCache');
 
   // Only get connected players in the room, excluding the current player
   const playersInRoom = getConnectedPlayersInRoom(connectedPlayers, room.id).filter(p => p !== playerData.playerName);
@@ -405,6 +420,62 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     warehouseWidgetState.delete(connectionId);
   }
 
+  // Combine players and NPCs into single list (players first, then NPCs)
+  // Format NPCs with state descriptions
+  const combinedEntities = [];
+  
+  // Add real players first
+  playersInRoom.forEach(playerName => {
+    combinedEntities.push(playerName);
+  });
+  
+  // Add NPCs second with state descriptions
+  npcsInRoom.forEach(npc => {
+    let npcDisplay = npc.name;
+    // Add state description if available (similar to client-side logic)
+    if (npc.state && typeof npc.state === 'object') {
+      const cycles = npc.state.cycles || 0;
+      if (cycles === 0) {
+        npcDisplay += ' (idle)';
+      } else if (npc.harvestStatus === 'active') {
+        npcDisplay += ' (harvesting)';
+      } else if (npc.harvestStatus === 'cooldown') {
+        npcDisplay += ' (cooldown)';
+      } else {
+        npcDisplay += ' (ready)';
+      }
+    }
+    combinedEntities.push(npcDisplay);
+  });
+  
+  // Format exits as comma-separated string
+  const exitsString = exits.length > 0 ? exits.join(', ') : '';
+  
+  // Format room items
+  const itemsString = roomItems.length > 0 
+    ? roomItems.map(item => item.name + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
+    : 'Nothing';
+  
+  // Get formatted messages from cache
+  let alsoHereMessage = '';
+  if (combinedEntities.length > 0) {
+    alsoHereMessage = messageCache.getFormattedMessage('room_also_here', {
+      '[char|NPC array]': combinedEntities
+    });
+  } else {
+    alsoHereMessage = messageCache.getFormattedMessage('room_no_one_here');
+  }
+  
+  // Always get the exits message, even if exits array is empty (so markup is preserved)
+  const exitsForMessage = exits.length > 0 ? exits : [];
+  const obviousExitsMessage = messageCache.getFormattedMessage('room_obvious_exits', {
+    '[directions array]': exitsForMessage
+  });
+  
+  const onGroundMessage = messageCache.getFormattedMessage('room_on_ground', {
+    '[items array]': itemsString
+  });
+
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
     room: {
@@ -423,7 +494,13 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     showFullInfo: showFullInfo,
     factoryWidgetState: factoryState,
     warehouseWidgetState: warehouseState,
-    hasWarehouseDeed: hasWarehouseDeed
+    hasWarehouseDeed: hasWarehouseDeed,
+    // Send formatted messages
+    messages: {
+      alsoHere: alsoHereMessage,
+      obviousExits: obviousExitsMessage,
+      onGround: onGroundMessage
+    }
   }));
 }
 

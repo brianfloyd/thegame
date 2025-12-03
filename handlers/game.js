@@ -823,6 +823,57 @@ async function move(ctx, data) {
     factoryWidgetState.delete(connectionId);
   }
 
+  // Get formatted messages for the new room
+  const messageCache = require('../utils/messageCache');
+  
+  // Combine players and NPCs (players first, then NPCs)
+  const combinedEntities = [];
+  playersInNewRoom.forEach(playerName => {
+    combinedEntities.push(playerName);
+  });
+  npcsInNewRoom.forEach(npc => {
+    let npcDisplay = npc.name;
+    if (npc.state && typeof npc.state === 'object') {
+      const cycles = npc.state.cycles || 0;
+      if (cycles === 0) {
+        npcDisplay += ' (idle)';
+      } else if (npc.state.harvest_active) {
+        npcDisplay += ' (harvesting)';
+      } else if (npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) {
+        npcDisplay += ' (cooldown)';
+      } else {
+        npcDisplay += ' (ready)';
+      }
+    }
+    combinedEntities.push(npcDisplay);
+  });
+  
+  // Format exits as comma-separated string
+  const exitsString = exits.length > 0 ? exits.join(', ') : 'None';
+  
+  // Format room items
+  const itemsString = roomItemsInNewRoom.length > 0 
+    ? roomItemsInNewRoom.map(item => item.name + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
+    : 'Nothing';
+  
+  // Get formatted messages
+  let alsoHereMessage = '';
+  if (combinedEntities.length > 0) {
+    alsoHereMessage = messageCache.getFormattedMessage('room_also_here', {
+      '[char|NPC array]': combinedEntities
+    });
+  } else {
+    alsoHereMessage = messageCache.getFormattedMessage('room_no_one_here');
+  }
+  
+  const obviousExitsMessage = messageCache.getFormattedMessage('room_obvious_exits', {
+    '[directions array]': exits.length > 0 ? exits : []
+  });
+  
+  const onGroundMessage = messageCache.getFormattedMessage('room_on_ground', {
+    '[items array]': itemsString
+  });
+
   if (playerData.ws.readyState === WebSocket.OPEN) {
     playerData.ws.send(JSON.stringify({
       type: 'moved',
@@ -840,7 +891,12 @@ async function move(ctx, data) {
       roomItems: roomItemsInNewRoom,
       exits: exits,
       showFullInfo: true,
-      factoryWidgetState: factoryState
+      factoryWidgetState: factoryState,
+      messages: {
+        alsoHere: alsoHereMessage,
+        obviousExits: obviousExitsMessage,
+        onGround: onGroundMessage
+      }
     }));
 
     // If this was a map transition, send new map data
@@ -4244,6 +4300,26 @@ async function getPathingRoom(ctx, data) {
 /**
  * Get all paths/loops for the current player across all maps
  */
+/**
+ * Get game messages from cache (for client preloading)
+ */
+async function getGameMessages(ctx, data) {
+  const { ws } = ctx;
+  const messageCache = require('../utils/messageCache');
+  const category = data.category || null;
+
+  try {
+    const messages = await ctx.db.getAllGameMessages(category);
+    ws.send(JSON.stringify({
+      type: 'gameMessages',
+      messages: messages
+    }));
+  } catch (error) {
+    console.error('Error getting game messages:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get messages: ' + error.message }));
+  }
+}
+
 async function getAllPlayerPaths(ctx, data) {
   const { ws, db, connectedPlayers } = ctx;
   const playerData = connectedPlayers.get(ctx.connectionId);
@@ -4659,6 +4735,7 @@ module.exports = {
   authenticateSession,
   getWidgetConfig,
   updateWidgetConfig,
+  getGameMessages,
   startPathingMode,
   addPathStep,
   savePath,

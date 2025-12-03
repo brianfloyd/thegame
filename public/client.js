@@ -376,7 +376,7 @@ function handleMessage(data) {
             // Pathing was cancelled
             break;
         case 'roomUpdate':
-            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Check if path is paused and player has moved to a different room
             if (isPathPaused && pausedPathRoomId && data.room) {
                 if (data.room.id !== pausedPathRoomId) {
@@ -464,7 +464,7 @@ function handleMessage(data) {
             });
             break;
         case 'moved':
-            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
+            updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Track if we're in a warehouse room
             isInWarehouseRoom = data.room.roomType === 'warehouse';
             // Handle factory widget state
@@ -1421,7 +1421,7 @@ function normalizeCommand(input) {
 
 // Update room view in terminal - called on room updates
 // Only shows full room info when entering a new room
-function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay = false) {
+function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay = false, messages = null) {
     const terminalContent = document.getElementById('terminalContent');
     const isNewRoom = room.id !== currentRoomId;
     
@@ -1461,58 +1461,100 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         terminalContent.appendChild(roomDescDiv);
         saveTerminalContentToHistory(room.description, 'info');
         
-        // Display players
-        const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
-        const playersDiv = document.createElement('div');
-        playersDiv.className = 'players-section';
-        const playersLine = document.createElement('span');
-        playersLine.className = 'players-line';
-        playersLine.innerHTML = `<span class="players-section-title">Also here:</span>`;
-        
-        let playersText = 'Also here: ';
-        if (otherPlayers.length > 0) {
-            otherPlayers.forEach((playerName, index) => {
-                const playerSpan = document.createElement('span');
-                playerSpan.className = 'player-item';
-                playerSpan.setAttribute('data-player', playerName);
-                playerSpan.textContent = (index === 0 ? ' ' : ', ') + playerName;
-                playersLine.appendChild(playerSpan);
-                playersText += (index === 0 ? '' : ', ') + playerName;
+        // Display players and NPCs combined (using formatted message from server)
+        if (messages && messages.alsoHere) {
+            const alsoHereDiv = document.createElement('div');
+            alsoHereDiv.className = 'players-section';
+            const alsoHereLine = document.createElement('span');
+            alsoHereLine.className = 'players-line';
+            
+            // Parse markup and set innerHTML
+            if (typeof parseMarkup !== 'undefined') {
+                alsoHereLine.innerHTML = parseMarkup(messages.alsoHere, '#00ffff');
+            } else {
+                alsoHereLine.textContent = messages.alsoHere;
+            }
+            
+            // Add click handlers for player names (if they exist in the message)
+            const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
+            otherPlayers.forEach(playerName => {
+                const playerSpans = alsoHereLine.querySelectorAll(`span:contains("${playerName}"), *:contains("${playerName}")`);
+                // If we can't find spans, try to find text nodes and wrap them
+                const walker = document.createTreeWalker(alsoHereLine, NodeFilter.SHOW_TEXT);
+                let node;
+                while (node = walker.nextNode()) {
+                    if (node.textContent.includes(playerName)) {
+                        const parent = node.parentNode;
+                        if (parent && !parent.classList.contains('player-item')) {
+                            const span = document.createElement('span');
+                            span.className = 'player-item';
+                            span.setAttribute('data-player', playerName);
+                            span.textContent = playerName;
+                            node.textContent = node.textContent.replace(playerName, '');
+                            parent.insertBefore(span, node);
+                        }
+                    }
+                }
             });
+            
+            alsoHereDiv.appendChild(alsoHereLine);
+            terminalContent.appendChild(alsoHereDiv);
+            saveTerminalContentToHistory(messages.alsoHere, 'info');
         } else {
-            const noPlayers = document.createElement('span');
-            noPlayers.className = 'player-item';
-            noPlayers.textContent = ' No one else is here.';
-            playersLine.appendChild(noPlayers);
-            playersText += 'No one else is here.';
+            // Fallback to old logic if messages not available
+            const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
+            const playersDiv = document.createElement('div');
+            playersDiv.className = 'players-section';
+            const playersLine = document.createElement('span');
+            playersLine.className = 'players-line';
+            
+            // Combine players and NPCs
+            const combinedEntities = [];
+            otherPlayers.forEach(p => combinedEntities.push(p));
+            if (npcs && npcs.length > 0) {
+                npcs.forEach(npc => {
+                    const stateDesc = getNPCStateDescription(npc);
+                    combinedEntities.push(npc.name + (stateDesc ? ` (${stateDesc})` : ''));
+                });
+            }
+            
+            if (combinedEntities.length > 0) {
+                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${combinedEntities.join(', ')}`;
+                saveTerminalContentToHistory('Also here: ' + combinedEntities.join(', '), 'info');
+            } else {
+                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> <span class="player-item">No one else is here.</span>`;
+                saveTerminalContentToHistory('Also here: No one else is here.', 'info');
+            }
+            
+            playersDiv.appendChild(playersLine);
+            terminalContent.appendChild(playersDiv);
         }
         
-        playersDiv.appendChild(playersLine);
-        terminalContent.appendChild(playersDiv);
-        saveTerminalContentToHistory(playersText, 'info');
-        
-        // Display NPCs
-        if (npcs && npcs.length > 0) {
-            const npcsDiv = document.createElement('div');
-            npcsDiv.className = 'npcs-section';
-            const npcNames = npcs.map(npc => {
-                const stateDesc = getNPCStateDescription(npc);
-                return npc.name + (stateDesc ? ` (${stateDesc})` : '');
-            });
-            const npcsText = `You see here: ${npcNames.join(', ')}`;
-            npcsDiv.innerHTML = `<span class="npcs-section-title">You see here:</span> ${npcNames.join(', ')}`;
-            terminalContent.appendChild(npcsDiv);
-            saveTerminalContentToHistory(npcsText, 'info');
-        }
-        
-        // Display exits (room items are shown in the dynamic status bar)
-        if (exits && exits.length > 0) {
+        // Display exits (using formatted message from server)
+        // Always display if message is provided, even if exits array is empty (to preserve markup)
+        if (messages && messages.obviousExits && messages.obviousExits.trim() !== '') {
             const exitsDiv = document.createElement('div');
             exitsDiv.className = 'exits-section';
-            const exitsText = `Exits: ${exits.join(', ')}`;
-            exitsDiv.innerHTML = `<span class="exits-section-title">Exits:</span> ${exits.join(', ')}`;
+            
+            // Parse markup and set innerHTML
+            if (typeof parseMarkup !== 'undefined') {
+                exitsDiv.innerHTML = parseMarkup(messages.obviousExits, '#00ffff');
+            } else {
+                exitsDiv.textContent = messages.obviousExits;
+            }
+            
             terminalContent.appendChild(exitsDiv);
-            saveTerminalContentToHistory(exitsText, 'info');
+            saveTerminalContentToHistory(messages.obviousExits, 'info');
+        } else {
+            if (exits && exits.length > 0) {
+                // Fallback to old logic if message not available
+                const exitsDiv = document.createElement('div');
+                exitsDiv.className = 'exits-section';
+                const exitsText = `Obvious exits: ${exits.join(', ')}`;
+                exitsDiv.innerHTML = `<span class="exits-section-title">Obvious exits:</span> ${exits.join(', ')}`;
+                terminalContent.appendChild(exitsDiv);
+                saveTerminalContentToHistory(exitsText, 'info');
+            }
         }
         
         // Scroll to bottom
@@ -1544,7 +1586,7 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
     }
     
     // Always update room items display (dynamic, doesn't scroll)
-    updateRoomItemsDisplay(roomItems);
+    updateRoomItemsDisplay(roomItems, messages);
     
     // Update compass buttons
     updateCompassButtons(exits);
@@ -2254,10 +2296,37 @@ if (document.readyState === 'loading') {
 }
 
 // Update the room items display bar (dynamic, updates in place)
-function updateRoomItemsDisplay(roomItems) {
+function updateRoomItemsDisplay(roomItems, messages) {
     const display = document.getElementById('roomItemsDisplay');
+    const label = document.querySelector('.room-status-label');
     if (!display) return;
     
+    // Use formatted message from server if available
+    if (messages && messages.onGround) {
+        // Extract just the items part (after "On the ground: ")
+        const itemsPart = messages.onGround.replace(/^On the ground:\s*/i, '');
+        
+        // Update label if it exists
+        if (label) {
+            if (typeof parseMarkup !== 'undefined') {
+                label.innerHTML = parseMarkup('On the ground:', '#00ffff');
+            } else {
+                label.textContent = 'On the ground:';
+            }
+        }
+        
+        // Parse markup for items part
+        if (typeof parseMarkup !== 'undefined') {
+            display.innerHTML = parseMarkup(itemsPart, '#00ffff');
+        } else {
+            display.textContent = itemsPart;
+        }
+        
+        display.className = itemsPart === 'Nothing' ? 'room-items-display empty' : 'room-items-display';
+        return;
+    }
+    
+    // Fallback to old logic
     if (!roomItems || roomItems.length === 0) {
         display.textContent = 'Nothing';
         display.className = 'room-items-display empty';

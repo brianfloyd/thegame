@@ -252,12 +252,6 @@ async function getPathSteps(loopId) {
   );
 }
 
-async function deletePath(loopId) {
-  // Cascade delete will handle loop_steps
-  await query('DELETE FROM loops WHERE id = $1', [loopId]);
-  return true;
-}
-
 // ============================================================
 // Paths and Loops Functions
 // ============================================================
@@ -318,6 +312,33 @@ async function deletePath(loopId) {
   await query('DELETE FROM loops WHERE id = $1', [loopId]);
   return true;
 }
+
+// ============================================================
+// Game Messages Functions
+// ============================================================
+
+async function getGameMessage(messageKey) {
+  return getOne('SELECT * FROM game_messages WHERE message_key = $1', [messageKey]);
+}
+
+async function getAllGameMessages(category = null) {
+  if (category) {
+    return getAll('SELECT * FROM game_messages WHERE category = $1 ORDER BY message_key', [category]);
+  }
+  return getAll('SELECT * FROM game_messages ORDER BY message_key');
+}
+
+async function updateGameMessage(messageKey, messageTemplate, description) {
+  const updatedAt = Date.now();
+  await query(
+    'UPDATE game_messages SET message_template = $1, description = $2, updated_at = $3 WHERE message_key = $4',
+    [messageTemplate, description, updatedAt, messageKey]
+  );
+}
+
+// ============================================================
+// Player Functions
+// ============================================================
 
 async function getAllPlayers() {
   return getAll('SELECT * FROM players');
@@ -2501,5 +2522,10 @@ module.exports = {
   getAllPathsByPlayer,
   getPathById,
   getPathSteps,
-  deletePath
+  deletePath,
+  
+  // Game Messages
+  getGameMessage,
+  getAllGameMessages,
+  updateGameMessage
 };

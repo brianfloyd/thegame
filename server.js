@@ -52,6 +52,9 @@ const {
 // Broadcast utilities
 const { sendRoomUpdate, isRoomEmpty, broadcastToAll } = require('./utils/broadcast');
 
+// Message cache
+const messageCache = require('./utils/messageCache');
+
 // Create Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
@@ -357,6 +360,9 @@ async function startServer() {
     const sendRoomUpdateWrapper = async (connId, room) => {
       await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connId, room);
     };
+    
+    // Load message cache at startup
+    await messageCache.loadMessageCache();
     
     // Start HTTP server
     server.listen(PORT, HOST, () => {
