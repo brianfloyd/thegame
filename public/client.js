@@ -11,11 +11,9 @@ let heartbeatInterval = null;
 
 // Widget system state
 const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting'];
-// Default widgets for normal players: stats, compass, map, comms
-// For god mode players: stats, compass, map, godmode (replaces comms)
-let activeWidgets = ['stats', 'compass', 'map', 'comms'];
+// All widgets start off by default - empty widget panel
+let activeWidgets = [];
 let scriptingWidgetPosition = 'top'; // 'top' or 'bottom' - which row the scripting widget occupies
-let widgetsInitialized = false; // Track if we've set up widgets based on player type
 let restartRequested = false; // Track if server restart was requested
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
@@ -234,6 +232,22 @@ function connectWebSocket() {
 // Handle messages from server
 function handleMessage(data) {
     switch (data.type) {
+        case 'widgetConfig':
+            // Load saved widget configuration
+            if (data.config) {
+                console.log('Loading widget config:', data.config);
+                if (data.config.activeWidgets && Array.isArray(data.config.activeWidgets)) {
+                    activeWidgets = data.config.activeWidgets;
+                }
+                if (data.config.scriptingWidgetPosition) {
+                    scriptingWidgetPosition = data.config.scriptingWidgetPosition;
+                }
+                updateWidgetDisplay();
+            }
+            break;
+        case 'widgetConfigUpdated':
+            // Config was saved successfully
+            break;
         case 'roomUpdate':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
             // Track if we're in a warehouse room
@@ -362,6 +376,23 @@ function handleMessage(data) {
             break;
         case 'mapData':
             initializeMap(data.rooms, data.currentRoom, data.mapId, data.roomTypeColors);
+            // If map widget is visible, ensure it renders
+            if (activeWidgets.includes('map') && mapCanvas && mainMapRenderer) {
+                requestAnimationFrame(() => {
+                    const viewport = document.querySelector('.map-viewport');
+                    if (viewport && mapCanvas) {
+                        const newWidth = viewport.clientWidth;
+                        const newHeight = viewport.clientHeight;
+                        if (newWidth > 0 && newHeight > 0) {
+                            mapCanvas.width = newWidth;
+                            mapCanvas.height = newHeight;
+                            mainMapRenderer.canvas = mapCanvas;
+                            mainMapRenderer.ctx = mapCtx;
+                            renderMap();
+                        }
+                    }
+                });
+            }
             break;
         case 'mapUpdate':
             updateMapPosition(data.currentRoom, data.mapId);
@@ -4104,13 +4135,6 @@ function updateGodModeUI(hasGodMode) {
     if (godmodeIcon) {
         if (hasGodMode) {
             godmodeIcon.classList.remove('hidden');
-            
-            // First time setup for god mode player: replace comms with godmode
-            if (!widgetsInitialized) {
-                // Set default widgets for god mode: stats, compass, map, godmode
-                activeWidgets = ['stats', 'compass', 'map', 'godmode'];
-                widgetsInitialized = true;
-            }
         } else {
             godmodeIcon.classList.add('hidden');
             // Also hide the widget if it's visible
@@ -4120,17 +4144,11 @@ function updateGodModeUI(hasGodMode) {
             }
             // Remove godmode from active widgets
             activeWidgets = activeWidgets.filter(w => w !== 'godmode');
-            
-            // First time setup for non-god mode player: ensure comms is in 4th slot
-            if (!widgetsInitialized) {
-                // Set default widgets for normal player: stats, compass, map, comms
-                activeWidgets = ['stats', 'compass', 'map', 'comms'];
-                widgetsInitialized = true;
-            }
         }
     }
     
     updateWidgetDisplay();
+    saveWidgetConfig();
 }
 
 // ============================================================
@@ -4150,20 +4168,18 @@ function toggleWidget(widgetName) {
             activeWidgets = activeWidgets.filter(w => w !== 'scripting');
         } else {
             // Show scripting widget - it takes 2 slots
-            // Force map and comms to be open
-            if (!activeWidgets.includes('map')) {
-                activeWidgets.push('map');
+            // Scripting takes 2 slots, so we need to clear space if needed
+            // Only keep widgets that fit (scripting + up to 2 other widgets)
+            if (activeWidgets.length >= 2) {
+                // Remove widgets to make room, but keep scripting
+                activeWidgets = activeWidgets.filter(w => w !== 'scripting');
+                // Keep only the first 2 widgets (or none if we want empty slots)
+                activeWidgets = activeWidgets.slice(0, 2);
             }
-            if (!activeWidgets.includes('comms')) {
-                activeWidgets.push('comms');
-            }
-            
-            // Remove other widgets to make room (keep map and comms)
-            // Scripting takes 2 slots, so we need to clear space
-            activeWidgets = activeWidgets.filter(w => w === 'map' || w === 'comms' || w === 'scripting');
             activeWidgets.push('scripting');
         }
         updateWidgetDisplay();
+        saveWidgetConfig();
         return;
     }
     
@@ -4239,6 +4255,22 @@ function toggleWidget(widgetName) {
     }
     
     updateWidgetDisplay();
+}
+
+// Save widget configuration to database
+function saveWidgetConfig() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentPlayerName) return;
+    
+    const config = {
+        activeWidgets: activeWidgets,
+        scriptingWidgetPosition: scriptingWidgetPosition
+    };
+    
+    console.log('Saving widget config:', config);
+    ws.send(JSON.stringify({
+        type: 'updateWidgetConfig',
+        config: config
+    }));
 }
 
 // Update the widget display based on activeWidgets state
@@ -4325,21 +4357,42 @@ function updateWidgetDisplay() {
                 scriptingWidget.classList.remove('hidden');
             }
             
-            // Show map and comms in bottom row (slots 2 and 3)
-            if (mapWidget && regularSlots[2]) {
+            // Show map and comms in bottom row (slots 2 and 3) only if they're in activeWidgets
+            if (activeWidgets.includes('map') && mapWidget && regularSlots[2]) {
                 regularSlots[2].style.display = 'block';
                 if (mapWidget.parentElement !== regularSlots[2]) {
                     regularSlots[2].appendChild(mapWidget);
                 }
                 mapWidget.classList.remove('hidden');
+                // Ensure map renders when shown
+                if (mapCanvas && mainMapRenderer) {
+                    requestAnimationFrame(() => {
+                        const viewport = document.querySelector('.map-viewport');
+                        if (viewport && mapCanvas) {
+                            const newWidth = viewport.clientWidth;
+                            const newHeight = viewport.clientHeight;
+                            if (newWidth > 0 && newHeight > 0) {
+                                mapCanvas.width = newWidth;
+                                mapCanvas.height = newHeight;
+                                mainMapRenderer.canvas = mapCanvas;
+                                mainMapRenderer.ctx = mapCtx;
+                                renderMap();
+                            }
+                        }
+                    });
+                }
+            } else if (mapWidget) {
+                mapWidget.classList.add('hidden');
             }
             
-            if (commsWidget && regularSlots[3]) {
+            if (activeWidgets.includes('comms') && commsWidget && regularSlots[3]) {
                 regularSlots[3].style.display = 'block';
                 if (commsWidget.parentElement !== regularSlots[3]) {
                     regularSlots[3].appendChild(commsWidget);
                 }
                 commsWidget.classList.remove('hidden');
+            } else if (commsWidget) {
+                commsWidget.classList.add('hidden');
             }
             
             // Hide top row regular slots (0 and 1) since scripting spans them
@@ -4355,21 +4408,42 @@ function updateWidgetDisplay() {
                 scriptingWidget.classList.remove('hidden');
             }
             
-            // Show map and comms in top row (slots 0 and 1)
-            if (mapWidget && regularSlots[0]) {
+            // Show map and comms in top row (slots 0 and 1) only if they're in activeWidgets
+            if (activeWidgets.includes('map') && mapWidget && regularSlots[0]) {
                 regularSlots[0].style.display = 'block';
                 if (mapWidget.parentElement !== regularSlots[0]) {
                     regularSlots[0].appendChild(mapWidget);
                 }
                 mapWidget.classList.remove('hidden');
+                // Ensure map renders when shown
+                if (mapCanvas && mainMapRenderer) {
+                    requestAnimationFrame(() => {
+                        const viewport = document.querySelector('.map-viewport');
+                        if (viewport && mapCanvas) {
+                            const newWidth = viewport.clientWidth;
+                            const newHeight = viewport.clientHeight;
+                            if (newWidth > 0 && newHeight > 0) {
+                                mapCanvas.width = newWidth;
+                                mapCanvas.height = newHeight;
+                                mainMapRenderer.canvas = mapCanvas;
+                                mainMapRenderer.ctx = mapCtx;
+                                renderMap();
+                            }
+                        }
+                    });
+                }
+            } else if (mapWidget) {
+                mapWidget.classList.add('hidden');
             }
             
-            if (commsWidget && regularSlots[1]) {
+            if (activeWidgets.includes('comms') && commsWidget && regularSlots[1]) {
                 regularSlots[1].style.display = 'block';
                 if (commsWidget.parentElement !== regularSlots[1]) {
                     regularSlots[1].appendChild(commsWidget);
                 }
                 commsWidget.classList.remove('hidden');
+            } else if (commsWidget) {
+                commsWidget.classList.add('hidden');
             }
             
             // Hide bottom row regular slots (2 and 3) since scripting spans them
@@ -4394,7 +4468,7 @@ function updateWidgetDisplay() {
         slot.style.display = 'none';
     });
     
-    // Show regular slots (0, 1, 2, 3)
+    // Show regular slots (0, 1, 2, 3) - will be hidden individually if empty
     document.querySelectorAll('.widget-slot[data-slot="0"], .widget-slot[data-slot="1"], .widget-slot[data-slot="2"], .widget-slot[data-slot="3"]').forEach(slot => {
         slot.style.display = 'block';
     });
@@ -4451,24 +4525,47 @@ function updateWidgetDisplay() {
             const widget = document.getElementById(widgetId);
             
             if (widget) {
+                // Show the slot since it has a widget
+                slot.style.display = 'block';
+                
                 // Move widget to this slot if needed
                 if (widget.parentElement !== slot) {
                     slot.appendChild(widget);
                 }
                 widget.classList.remove('hidden');
                 
+                // Special handling for map widget - ensure it renders when shown
+                if (widgetName === 'map' && mapCanvas && mainMapRenderer) {
+                    // Use requestAnimationFrame to ensure viewport has dimensions
+                    requestAnimationFrame(() => {
+                        const viewport = document.querySelector('.map-viewport');
+                        if (viewport && mapCanvas) {
+                            const newWidth = viewport.clientWidth;
+                            const newHeight = viewport.clientHeight;
+                            if (newWidth > 0 && newHeight > 0) {
+                                mapCanvas.width = newWidth;
+                                mapCanvas.height = newHeight;
+                                // Update renderer canvas reference
+                                mainMapRenderer.canvas = mapCanvas;
+                                mainMapRenderer.ctx = mapCtx;
+                                renderMap();
+                            }
+                        }
+                    });
+                }
+                
                 // Make toggleable widgets draggable
                 if (TOGGLEABLE_WIDGETS.includes(widgetName)) {
                     widget.draggable = true;
                     widget.dataset.widgetName = widgetName;
                 }
+            } else {
+                // Widget not found - hide the slot
+                slot.style.display = 'none';
             }
         } else {
-            // Show empty placeholder for unused slots
-            const emptyWidget = slot.querySelector('.widget-empty');
-            if (emptyWidget) {
-                emptyWidget.classList.remove('hidden');
-            }
+            // Hide empty slots - don't show placeholder
+            slot.style.display = 'none';
         }
     });
     
@@ -4554,6 +4651,7 @@ function initWidgetDragDrop() {
                 // Toggle scripting widget position
                 scriptingWidgetPosition = slotData === 'scripting-top' ? 'top' : 'bottom';
                 updateWidgetDisplay();
+                saveWidgetConfig();
                 return;
             }
             // If dropped on a regular slot, determine which row
@@ -4561,10 +4659,12 @@ function initWidgetDragDrop() {
             if (slotIndex < 2 && scriptingWidgetPosition !== 'top') {
                 scriptingWidgetPosition = 'top';
                 updateWidgetDisplay();
+                saveWidgetConfig();
                 return;
             } else if (slotIndex >= 2 && scriptingWidgetPosition !== 'bottom') {
                 scriptingWidgetPosition = 'bottom';
                 updateWidgetDisplay();
+                saveWidgetConfig();
                 return;
             }
         }
@@ -4642,6 +4742,7 @@ function reorderWidget(widgetName, targetSlotIndex) {
     
     // Update display
     updateWidgetDisplay();
+    saveWidgetConfig();
 }
 
 // Show the NPC widget (auto-triggered during harvest/cooldown)

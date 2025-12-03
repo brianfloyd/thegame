@@ -701,6 +701,10 @@ body {
     height: 100%;
 }
 
+#widget-comms.hidden {
+    display: none !important;
+}
+
 #widget-comms .widget-content {
     display: flex;
     flex-direction: column;

@@ -426,6 +426,13 @@ async function authenticateSession(ctx, data) {
   // Trigger Lore Keeper engagement for entering this room
   await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, room.id);
 
+  // Load and send widget config
+  const widgetConfig = await db.getPlayerWidgetConfig(player.id);
+  ws.send(JSON.stringify({
+    type: 'widgetConfig',
+    config: widgetConfig
+  }));
+
   // Load and send terminal history (excludes noob character automatically)
   const terminalHistory = await db.getTerminalHistory(player.id);
   if (terminalHistory.length > 0) {
@@ -3872,8 +3879,40 @@ function clearAutoNavigation(connectedPlayers, connectionId) {
   }
 }
 
+async function getWidgetConfig(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const config = await db.getPlayerWidgetConfig(playerData.playerId);
+  ws.send(JSON.stringify({ type: 'widgetConfig', config }));
+}
+
+async function updateWidgetConfig(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { config } = data;
+  if (!config || typeof config !== 'object') {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid config' }));
+    return;
+  }
+  
+  await db.updatePlayerWidgetConfig(playerData.playerId, config);
+  ws.send(JSON.stringify({ type: 'widgetConfigUpdated', config }));
+}
+
 module.exports = {
   authenticateSession,
+  getWidgetConfig,
+  updateWidgetConfig,
   move,
   look,
   inventory,

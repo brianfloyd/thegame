@@ -47,6 +47,8 @@ const handlerMap = {
   getAutoPathRooms: gameHandlers.getAutoPathRooms,
   calculateAutoPath: gameHandlers.calculateAutoPath,
   startAutoNavigation: gameHandlers.startAutoNavigation,
+  getWidgetConfig: gameHandlers.getWidgetConfig,
+  updateWidgetConfig: gameHandlers.updateWidgetConfig,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

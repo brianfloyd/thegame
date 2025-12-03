@@ -160,6 +160,26 @@ async function getPlayerById(id) {
   return getOne('SELECT * FROM players WHERE id = $1', [id]);
 }
 
+async function getPlayerWidgetConfig(playerId) {
+  const player = await getPlayerById(playerId);
+  if (!player || !player.widget_config) {
+    return { activeWidgets: [], scriptingWidgetPosition: 'top' };
+  }
+  try {
+    return JSON.parse(player.widget_config);
+  } catch (e) {
+    console.error('Error parsing widget_config for player', playerId, e);
+    return { activeWidgets: [], scriptingWidgetPosition: 'top' };
+  }
+}
+
+async function updatePlayerWidgetConfig(playerId, config) {
+  await query(
+    'UPDATE players SET widget_config = $1 WHERE id = $2',
+    [JSON.stringify(config), playerId]
+  );
+}
+
 async function getAllPlayers() {
   return getAll('SELECT * FROM players');
 }
@@ -2330,5 +2350,9 @@ module.exports = {
   // Harvest Formula Config
   getHarvestFormulaConfig,
   getAllHarvestFormulaConfigs,
-  updateHarvestFormulaConfig
+  updateHarvestFormulaConfig,
+  
+  // Widget Config
+  getPlayerWidgetConfig,
+  updatePlayerWidgetConfig
 };
