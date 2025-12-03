@@ -49,6 +49,12 @@ const handlerMap = {
   startAutoNavigation: gameHandlers.startAutoNavigation,
   getWidgetConfig: gameHandlers.getWidgetConfig,
   updateWidgetConfig: gameHandlers.updateWidgetConfig,
+  startPathingMode: gameHandlers.startPathingMode,
+  addPathStep: gameHandlers.addPathStep,
+  savePath: gameHandlers.savePath,
+  cancelPathing: gameHandlers.cancelPathing,
+  getPathingRoom: gameHandlers.getPathingRoom,
+  getMapData: gameHandlers.getMapData,
   
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,

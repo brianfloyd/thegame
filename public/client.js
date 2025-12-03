@@ -23,6 +23,12 @@ let warehouseWidgetState = null; // Warehouse widget state
 let hasWarehouseDeed = false; // Track if player has any warehouse deeds
 let isInWarehouseRoom = false; // Track if player is currently in a warehouse room
 
+// Pathing mode state
+let pathingModeActive = false;
+let currentPath = []; // Array of path steps: [{roomId, roomName, x, y, direction}, ...]
+let pathStartRoom = null;
+let pathingCursorRoom = null;
+
 // Communication widget state
 let commMode = 'talk'; // 'talk', 'resonate', 'telepath'
 let commHistory = {
@@ -255,6 +261,58 @@ function handleMessage(data) {
         case 'widgetConfigUpdated':
             // Config was saved successfully
             break;
+        case 'pathingModeStarted':
+            // Pathing mode started, room data received
+            break;
+        case 'pathStepAdded':
+            // Server confirmed path step addition (not used in simplified version, but keep for compatibility)
+            // Path steps are now added directly client-side using existing rooms
+            break;
+        case 'pathingRoom':
+            // Server returned a room from a different map for pathing
+            if (data.room && pathingModeActive) {
+                console.log(`Pathing: Received pathingRoom response - room ${data.room.id} (${data.room.x}, ${data.room.y}) on map ${data.room.mapId}`);
+                
+                // Add the room to mapRooms if it's not already there
+                const roomExists = mapRooms.some(r => r.id === data.room.id);
+                if (!roomExists) {
+                    mapRooms.push(data.room);
+                    console.log(`Pathing: Added room ${data.room.id} to mapRooms`);
+                }
+                
+                // Update current map if we've moved to a different map
+                // Request full map data for the new map to load all rooms
+                const currentPathingMapId = pathingCursorRoom && pathingCursorRoom.mapId ? pathingCursorRoom.mapId : currentMapId;
+                if (data.room.mapId !== currentPathingMapId) {
+                    console.log(`Pathing: Switching maps from ${currentPathingMapId} to ${data.room.mapId}`);
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'getMapData', mapId: data.room.mapId }));
+                        // Note: mapData handler will update currentMapId and re-render
+                        // We'll add the step after the map loads
+                        // Store pending step for when map loads
+                        window.pendingPathingStep = {
+                            room: data.room,
+                            direction: data.direction || 'CONNECTION'
+                        };
+                        return;
+                    }
+                }
+                
+                // Add the room to the path (same map, or map data already loaded)
+                const direction = data.direction || 'CONNECTION';
+                console.log(`Pathing: Adding room ${data.room.id} to path with direction ${direction}`);
+                addPathStep(data.room, direction);
+            }
+            break;
+        case 'pathSaved':
+            // Path was saved successfully
+            const pathTypeLabel = data.pathType === 'loop' ? 'Loop' : 'Path';
+            addToTerminal(`${pathTypeLabel} "${data.name}" saved successfully!`, 'success');
+            exitPathingMode();
+            break;
+        case 'pathingCancelled':
+            // Pathing was cancelled
+            break;
         case 'roomUpdate':
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo);
             // Track if we're in a warehouse room
@@ -382,7 +440,46 @@ function handleMessage(data) {
             }
             break;
         case 'mapData':
-            initializeMap(data.rooms, data.currentRoom, data.mapId, data.roomTypeColors);
+            // In pathing mode, merge rooms instead of replacing (for cross-map pathing)
+            if (pathingModeActive) {
+                // Merge new rooms into mapRooms instead of replacing
+                // Also update existing rooms with connection fields if they're missing
+                data.rooms.forEach(newRoom => {
+                    const existingRoomIndex = mapRooms.findIndex(r => r.id === newRoom.id);
+                    if (existingRoomIndex >= 0) {
+                        // Update existing room with connection fields if they're missing or if new data has them
+                        const existingRoom = mapRooms[existingRoomIndex];
+                        if (!existingRoom.connection_direction && newRoom.connection_direction) {
+                            existingRoom.connection_direction = newRoom.connection_direction;
+                        }
+                        if (!existingRoom.connected_room_x && newRoom.connected_room_x !== null && newRoom.connected_room_x !== undefined) {
+                            existingRoom.connected_room_x = newRoom.connected_room_x;
+                        }
+                        if (!existingRoom.connected_room_y && newRoom.connected_room_y !== null && newRoom.connected_room_y !== undefined) {
+                            existingRoom.connected_room_y = newRoom.connected_room_y;
+                        }
+                        if (!existingRoom.connected_map_id && newRoom.connected_map_id !== null && newRoom.connected_map_id !== undefined) {
+                            existingRoom.connected_map_id = newRoom.connected_map_id;
+                        }
+                    } else {
+                        // New room, add it
+                        mapRooms.push(newRoom);
+                    }
+                });
+                // Update current map ID
+                currentMapId = data.mapId;
+                // If there's a pending pathing step, add it now
+                if (window.pendingPathingStep) {
+                    const step = window.pendingPathingStep;
+                    window.pendingPathingStep = null;
+                    addPathStep(step.room, step.direction);
+                }
+                // Re-render map
+                renderMap();
+            } else {
+                // Normal mode - replace rooms
+                initializeMap(data.rooms, data.currentRoom, data.mapId, data.roomTypeColors);
+            }
             // If map widget is visible, ensure it renders
             if (activeWidgets.includes('map') && mapCanvas && mainMapRenderer) {
                 requestAnimationFrame(() => {
@@ -1764,6 +1861,69 @@ function escapeHtml(text) {
 }
 
 // Communication Widget Functions
+// Initialize pathing mode handlers
+function initPathingModeHandlers() {
+    const createPathBtn = document.getElementById('createPathBtn');
+    const exitPathingBtn = document.getElementById('exitPathingBtn');
+    const endPathBtn = document.getElementById('endPathBtn');
+    const savePathBtn = document.getElementById('savePathBtn');
+    const cancelPathNameBtn = document.getElementById('cancelPathNameBtn');
+    const closePathNameModal = document.getElementById('closePathNameModal');
+    const pathNameModal = document.getElementById('pathNameModal');
+    
+    if (createPathBtn) {
+        createPathBtn.addEventListener('click', enterPathingMode);
+    }
+    if (exitPathingBtn) {
+        exitPathingBtn.addEventListener('click', exitPathingMode);
+    }
+    if (endPathBtn) {
+        endPathBtn.addEventListener('click', endPath);
+    }
+    if (savePathBtn) {
+        savePathBtn.addEventListener('click', () => {
+            const input = document.getElementById('pathNameInput');
+            const errorDiv = document.getElementById('pathNameError');
+            if (!input || !input.value.trim()) {
+                if (errorDiv) {
+                    errorDiv.textContent = 'Please enter a path name';
+                    errorDiv.style.display = 'block';
+                }
+                return;
+            }
+            
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+            }
+            
+            const pathData = window.pendingPathData;
+            if (pathData) {
+                savePath(input.value.trim(), pathData.pathType);
+                if (pathNameModal) {
+                    pathNameModal.style.display = 'none';
+                }
+                window.pendingPathData = null;
+            }
+        });
+    }
+    if (cancelPathNameBtn) {
+        cancelPathNameBtn.addEventListener('click', () => {
+            if (pathNameModal) {
+                pathNameModal.style.display = 'none';
+            }
+            window.pendingPathData = null;
+        });
+    }
+    if (closePathNameModal) {
+        closePathNameModal.addEventListener('click', () => {
+            if (pathNameModal) {
+                pathNameModal.style.display = 'none';
+            }
+            window.pendingPathData = null;
+        });
+    }
+}
+
 function initCommunicationWidget() {
     const commWidget = document.getElementById('widget-comms');
     if (!commWidget) return;
@@ -1989,8 +2149,10 @@ function displayTelepathMessage(playerName, message, isReceived) {
 // Initialize communication widget when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initCommunicationWidget);
+    document.addEventListener('DOMContentLoaded', initPathingModeHandlers);
 } else {
     initCommunicationWidget();
+    initPathingModeHandlers();
 }
 
 // Update the room items display bar (dynamic, updates in place)
@@ -2638,6 +2800,12 @@ document.querySelectorAll('.compass-btn').forEach(btn => {
 
 // Handle keypad movement in main game
 function handleKeypadMovement(key) {
+    // If in pathing mode, handle pathing navigation instead
+    if (pathingModeActive) {
+        handlePathingModeKeypad(key);
+        return;
+    }
+    
     // Block keypad movement during auto-navigation
     if (isAutoNavigating) {
         addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
@@ -2665,6 +2833,83 @@ function handleKeypadMovement(key) {
 
 // Move player
 function movePlayer(direction) {
+    // In pathing mode, intercept movement and add to path instead
+    if (pathingModeActive && pathingCursorRoom) {
+        // Calculate target room based on direction (supports cardinal and diagonal)
+        const directionMap = {
+            'N': { dx: 0, dy: 1 },
+            'S': { dx: 0, dy: -1 },
+            'E': { dx: 1, dy: 0 },
+            'W': { dx: -1, dy: 0 },
+            'NE': { dx: 1, dy: 1 },
+            'NW': { dx: -1, dy: 1 },
+            'SE': { dx: 1, dy: -1 },
+            'SW': { dx: -1, dy: -1 }
+        };
+        
+        const dir = directionMap[direction];
+        if (dir) {
+            const targetX = pathingCursorRoom.x + dir.dx;
+            const targetY = pathingCursorRoom.y + dir.dy;
+            
+            // Find room at target position - check current map first (use pathing cursor's map if in pathing mode)
+            const searchMapId = pathingCursorRoom && pathingCursorRoom.mapId ? pathingCursorRoom.mapId : currentMapId;
+            let targetRoom = mapRooms.find(r => 
+                r.mapId === searchMapId && 
+                r.x === targetX && 
+                r.y === targetY
+            );
+            
+            // If not found in current map, check if current room has a connection in this direction
+            if (!targetRoom && pathingCursorRoom) {
+                const currentRoom = mapRooms.find(r => r.id === pathingCursorRoom.id);
+                if (currentRoom && currentRoom.connected_map_id && 
+                    currentRoom.connection_direction) {
+                    // Check if direction matches (case-insensitive)
+                    const connectionDir = currentRoom.connection_direction.toUpperCase();
+                    const moveDir = direction.toUpperCase();
+                    if (connectionDir === moveDir) {
+                        // This is a map connection - request the connected room from server
+                        console.log(`Pathing: Map connection detected - direction ${direction} to map ${currentRoom.connected_map_id} at (${currentRoom.connected_room_x}, ${currentRoom.connected_room_y})`);
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'getPathingRoom',
+                                mapId: currentRoom.connected_map_id,
+                                x: currentRoom.connected_room_x,
+                                y: currentRoom.connected_room_y,
+                                direction: direction
+                            }));
+                            // Wait for response - this will be handled in handleMessage
+                            return;
+                        }
+                    } else {
+                        console.log(`Pathing: Connection direction mismatch - room has ${connectionDir}, trying ${moveDir}`);
+                    }
+                }
+            }
+            
+            if (targetRoom) {
+                // Allow revisiting any room - remove restriction
+                // Only special case: if going back to immediately previous room, undo the last step
+                const isPreviousRoom = currentPath.length > 0 && 
+                                      currentPath[currentPath.length - 1].roomId === targetRoom.id;
+                
+                if (isPreviousRoom && currentPath.length > 1) {
+                    console.log(`Pathing: Going back to previous room, removing last step`);
+                    currentPath.pop();
+                    updatePathStepCounter();
+                    renderMap();
+                } else {
+                    console.log(`Pathing: Adding room ${targetRoom.id} (${targetRoom.x}, ${targetRoom.y}) direction ${direction} from cursor (${pathingCursorRoom.x}, ${pathingCursorRoom.y})`);
+                    addPathStep(targetRoom, direction);
+                }
+            } else {
+                console.log(`Pathing: Room at (${targetX}, ${targetY}) does not exist for direction ${direction} from cursor (${pathingCursorRoom.x}, ${pathingCursorRoom.y})`);
+            }
+        }
+        return; // Don't move actual character
+    }
+    
     // Block movement during auto-navigation
     if (isAutoNavigating) {
         addToTerminal('Auto-navigation is active. Please wait for it to complete.', 'error');
@@ -3359,6 +3604,350 @@ function updateMapPosition(newRoom, mapId) {
     }
 }
 
+// ============================================================
+// Pathing Mode Functions
+// ============================================================
+
+function enterPathingMode() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentPlayerName) return;
+    
+    pathingModeActive = true;
+    
+    // Request fresh map data to ensure all connection fields are loaded
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'getMapData', mapId: currentMapId }));
+    }
+    
+    // Get current room info
+    const currentRoom = mapRooms.find(r => 
+        r.mapId === currentMapId && 
+        r.x === currentRoomPos.x && 
+        r.y === currentRoomPos.y
+    );
+    
+    if (!currentRoom) {
+        console.error('Current room not found for pathing mode');
+        return;
+    }
+    
+    // Initialize path with current room as first step
+    pathStartRoom = {
+        id: currentRoom.id,
+        name: currentRoom.name,
+        x: currentRoom.x,
+        y: currentRoom.y,
+        mapId: currentRoom.mapId
+    };
+    
+    pathingCursorRoom = { ...pathStartRoom };
+    currentPath = [{
+        roomId: pathStartRoom.id,
+        roomName: pathStartRoom.name,
+        x: pathStartRoom.x,
+        y: pathStartRoom.y,
+        direction: null,
+        stepIndex: 0
+    }];
+    
+    // Update UI
+    document.getElementById('createPathBtn').style.display = 'none';
+    document.getElementById('exitPathingBtn').style.display = 'inline-block';
+    document.getElementById('endPathBtn').style.display = 'inline-block';
+    document.getElementById('pathingModeIndicator').style.display = 'flex';
+    updatePathStepCounter();
+    
+    // Request pathing mode start from server
+    ws.send(JSON.stringify({ type: 'startPathingMode' }));
+    
+    // Re-render map to show pathing indicators
+    renderMap();
+}
+
+function exitPathingMode() {
+    pathingModeActive = false;
+    currentPath = [];
+    pathStartRoom = null;
+    pathingCursorRoom = null;
+    
+    // Update UI
+    document.getElementById('createPathBtn').style.display = 'inline-block';
+    document.getElementById('exitPathingBtn').style.display = 'none';
+    document.getElementById('endPathBtn').style.display = 'none';
+    document.getElementById('pathingModeIndicator').style.display = 'none';
+    
+    // Cancel on server
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'cancelPathing' }));
+    }
+    
+    // Re-render map
+    renderMap();
+}
+
+function addPathStep(room, direction) {
+    // Double-check room exists in mapRooms before adding
+    // Verify room exists in mapRooms (should always be true since we get it from mapRooms)
+    // Allow rooms from any map (for cross-map pathing)
+    const roomExists = mapRooms.some(r => 
+        r.id === room.id && 
+        r.x === room.x && 
+        r.y === room.y
+    );
+    
+    if (!roomExists) {
+        console.error('Cannot add path step - room does not exist in mapRooms:', room);
+        return;
+    }
+    
+    const step = {
+        roomId: room.id,
+        roomName: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.mapId || currentMapId,
+        direction: direction,
+        stepIndex: currentPath.length
+    };
+    
+    currentPath.push(step);
+    pathingCursorRoom = { 
+        id: room.id,
+        name: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.mapId || (pathingCursorRoom && pathingCursorRoom.mapId) || currentMapId
+    };
+    
+    console.log(`Pathing: Updated cursor to room ${pathingCursorRoom.id} (${pathingCursorRoom.x}, ${pathingCursorRoom.y}) on map ${pathingCursorRoom.mapId}`);
+    updatePathStepCounter();
+    renderMap(); // Re-render to show updated path
+}
+
+function updatePathStepCounter() {
+    const counter = document.getElementById('pathStepCounter');
+    if (counter) {
+        counter.textContent = `Steps: ${currentPath.length}`;
+    }
+}
+
+function handlePathingModeClick(event) {
+    if (!pathingModeActive || !mapCanvas || !pathingCursorRoom) return;
+    
+    const rect = mapCanvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    // Get room at click position using existing map widget function
+    let room = getRoomAtScreenPosition(x, y);
+    
+    // If room not found, check if we're clicking on a map connection
+    if (!room && pathingCursorRoom) {
+        const currentRoom = mapRooms.find(r => r.id === pathingCursorRoom.id);
+        // Check if clicking near the connection direction - this is approximate
+        // The actual connection check will happen when we calculate direction
+    }
+    
+    if (!room) return;
+    
+    // Check if room is on a different map - if so, check if it's a valid connection
+    if (room.mapId !== pathingCursorRoom.mapId) {
+        const currentRoom = mapRooms.find(r => r.id === pathingCursorRoom.id);
+        if (currentRoom && currentRoom.connected_map_id === room.mapId &&
+            currentRoom.connected_room_x === room.x &&
+            currentRoom.connected_room_y === room.y) {
+            // This is a valid map connection - allow it
+            const direction = currentRoom.connection_direction || 'CONNECTION';
+            addPathStep(room, direction);
+            return;
+        } else {
+            // Room is on different map but not a valid connection
+            return;
+        }
+    }
+    
+    // Check if room is adjacent to current cursor position (allows cardinal and diagonal)
+    const dx = room.x - pathingCursorRoom.x;
+    const dy = room.y - pathingCursorRoom.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    
+    // Allow adjacent rooms (cardinal: dx=0,dy=±1 or dx=±1,dy=0) or diagonal (dx=±1,dy=±1)
+    if (absDx > 1 || absDy > 1 || (absDx === 0 && absDy === 0)) {
+        // Not adjacent
+        return;
+    }
+    
+    // Allow revisiting any room - remove restriction on "already in path"
+    // Users can backtrack or cross paths as needed
+    // Only special case: if going back to immediately previous room, undo the last step
+    const isPreviousRoom = currentPath.length > 0 && 
+                          currentPath[currentPath.length - 1].roomId === room.id;
+    
+    // If going back to previous room, remove the last step (undo)
+    if (isPreviousRoom && currentPath.length > 1) {
+        console.log(`Pathing: Going back to previous room, removing last step`);
+        currentPath.pop();
+        updatePathStepCounter();
+        renderMap();
+        return;
+    }
+    
+    // Calculate direction (supports cardinal and diagonal)
+    let direction = '';
+    if (dy < 0) direction = 'N';  // North component
+    else if (dy > 0) direction = 'S';  // South component
+    
+    if (dx > 0) direction += 'E';  // East component
+    else if (dx < 0) direction += 'W';  // West component
+    
+    // If no direction calculated, skip (shouldn't happen)
+    if (!direction) return;
+    
+    // Add step directly - no server call needed, just use existing rooms
+    addPathStep(room, direction);
+}
+
+function handlePathingModeKeypad(key) {
+    if (!pathingModeActive || !pathingCursorRoom) return;
+    
+    // Keypad to direction mapping - supports cardinal and diagonal
+    // 7=NW, 8=N, 9=NE, 4=W, 6=E, 1=SW, 2=S, 3=SE
+    const directionMap = {
+        '7': { dx: -1, dy: 1, dir: 'NW' },  // NW
+        '8': { dx: 0, dy: 1, dir: 'N' },   // N
+        '9': { dx: 1, dy: 1, dir: 'NE' },   // NE
+        '4': { dx: -1, dy: 0, dir: 'W' },  // W
+        '6': { dx: 1, dy: 0, dir: 'E' },   // E
+        '1': { dx: -1, dy: -1, dir: 'SW' }, // SW
+        '2': { dx: 0, dy: -1, dir: 'S' },   // S
+        '3': { dx: 1, dy: -1, dir: 'SE' }   // SE
+    };
+    
+    const dir = directionMap[key];
+    if (!dir) {
+        // Invalid key - ignore
+        return;
+    }
+    
+    const targetX = pathingCursorRoom.x + dir.dx;
+    const targetY = pathingCursorRoom.y + dir.dy;
+    
+    // Find room at target position - check current map first
+    // Use pathing cursor's map if in pathing mode
+    const searchMapId = pathingCursorRoom && pathingCursorRoom.mapId ? pathingCursorRoom.mapId : currentMapId;
+    let targetRoom = mapRooms.find(r => 
+        r.mapId === searchMapId && 
+        r.x === targetX && 
+        r.y === targetY
+    );
+    
+    // If not found in current map, check if current room has a connection in this direction
+    if (!targetRoom && pathingCursorRoom) {
+        const currentRoom = mapRooms.find(r => r.id === pathingCursorRoom.id);
+        if (currentRoom && currentRoom.connected_map_id && 
+            currentRoom.connection_direction) {
+            // Check if direction matches (case-insensitive)
+            const connectionDir = currentRoom.connection_direction.toUpperCase();
+            const moveDir = dir.dir.toUpperCase();
+            if (connectionDir === moveDir) {
+                // This is a map connection - request the connected room from server
+                console.log(`Pathing: Map connection detected - direction ${dir.dir} to map ${currentRoom.connected_map_id} at (${currentRoom.connected_room_x}, ${currentRoom.connected_room_y})`);
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'getPathingRoom',
+                        mapId: currentRoom.connected_map_id,
+                        x: currentRoom.connected_room_x,
+                        y: currentRoom.connected_room_y,
+                        direction: dir.dir
+                    }));
+                    // Wait for response - this will be handled in handleMessage
+                    return;
+                }
+            } else {
+                console.log(`Pathing: Connection direction mismatch - room has ${connectionDir}, trying ${moveDir}`);
+            }
+        } else if (currentRoom && currentRoom.connected_map_id) {
+            console.log(`Pathing: Room has connection but direction check failed. Connection dir: ${currentRoom.connection_direction}, Move dir: ${dir.dir}`);
+        }
+    }
+    
+    if (!targetRoom) {
+        // Room doesn't exist - can't add to path
+        console.log(`Pathing: Room at (${targetX}, ${targetY}) does not exist on current map`);
+        return;
+    }
+    
+    // Allow revisiting any room - remove restriction
+    // Only special case: if going back to immediately previous room, undo the last step
+    const isPreviousRoom = currentPath.length > 0 && 
+                          currentPath[currentPath.length - 1].roomId === targetRoom.id;
+    
+    if (isPreviousRoom && currentPath.length > 1) {
+        console.log(`Pathing: Going back to previous room, removing last step`);
+        currentPath.pop();
+        updatePathStepCounter();
+        renderMap();
+        return;
+    }
+    
+    // Add step directly - no server call needed, just use existing rooms
+    console.log(`Pathing: Adding room ${targetRoom.id} (${targetX}, ${targetY}) direction ${dir.dir} from cursor (${pathingCursorRoom.x}, ${pathingCursorRoom.y})`);
+    addPathStep(targetRoom, dir.dir);
+}
+
+function endPath() {
+    if (!pathingModeActive || currentPath.length === 0) return;
+    
+    // Check if it's a loop (ends at start room)
+    const isLoop = pathingCursorRoom.id === pathStartRoom.id;
+    const pathType = isLoop ? 'loop' : 'path';
+    
+    // Generate suggested name
+    let suggestedName = '';
+    if (isLoop) {
+        suggestedName = `Loop: ${pathStartRoom.name} to ${pathStartRoom.name}`;
+    } else {
+        suggestedName = `Path: ${pathStartRoom.name} to ${pathingCursorRoom.name}`;
+    }
+    
+    // Show name input modal
+    const modal = document.getElementById('pathNameModal');
+    const input = document.getElementById('pathNameInput');
+    const typeText = document.getElementById('pathNameModalType');
+    
+    if (modal && input && typeText) {
+        typeText.textContent = isLoop ? 'This is a loop (starts and ends at the same room).' : 'This is a path (starts and ends at different rooms).';
+        input.value = suggestedName;
+        modal.style.display = 'block';
+        
+        // Store path data for saving
+        window.pendingPathData = {
+            pathType: pathType,
+            suggestedName: suggestedName
+        };
+    }
+}
+
+function savePath(name, pathType) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentPlayerName) return;
+    if (!currentPath || currentPath.length === 0) return;
+    
+    // Convert path steps to format expected by server
+    const steps = currentPath.map(step => ({
+        roomId: step.roomId,
+        direction: step.direction || ''
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'savePath',
+        name: name,
+        pathType: pathType,
+        mapId: currentMapId,
+        originRoomId: pathStartRoom.id,
+        steps: steps
+    }));
+}
+
 // Setup map tooltip functionality
 function setupMapTooltips() {
     if (!mapCanvas) return;
@@ -3391,11 +3980,20 @@ function setupMapTooltips() {
     });
     
     // Double-click to open map editor (god mode only)
+    // Add click handler for pathing mode
+    mapCanvas.addEventListener('click', (e) => {
+        if (pathingModeActive) {
+            handlePathingModeClick(e);
+            return;
+        }
+    });
+    
     mapCanvas.addEventListener('dblclick', (e) => {
         if (godMode) {
             window.location.href = '/map';
         }
     });
+    
 }
 
 // Get room at screen coordinates
@@ -3409,7 +4007,8 @@ function getRoomAtScreenPosition(screenX, screenY) {
 function showMapTooltip(room, mouseX, mouseY) {
     if (!mapTooltip) return;
     
-    mapTooltip.innerHTML = `<strong>${room.name || 'Room'}</strong><br>(${room.x}, ${room.y})`;
+    const roomId = room.id || 'N/A';
+    mapTooltip.innerHTML = `<strong>${room.name || 'Room'}</strong><br>(${room.x}, ${room.y})<br>ID: ${roomId}`;
     mapTooltip.style.display = 'block';
     updateMapTooltipPosition(mouseX, mouseY);
 }
@@ -3451,11 +4050,121 @@ function hideMapTooltip() {
 function renderMap() {
     if (!mainMapRenderer) return;
     
-    // Filter to only current map rooms
-    const currentMapRooms = mapRooms.filter(room => room.mapId === currentMapId);
+    // In pathing mode, use the pathing cursor's map, otherwise use current map
+    const renderMapId = pathingModeActive && pathingCursorRoom ? pathingCursorRoom.mapId : currentMapId;
+    
+    // Filter to only rooms from the map we're rendering
+    const currentMapRooms = mapRooms.filter(room => room.mapId === renderMapId);
+    
+    // In pathing mode, center on pathing cursor instead of actual player position
+    const centerRoom = pathingModeActive && pathingCursorRoom ? pathingCursorRoom : currentRoomPos;
     
     // Render using MapRenderer
-    mainMapRenderer.render(currentMapRooms, currentRoomPos);
+    mainMapRenderer.render(currentMapRooms, centerRoom);
+    
+    // If in pathing mode, draw pathing indicators
+    // Use the same coordinate system as MapRenderer.drawRoom() to ensure perfect alignment
+    if (pathingModeActive && mainMapRenderer.renderedBounds) {
+        const { minX, maxX, minY, maxY, cellSize, offsetX, offsetY } = mainMapRenderer.renderedBounds;
+        const ctx = mainMapRenderer.ctx;
+        
+        // Use same room drawing coordinates as MapRenderer.drawRoom()
+        // Rooms are drawn at screenX + 1, screenY + 1 with size cellSize - 2
+        const roomSize = cellSize - 2;
+        
+        // Draw path rooms - only highlight rooms that actually exist in mapRooms
+        currentPath.forEach((step, index) => {
+            // Verify this room exists in mapRooms before drawing
+            const roomExists = currentMapRooms.some(r => 
+                r.id === step.roomId && 
+                r.x === step.x && 
+                r.y === step.y
+            );
+            
+            if (!roomExists) {
+                console.warn('Path step references non-existent room:', step);
+                return; // Skip drawing if room doesn't exist
+            }
+            
+            if (step.x >= minX && step.x <= maxX && step.y >= minY && step.y <= maxY) {
+                // Use exact same coordinates as MapRenderer.drawRoom()
+                const screenX = offsetX + (step.x - minX) * cellSize;
+                const screenY = offsetY + (maxY - step.y) * cellSize;
+                
+                // Highlight path rooms (overlay on existing room using same coordinates)
+                ctx.fillStyle = 'rgba(136, 136, 255, 0.5)';
+                ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+                ctx.strokeStyle = '#6666cc';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+                
+                // Draw start room with special indicator
+                if (index === 0 && pathStartRoom) {
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+                    ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+                }
+            }
+        });
+        
+        // Draw current cursor position - only if room exists
+        if (pathingCursorRoom) {
+            const cursorRoomExists = currentMapRooms.some(r => 
+                r.id === pathingCursorRoom.id && 
+                r.x === pathingCursorRoom.x && 
+                r.y === pathingCursorRoom.y
+            );
+            
+            if (cursorRoomExists && 
+                pathingCursorRoom.x >= minX && pathingCursorRoom.x <= maxX && 
+                pathingCursorRoom.y >= minY && pathingCursorRoom.y <= maxY) {
+                // Use exact same coordinates as MapRenderer.drawRoom()
+                const screenX = offsetX + (pathingCursorRoom.x - minX) * cellSize;
+                const screenY = offsetY + (maxY - pathingCursorRoom.y) * cellSize;
+                
+                // Draw cursor indicator (overlay on existing room using same coordinates)
+                ctx.fillStyle = 'rgba(255, 255, 0, 0.5)';
+                ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+                ctx.strokeStyle = '#ffaa00';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+            }
+        }
+        
+        // Draw connections between path rooms (only between existing rooms)
+        ctx.strokeStyle = '#8888ff';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < currentPath.length - 1; i++) {
+            const step1 = currentPath[i];
+            const step2 = currentPath[i + 1];
+            
+            // Verify both rooms exist
+            const room1Exists = currentMapRooms.some(r => r.id === step1.roomId);
+            const room2Exists = currentMapRooms.some(r => r.id === step2.roomId);
+            
+            if (room1Exists && room2Exists &&
+                step1.x >= minX && step1.x <= maxX && step1.y >= minY && step1.y <= maxY &&
+                step2.x >= minX && step2.x <= maxX && step2.y >= minY && step2.y <= maxY) {
+                // Use room centers for connection lines (matching MapRenderer.drawConnections)
+                const x1 = offsetX + (step1.x - minX) * cellSize;
+                const y1 = offsetY + (maxY - step1.y) * cellSize;
+                const x2 = offsetX + (step2.x - minX) * cellSize;
+                const y2 = offsetY + (maxY - step2.y) * cellSize;
+                
+                const centerX1 = x1 + cellSize / 2;
+                const centerY1 = y1 + cellSize / 2;
+                const centerX2 = x2 + cellSize / 2;
+                const centerY2 = y2 + cellSize / 2;
+                
+                ctx.beginPath();
+                ctx.moveTo(centerX1, centerY1);
+                ctx.lineTo(centerX2, centerY2);
+                ctx.stroke();
+            }
+        }
+    }
     
     // Always draw current room indicator, even if room not found in mapRooms
     // This ensures the player position is always visible

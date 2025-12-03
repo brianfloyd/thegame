@@ -96,8 +96,19 @@
                     <!-- Slot 3: Map -->
                     <div class="widget-slot" data-slot="2">
                         <div class="widget" id="widget-map" data-widget="map">
-                            <div class="widget-header">Map</div>
+                            <div class="widget-header">
+                                <span>Map</span>
+                                <div class="map-widget-controls">
+                                    <button id="createPathBtn" class="map-control-btn" title="Create Path">Create Path</button>
+                                    <button id="exitPathingBtn" class="map-control-btn" style="display: none;" title="Exit Pathing Mode">Exit Pathing</button>
+                                    <button id="endPathBtn" class="map-control-btn" style="display: none;" title="End Path">End Path</button>
+                                </div>
+                            </div>
                             <div class="widget-content">
+                                <div id="pathingModeIndicator" class="pathing-mode-indicator" style="display: none;">
+                                    <span>Pathing Mode Active - Click rooms to build path</span>
+                                    <span id="pathStepCounter">Steps: 0</span>
+                                </div>
                                 <div class="map-viewport" id="mapViewport">
                                     <canvas id="mapCanvas"></canvas>
                                 </div>
@@ -304,6 +315,24 @@
             </div>
             <div class="jump-widget-info">
                 <span id="jumpHoverInfo">Click a room to teleport</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Path Name Input Modal -->
+    <div id="pathNameModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="modal-close" id="closePathNameModal">&times;</span>
+            <h2 style="color: #667eea; margin-bottom: 20px;">Save Path</h2>
+            <p style="color: #666; margin-bottom: 20px;" id="pathNameModalType"></p>
+            <div id="pathNameForm">
+                <input type="text" id="pathNameInput" placeholder="Path name" required 
+                       style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 1em; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin-bottom: 15px;">
+                <div id="pathNameError" class="error-message"></div>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="savePathBtn" class="auth-btn" style="flex: 1;">Save</button>
+                    <button id="cancelPathNameBtn" class="auth-btn" style="flex: 1; background: #999;">Cancel</button>
+                </div>
             </div>
         </div>
     </div>

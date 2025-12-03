@@ -396,7 +396,10 @@ async function authenticateSession(ctx, data) {
     y: r.y,
     mapId: r.map_id,
     roomType: r.room_type || 'normal',
-    connected_map_id: r.connected_map_id || null
+    connected_map_id: r.connected_map_id || null,
+    connected_room_x: r.connected_room_x || null,
+    connected_room_y: r.connected_room_y || null,
+    connection_direction: r.connection_direction || null
   }));
   
   // Get room type colors
@@ -3911,10 +3914,264 @@ async function updateWidgetConfig(ctx, data) {
   ws.send(JSON.stringify({ type: 'widgetConfigUpdated', config }));
 }
 
+async function startPathingMode(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const room = await db.getRoomById(playerData.roomId);
+  if (!room) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // Return current room and map data for pathing mode initialization
+  ws.send(JSON.stringify({
+    type: 'pathingModeStarted',
+    room: {
+      id: room.id,
+      name: room.name,
+      x: room.x,
+      y: room.y,
+      mapId: room.map_id
+    },
+    mapId: room.map_id
+  }));
+}
+
+async function addPathStep(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { roomId, previousRoomId } = data;
+  if (!roomId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+    return;
+  }
+  
+  const room = await db.getRoomById(roomId);
+  if (!room) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+    return;
+  }
+  
+  // If there's a previous room, validate adjacency
+  if (previousRoomId) {
+    const previousRoom = await db.getRoomById(previousRoomId);
+    if (!previousRoom) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Previous room not found' }));
+      return;
+    }
+    
+    // Check if rooms are adjacent (manhattan distance of 1)
+    const dx = Math.abs(room.x - previousRoom.x);
+    const dy = Math.abs(room.y - previousRoom.y);
+    if (dx + dy !== 1) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Rooms must be adjacent' }));
+      return;
+    }
+    
+    // Calculate direction
+    let direction = '';
+    if (room.y < previousRoom.y) direction = 'N';
+    else if (room.y > previousRoom.y) direction = 'S';
+    else if (room.x > previousRoom.x) direction = 'E';
+    else if (room.x < previousRoom.x) direction = 'W';
+    
+    ws.send(JSON.stringify({
+      type: 'pathStepAdded',
+      room: {
+        id: room.id,
+        name: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.map_id
+      },
+      direction: direction
+    }));
+  } else {
+    // First step, no direction needed
+    ws.send(JSON.stringify({
+      type: 'pathStepAdded',
+      room: {
+        id: room.id,
+        name: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.map_id
+      },
+      direction: null
+    }));
+  }
+}
+
+async function savePath(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { name, pathType, steps, mapId, originRoomId } = data;
+  if (!name || !pathType || !steps || !Array.isArray(steps) || steps.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid path data' }));
+    return;
+  }
+  
+  if (pathType !== 'loop' && pathType !== 'path') {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid path type' }));
+    return;
+  }
+  
+  try {
+    const pathId = await db.createPath(playerData.playerId, mapId, name, originRoomId, pathType, steps);
+    ws.send(JSON.stringify({
+      type: 'pathSaved',
+      pathId: pathId,
+      name: name,
+      pathType: pathType
+    }));
+  } catch (error) {
+    console.error('Error saving path:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to save path: ' + error.message }));
+  }
+}
+
+async function cancelPathing(ctx, data) {
+  const { ws, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  ws.send(JSON.stringify({ type: 'pathingCancelled' }));
+}
+
+/**
+ * Get map data for a specific map ID
+ * Used when pathing crosses map boundaries or when entering pathing mode
+ */
+async function getMapData(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  const { mapId } = data;
+  if (!mapId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Map ID required' }));
+    return;
+  }
+
+  try {
+    // Get all rooms from the specified map
+    const mapRooms = await db.getRoomsByMap(mapId);
+    const allRooms = mapRooms.map(r => ({
+      id: r.id,
+      name: r.name,
+      x: r.x,
+      y: r.y,
+      mapId: r.map_id,
+      roomType: r.room_type || 'normal',
+      connected_map_id: r.connected_map_id || null,
+      connected_room_x: r.connected_room_x || null,
+      connected_room_y: r.connected_room_y || null,
+      connection_direction: r.connection_direction || null
+    }));
+
+    // Get room type colors
+    const roomTypeColors = await db.getAllRoomTypeColors();
+    const colorMap = {};
+    roomTypeColors.forEach(rtc => {
+      colorMap[rtc.room_type] = rtc.color;
+    });
+
+    // Get current room for the player
+    const playerRoom = await db.getRoomById(playerData.roomId);
+    const currentRoom = playerRoom ? {
+      x: playerRoom.x,
+      y: playerRoom.y,
+      id: playerRoom.id
+    } : null;
+
+    ws.send(JSON.stringify({
+      type: 'mapData',
+      rooms: allRooms,
+      roomTypeColors: colorMap,
+      currentRoom: currentRoom,
+      mapId: mapId
+    }));
+  } catch (error) {
+    console.error('Error getting map data:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get map data: ' + error.message }));
+  }
+}
+
+/**
+ * Get a room from a different map for pathing mode
+ * Used when pathing crosses map boundaries
+ */
+async function getPathingRoom(ctx, data) {
+  const { ws, db } = ctx;
+  const { mapId, x, y } = data;
+  
+  if (!mapId || x === undefined || y === undefined) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Map ID, X, and Y coordinates required' }));
+    return;
+  }
+  
+  try {
+    const room = await db.getRoomByCoords(mapId, x, y);
+    if (!room) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+      return;
+    }
+    
+    // Get the direction from the previous step or use CONNECTION
+    const direction = data.direction || 'CONNECTION';
+    
+    ws.send(JSON.stringify({
+      type: 'pathingRoom',
+      room: {
+        id: room.id,
+        name: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.map_id,
+        connected_map_id: room.connected_map_id,
+        connected_room_x: room.connected_room_x,
+        connected_room_y: room.connected_room_y,
+        connection_direction: room.connection_direction
+      },
+      direction: direction
+    }));
+  } catch (error) {
+    console.error('Error getting pathing room:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get room: ' + error.message }));
+  }
+}
+
 module.exports = {
   authenticateSession,
   getWidgetConfig,
   updateWidgetConfig,
+  startPathingMode,
+  addPathStep,
+  savePath,
+  cancelPathing,
+  getPathingRoom,
+  getMapData,
   move,
   look,
   inventory,

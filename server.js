@@ -88,13 +88,35 @@ if (process.env.NODE_ENV !== 'production') {
 // Session cleanup job - every 5 minutes
 setInterval(() => {
   cleanupExpiredSessions();
-  // Also clean up activeAccountSessions for sessions that no longer exist
-  const { sessionStore } = require('./middleware/session');
-  for (const [accountId, sessionId] of activeAccountSessions.entries()) {
-    // Check if session still exists in sessionStore
-    if (!sessionStore.has(sessionId)) {
-      console.log(`Cleaning up orphaned account session: account ${accountId}, session ${sessionId}`);
-      activeAccountSessions.delete(accountId);
+  // Clean up activeAccountSessions for sessions that no longer exist
+  // IMPORTANT: Only delete if there are NO active WebSocket connections using that session
+  // This prevents disconnecting active players
+  const { memoryStore } = require('./middleware/session');
+  
+  for (const [accountId, sessionData] of activeAccountSessions.entries()) {
+    const sessionId = sessionData.sessionId;
+    
+    // Check if there are any active WebSocket connections using this session
+    let hasActiveConnection = false;
+    for (const [connId, playerData] of connectedPlayers.entries()) {
+      if (playerData.sessionId === sessionId && playerData.ws.readyState === WebSocket.OPEN) {
+        hasActiveConnection = true;
+        break;
+      }
+    }
+    
+    // Only clean up if there are no active connections AND session doesn't exist in express-session store
+    if (!hasActiveConnection) {
+      // Check express-session MemoryStore (async, but we'll use a simple check)
+      // Since MemoryStore.get is async, we'll use a synchronous check via sessionStore
+      // which tracks player sessions - if no player session exists, the account session is likely orphaned
+      const { sessionStore } = require('./middleware/session');
+      if (!sessionStore.has(sessionId)) {
+        // Double-check: verify no active connections (already checked above)
+        // Only then delete from activeAccountSessions
+        console.log(`Cleaning up orphaned account session: account ${accountId}, session ${sessionId.substring(0, 8)}... (no active connections)`);
+        activeAccountSessions.delete(accountId);
+      }
     }
   }
 }, 5 * 60 * 1000);

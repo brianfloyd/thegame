@@ -197,6 +197,114 @@ async function updatePlayerWidgetConfig(playerId, config) {
   console.log(`Verified widget_config after update:`, player.widget_config);
 }
 
+// ============================================================
+// Paths and Loops Functions
+// ============================================================
+
+async function createPath(playerId, mapId, name, originRoomId, pathType, steps) {
+  const createdAt = Date.now();
+  
+  // Create the loop/path record
+  const result = await query(
+    `INSERT INTO loops (player_id, map_id, name, origin_room_id, path_type, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [playerId, mapId, name, originRoomId, pathType, createdAt]
+  );
+  
+  const loopId = result.rows[0].id;
+  
+  // Add all steps
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    await query(
+      `INSERT INTO loop_steps (loop_id, step_index, room_id, direction, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [loopId, i, step.roomId, step.direction, createdAt]
+    );
+  }
+  
+  return loopId;
+}
+
+async function getPathsByPlayerAndMap(playerId, mapId) {
+  return getAll(
+    'SELECT * FROM loops WHERE player_id = $1 AND map_id = $2 ORDER BY created_at DESC',
+    [playerId, mapId]
+  );
+}
+
+async function getPathById(pathId) {
+  return getOne('SELECT * FROM loops WHERE id = $1', [pathId]);
+}
+
+async function getPathSteps(loopId) {
+  return getAll(
+    'SELECT * FROM loop_steps WHERE loop_id = $1 ORDER BY step_index',
+    [loopId]
+  );
+}
+
+async function deletePath(loopId) {
+  // Cascade delete will handle loop_steps
+  await query('DELETE FROM loops WHERE id = $1', [loopId]);
+  return true;
+}
+
+// ============================================================
+// Paths and Loops Functions
+// ============================================================
+
+async function createPath(playerId, mapId, name, originRoomId, pathType, steps) {
+  const createdAt = Date.now();
+  
+  // Create the loop/path record
+  const result = await query(
+    `INSERT INTO loops (player_id, map_id, name, origin_room_id, path_type, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [playerId, mapId, name, originRoomId, pathType, createdAt]
+  );
+  
+  const loopId = result.rows[0].id;
+  
+  // Add all steps
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    await query(
+      `INSERT INTO loop_steps (loop_id, step_index, room_id, direction, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [loopId, i, step.roomId, step.direction, createdAt]
+    );
+  }
+  
+  return loopId;
+}
+
+async function getPathsByPlayerAndMap(playerId, mapId) {
+  return getAll(
+    'SELECT * FROM loops WHERE player_id = $1 AND map_id = $2 ORDER BY created_at DESC',
+    [playerId, mapId]
+  );
+}
+
+async function getPathById(pathId) {
+  return getOne('SELECT * FROM loops WHERE id = $1', [pathId]);
+}
+
+async function getPathSteps(loopId) {
+  return getAll(
+    'SELECT * FROM loop_steps WHERE loop_id = $1 ORDER BY step_index',
+    [loopId]
+  );
+}
+
+async function deletePath(loopId) {
+  // Cascade delete will handle loop_steps
+  await query('DELETE FROM loops WHERE id = $1', [loopId]);
+  return true;
+}
+
 async function getAllPlayers() {
   return getAll('SELECT * FROM players');
 }
@@ -2371,5 +2479,12 @@ module.exports = {
   
   // Widget Config
   getPlayerWidgetConfig,
-  updatePlayerWidgetConfig
+  updatePlayerWidgetConfig,
+  
+  // Paths and Loops
+  createPath,
+  getPathsByPlayerAndMap,
+  getPathById,
+  getPathSteps,
+  deletePath
 };
