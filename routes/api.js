@@ -405,17 +405,31 @@ function setupRoutes(app, options) {
     }
     
     try {
+      // Check character limit based on god mode status
+      const characters = await options.db.getUserCharacters(req.session.accountId);
+      const hasGodModeCharacter = characters.some(char => char.flag_god_mode === 1 || char.flag_god_mode === true);
+      const maxCharacters = hasGodModeCharacter ? Infinity : 2;
+      
+      if (characters.length >= maxCharacters) {
+        return res.status(403).json({ 
+          success: false, 
+          error: hasGodModeCharacter 
+            ? 'Character limit reached' 
+            : 'Character limit reached. You can have up to 2 characters. Create a god mode character to unlock unlimited characters.' 
+        });
+      }
+      
       // Check if name already exists
       const existingPlayer = await options.db.getPlayerByName(sanitizedName);
       if (existingPlayer) {
         return res.status(409).json({ success: false, error: 'Character name already taken' });
       }
       
-      // Create player based on Hebron's template
+      // Create player with 5 assignable points and all stats set to 5
       const player = await options.db.createPlayer(sanitizedName, req.session.accountId);
       
       // Get updated character list
-      const characters = await options.db.getUserCharacters(req.session.accountId);
+      const updatedCharacters = await options.db.getUserCharacters(req.session.accountId);
       
       console.log(`Character created: ${sanitizedName} for account ${req.session.accountId}`);
       res.json({ 
@@ -424,7 +438,7 @@ function setupRoutes(app, options) {
           id: player.id,
           name: player.name
         },
-        characters: characters
+        characters: updatedCharacters
       });
     } catch (err) {
       console.error('Create character error:', err);

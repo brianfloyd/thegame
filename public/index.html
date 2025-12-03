@@ -51,11 +51,33 @@
 
     <!-- Character Selection Screen -->
     <div id="characterSelection" class="screen" style="display: none;">
-        <div class="container">
+        <div class="container" style="position: relative;">
+            <button id="createCharacterBtn" class="create-character-btn" title="Create New Character" style="position: absolute; top: 20px; right: 20px; background: #4caf50; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: transform 0.2s, box-shadow 0.2s;">
+                <span style="line-height: 1;">+</span>
+            </button>
             <h1>Choose Your Character</h1>
             <div id="accountInfo" class="account-info"></div>
             <div id="characterList" class="player-options"></div>
             <button id="logoutBtn" class="logout-btn">Logout</button>
+        </div>
+    </div>
+
+    <!-- Create Character Modal -->
+    <div id="createCharacterModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="modal-close" id="closeCreateCharacterModal">&times;</span>
+            <h2 style="color: #667eea; margin-bottom: 20px;">Create New Character</h2>
+            <p style="color: #666; margin-bottom: 20px;">Your character will start with 5 assignable points and all stats set to 5.</p>
+            <div id="createCharacterForm">
+                <input type="text" id="newCharacterName" placeholder="Character Name" required 
+                       style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 1em; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin-bottom: 15px;">
+                <div id="createCharacterError" class="error-message"></div>
+                <div id="createCharacterSuccess" style="color: #4caf50; font-size: 0.9em; margin-top: 10px; display: none;"></div>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="createCharacterSubmitBtn" class="auth-btn" style="flex: 1;">Create Character</button>
+                    <button id="cancelCreateCharacterBtn" class="auth-btn" style="flex: 1; background: #999;">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -393,28 +415,76 @@
                 // Show active if either server says active OR window is open
                 const isActive = isActiveOnServer || isWindowOpen;
                 
-                return `
-                    <div class="character-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                        <button class="player-btn" data-player="${char.name}">
-                            ${char.name}
-                            ${char.flag_god_mode ? ' <span class="god-badge">GOD</span>' : ''}
-                            ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
-                        </button>
-                        ${isActive ? `
-                            <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
-                            ${isWindowOpen ? `
-                                <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window & Disconnect">×</button>
+                if (char.flag_god_mode) {
+                    // God mode players get a 4-quadrant button
+                    return `
+                        <div class="character-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <div class="god-mode-quadrant-container">
+                                <button class="player-btn god-mode-quadrant-btn" data-player="${char.name}" style="position: relative; padding: 20px 40px; min-width: 200px; height: 60px; overflow: hidden;">
+                                    <div class="god-quadrant" data-mode="game" style="position: absolute; top: 0; left: 0; width: 50%; height: 50%; background: #667eea; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                                        <span style="color: white; font-size: 10px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">GAME</span>
+                                    </div>
+                                    <div class="god-quadrant" data-mode="map-editor" style="position: absolute; top: 0; right: 0; width: 50%; height: 50%; background: #4caf50; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                                        <span style="color: white; font-size: 10px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">MAP</span>
+                                    </div>
+                                    <div class="god-quadrant" data-mode="npc-editor" style="position: absolute; bottom: 0; left: 0; width: 50%; height: 50%; background: #ff9800; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                                        <span style="color: white; font-size: 10px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NPC</span>
+                                    </div>
+                                    <div class="god-quadrant" data-mode="item-editor" style="position: absolute; bottom: 0; right: 0; width: 50%; height: 50%; background: #9c27b0; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                                        <span style="color: white; font-size: 10px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">ITEM</span>
+                                    </div>
+                                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-weight: bold; font-size: 1.5em; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); pointer-events: none; z-index: 10; white-space: nowrap;">
+                                        ${char.name}
+                                        ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
+                                    </div>
+                                </button>
+                            </div>
+                            ${isActive ? `
+                                <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
+                                ${isWindowOpen ? `
+                                    <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window & Disconnect">×</button>
+                                ` : ''}
                             ` : ''}
-                        ` : ''}
-                    </div>
-                `;
+                        </div>
+                    `;
+                } else {
+                    // Normal players get single button
+                    return `
+                        <div class="character-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <button class="player-btn" data-player="${char.name}">
+                                ${char.name}
+                                ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
+                            </button>
+                            ${isActive ? `
+                                <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
+                                ${isWindowOpen ? `
+                                    <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window & Disconnect">×</button>
+                                ` : ''}
+                            ` : ''}
+                        </div>
+                    `;
+                }
             }).join('');
             
-            // Attach click handlers
-            document.querySelectorAll('.player-btn').forEach(btn => {
+            // Attach click handlers for normal players
+            document.querySelectorAll('.player-btn:not(.god-mode-quadrant-btn)').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const playerName = btn.getAttribute('data-player');
                     selectCharacter(playerName);
+                });
+            });
+            
+            // Attach click handlers for god mode quadrant buttons
+            document.querySelectorAll('.god-quadrant').forEach(quadrant => {
+                quadrant.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const btn = quadrant.closest('.god-mode-quadrant-btn');
+                    if (btn) {
+                        const playerName = btn.getAttribute('data-player');
+                        const mode = quadrant.getAttribute('data-mode');
+                        selectCharacterForMode(playerName, mode);
+                    }
                 });
             });
             
@@ -425,6 +495,58 @@
                     closeCharacterWindow(playerName);
                 });
             });
+        }
+
+        // Character selection for specific mode (game or editor)
+        async function selectCharacterForMode(playerName, mode) {
+            // First, select the character to set up the session
+            try {
+                const response = await fetch('/api/select-character', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ playerName })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Open in popup window based on mode
+                    if (mode === 'game') {
+                        selectCharacter(playerName); // Use existing game selection logic
+                    } else {
+                        // Generate unique window ID for editor
+                        const windowId = 'editor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                        let editorUrl = '';
+                        
+                        if (mode === 'map-editor') {
+                            editorUrl = '/map-editor.html';
+                        } else if (mode === 'npc-editor') {
+                            editorUrl = '/npc-editor.html';
+                        } else if (mode === 'item-editor') {
+                            editorUrl = '/item-editor.html';
+                        }
+                        
+                        // Open editor in popup window
+                        const popupWindow = window.open(
+                            editorUrl,
+                            `editor_${playerName}_${mode}_${windowId}`,
+                            'width=1200,height=800,resizable=yes,scrollbars=yes,menubar=no,toolbar=no,location=no'
+                        );
+                        
+                        if (!popupWindow) {
+                            alert('Popup blocked! Please allow popups for this site to open editors.');
+                        }
+                    }
+                } else {
+                    alert(data.error || 'Failed to select character');
+                }
+            } catch (error) {
+                console.error('Error selecting character for mode:', error);
+                alert('Failed to select character');
+            }
         }
 
         // Character selection - opens popup window or focuses existing
@@ -566,23 +688,23 @@
             updateCharacterListUI();
         }
 
-        // Create character
+        // Create character (for inline form when no characters exist)
         async function createCharacter() {
             const characterName = document.getElementById('characterNameInput')?.value.trim();
             const errorDiv = document.getElementById('createCharacterError');
             
             if (!characterName) {
-                errorDiv.textContent = 'Please enter a character name';
+                if (errorDiv) errorDiv.textContent = 'Please enter a character name';
                 return;
             }
             
             if (characterName.length < 2) {
-                errorDiv.textContent = 'Character name must be at least 2 characters';
+                if (errorDiv) errorDiv.textContent = 'Character name must be at least 2 characters';
                 return;
             }
             
             if (!/^[a-zA-Z0-9_]+$/.test(characterName)) {
-                errorDiv.textContent = 'Character name can only contain letters, numbers, and underscores';
+                if (errorDiv) errorDiv.textContent = 'Character name can only contain letters, numbers, and underscores';
                 return;
             }
             
@@ -603,12 +725,116 @@
                     currentCharacters = data.characters || [];
                     showCharacterSelection();
                 } else {
-                    errorDiv.textContent = data.error || 'Failed to create character';
+                    if (errorDiv) errorDiv.textContent = data.error || 'Failed to create character';
                 }
             } catch (error) {
                 console.error('Create character error:', error);
-                errorDiv.textContent = 'Failed to create character. Please try again.';
+                if (errorDiv) errorDiv.textContent = 'Failed to create character. Please try again.';
             }
+        }
+
+        // Create Character Button
+        const createCharacterBtn = document.getElementById('createCharacterBtn');
+        const createCharacterModal = document.getElementById('createCharacterModal');
+        const closeCreateCharacterModal = document.getElementById('closeCreateCharacterModal');
+        const cancelCreateCharacterBtn = document.getElementById('cancelCreateCharacterBtn');
+        const newCharacterNameInput = document.getElementById('newCharacterName');
+        const createCharacterSubmitBtn = document.getElementById('createCharacterSubmitBtn');
+        const createCharacterError = document.getElementById('createCharacterError');
+        const createCharacterSuccess = document.getElementById('createCharacterSuccess');
+
+        if (createCharacterBtn) {
+            createCharacterBtn.addEventListener('click', () => {
+                createCharacterModal.style.display = 'block';
+                newCharacterNameInput.value = '';
+                createCharacterError.textContent = '';
+                createCharacterSuccess.style.display = 'none';
+                newCharacterNameInput.focus();
+            });
+        }
+
+        if (closeCreateCharacterModal) {
+            closeCreateCharacterModal.addEventListener('click', () => {
+                createCharacterModal.style.display = 'none';
+            });
+        }
+
+        if (cancelCreateCharacterBtn) {
+            cancelCreateCharacterBtn.addEventListener('click', () => {
+                createCharacterModal.style.display = 'none';
+            });
+        }
+
+        // Create character form submission
+        if (createCharacterSubmitBtn) {
+            createCharacterSubmitBtn.addEventListener('click', async () => {
+                const characterName = newCharacterNameInput.value.trim();
+                
+                if (!characterName) {
+                    createCharacterError.textContent = 'Character name is required';
+                    return;
+                }
+
+                createCharacterError.textContent = '';
+                createCharacterSuccess.style.display = 'none';
+                createCharacterSubmitBtn.disabled = true;
+                createCharacterSubmitBtn.textContent = 'Creating...';
+
+                try {
+                    const response = await fetch('/api/create-character', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include',
+                        body: JSON.stringify({ characterName })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        createCharacterSuccess.textContent = `Character "${data.player.name}" created successfully!`;
+                        createCharacterSuccess.style.display = 'block';
+                        
+                        // Update character list
+                        currentCharacters = data.characters;
+                        
+                        // Close modal after short delay
+                        setTimeout(() => {
+                            createCharacterModal.style.display = 'none';
+                            updateCharacterListUI();
+                            // Refresh account info to get updated character count
+                            showCharacterSelection();
+                        }, 1000);
+                    } else {
+                        createCharacterError.textContent = data.error || 'Failed to create character';
+                    }
+                } catch (error) {
+                    console.error('Create character error:', error);
+                    createCharacterError.textContent = 'Failed to create character. Please try again.';
+                } finally {
+                    createCharacterSubmitBtn.disabled = false;
+                    createCharacterSubmitBtn.textContent = 'Create Character';
+                }
+            });
+        }
+
+        // Allow Enter key to submit
+        if (newCharacterNameInput) {
+            newCharacterNameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    createCharacterSubmitBtn.click();
+                }
+            });
+        }
+
+        // Close modal when clicking outside
+        if (createCharacterModal) {
+            createCharacterModal.addEventListener('click', (e) => {
+                if (e.target === createCharacterModal) {
+                    createCharacterModal.style.display = 'none';
+                }
+            });
         }
 
         // Logout

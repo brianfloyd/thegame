@@ -11,7 +11,11 @@
     <div id="npcEditor" class="map-editor-overlay" style="display: block;">
         <div class="map-editor-container">
             <div class="map-editor-header">
-                <h2>NPC Editor</h2>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <h2>NPC Editor</h2>
+                    <button class="editor-nav-btn" data-editor="map-editor" title="Go to Map Editor">Map</button>
+                    <button class="editor-nav-btn" data-editor="item-editor" title="Go to Item Editor">Item</button>
+                </div>
                 <button id="closeNpcEditor" class="close-editor-btn">Close</button>
             </div>
             <div class="map-editor-toolbar">

@@ -46,6 +46,9 @@ function showEditorNotification(message, type = 'info') {
     }, 5000);
 }
 
+// Track if we're intentionally navigating away
+let isNavigatingAway = false;
+
 // Connect to WebSocket server
 function connectWebSocket() {
     ws = new WebSocket(wsUrl);
@@ -69,7 +72,10 @@ function connectWebSocket() {
 
     ws.onclose = () => {
         console.log('WebSocket disconnected');
-        setTimeout(connectWebSocket, 3000);
+        // Only auto-reconnect if we're not intentionally navigating away
+        if (!isNavigatingAway) {
+            setTimeout(connectWebSocket, 3000);
+        }
     };
 }
 
@@ -1387,6 +1393,30 @@ document.addEventListener('DOMContentLoaded', () => {
             createMarkupButton('NPC Editor', closeNpcEditorBtn);
         }
     }
+
+    // Editor navigation buttons
+    document.querySelectorAll('.editor-nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetEditor = btn.getAttribute('data-editor');
+            
+            // Mark that we're intentionally navigating away
+            isNavigatingAway = true;
+            
+            // Close WebSocket gracefully before navigating
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close(1000, 'Navigating to another editor');
+            }
+            
+            // Small delay to ensure close message is sent
+            setTimeout(() => {
+                if (targetEditor === 'map-editor') {
+                    window.location.href = '/map-editor.html';
+                } else if (targetEditor === 'item-editor') {
+                    window.location.href = '/item-editor.html';
+                }
+            }, 100);
+        });
+    });
 
     const createNewNpcBtn = document.getElementById('createNewNpcBtn');
     if (createNewNpcBtn) {
