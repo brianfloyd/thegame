@@ -13,8 +13,7 @@
             <h1>The Game</h1>
             <div id="authForm">
                 <div class="auth-tabs">
-                    <button class="auth-tab active" data-tab="login">Login</button>
-                    <button class="auth-tab" data-tab="register">Register</button>
+                    <button class="auth-tab" id="registerTabBtn" data-tab="register">Register</button>
                 </div>
                 <div id="loginForm" class="auth-form active">
                     <input type="email" id="loginEmail" placeholder="Email" required>
@@ -27,6 +26,7 @@
                     <input type="email" id="registerEmail" placeholder="Email" required>
                     <input type="password" id="registerPassword" placeholder="Password (min 4 characters)" required>
                     <button id="registerBtn" class="auth-btn">Register</button>
+                    <a href="#" id="backToLoginLink" style="color: #667eea; text-decoration: none; font-size: 0.9em; margin-top: 10px; display: inline-block;">Already have an account? Login</a>
                     <div id="registerError" class="error-message"></div>
                 </div>
             </div>
@@ -202,17 +202,32 @@
             }
         }
 
-        // Tab switching
-        document.querySelectorAll('.auth-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const tabName = tab.getAttribute('data-tab');
-                document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+        // Register tab button - switch to register form
+        const registerTabBtn = document.getElementById('registerTabBtn');
+        if (registerTabBtn) {
+            registerTabBtn.addEventListener('click', () => {
                 document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
-                tab.classList.add('active');
-                document.getElementById(tabName + 'Form').classList.add('active');
-                document.getElementById(tabName + 'Error').textContent = '';
+                document.getElementById('registerForm').classList.add('active');
+                registerTabBtn.classList.add('active');
+                document.getElementById('loginError').textContent = '';
+                document.getElementById('registerError').textContent = '';
             });
-        });
+        }
+        
+        // Back to Login link (from register form)
+        const backToLoginLink = document.getElementById('backToLoginLink');
+        if (backToLoginLink) {
+            backToLoginLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
+                document.getElementById('loginForm').classList.add('active');
+                if (registerTabBtn) {
+                    registerTabBtn.classList.remove('active');
+                }
+                document.getElementById('loginError').textContent = '';
+                document.getElementById('registerError').textContent = '';
+            });
+        }
 
         // Login
         document.getElementById('loginBtn').addEventListener('click', async () => {
