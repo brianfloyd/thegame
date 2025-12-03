@@ -279,10 +279,9 @@ wss.on('connection', (ws, req) => {
       factoryWidgetState.delete(connId);
       cleanupLoreKeeperEngagement(connId);
       
-      // Clean up window tracking
-      if (disconnectedPlayerId) {
-        activeCharacterWindows.delete(disconnectedPlayerId);
-      }
+      // Don't delete from activeCharacterWindows immediately - keep it for grace period
+      // The /api/active-windows endpoint will handle cleanup based on grace period
+      // This allows players to reconnect within the grace period
       
       connectedPlayers.delete(connId);
 

@@ -283,33 +283,59 @@ function setupRoutes(app, options) {
       // Get activeCharacterWindows from server.js (passed via options)
       const activeCharacterWindows = options.activeCharacterWindows || new Map();
       const accountId = req.session.accountId;
+      const connectedPlayers = options.connectedPlayers || new Map();
+      
+      // Grace period: consider player active for 5 minutes after window closes
+      const GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
       
       // Filter windows for this account
       const accountWindows = [];
+      const windowsToCleanup = [];
+      
       for (const [playerId, windowData] of activeCharacterWindows.entries()) {
         if (windowData.accountId === accountId) {
           // Check if connection is still active
-          const connectedPlayers = options.connectedPlayers || new Map();
           let isConnected = false;
           for (const [connId, playerData] of connectedPlayers.entries()) {
-            if (playerData.playerId === playerId && playerData.ws.readyState === 1) { // WebSocket.OPEN
+            if (playerData.playerId === playerId && playerData.ws && playerData.ws.readyState === 1) { // WebSocket.OPEN
               isConnected = true;
               break;
             }
           }
           
           if (isConnected) {
+            // Connection is active - definitely include
             accountWindows.push({
               playerId: playerId,
               playerName: windowData.playerName,
               windowId: windowData.windowId,
-              openedAt: windowData.openedAt
+              openedAt: windowData.openedAt,
+              hasActiveConnection: true
             });
           } else {
-            // Clean up disconnected window
-            activeCharacterWindows.delete(playerId);
+            // Connection is closed, but check if within grace period
+            const timeSinceOpened = now - windowData.openedAt;
+            if (timeSinceOpened < GRACE_PERIOD_MS) {
+              // Within grace period - still consider active (window was recently closed)
+              accountWindows.push({
+                playerId: playerId,
+                playerName: windowData.playerName,
+                windowId: windowData.windowId,
+                openedAt: windowData.openedAt,
+                hasActiveConnection: false
+              });
+            } else {
+              // Outside grace period - mark for cleanup
+              windowsToCleanup.push(playerId);
+            }
           }
         }
+      }
+      
+      // Clean up windows outside grace period
+      for (const playerId of windowsToCleanup) {
+        activeCharacterWindows.delete(playerId);
       }
       
       res.json({ success: true, activeWindows: accountWindows });

@@ -4864,13 +4864,16 @@ function initWidgetToggleBar() {
     const exitBtn = document.getElementById('exitToCharacterSelection');
     if (exitBtn) {
         exitBtn.addEventListener('click', () => {
+            // Don't disconnect WebSocket - keep player active on server
+            // Just close the window or redirect
             if (isPopupWindow) {
-                // If in popup, close the window
+                // If in popup, close the window (connection stays active)
                 window.close();
             } else {
-                // If in main window, redirect to character selection page
+                // If in main window, redirect to character selection page (connection stays active)
                 window.location.href = '/';
             }
+            // Note: WebSocket connection remains open, player stays active on server
         });
     }
 }

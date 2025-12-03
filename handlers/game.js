@@ -216,11 +216,15 @@ async function authenticateSession(ctx, data) {
     }
   }
 
-  // Check if this player is already connected and disconnect the old connection
+  // Check if this player is already connected
+  // If reconnecting (window was closed and reopened), allow it
+  // If different window, disconnect old connection
   let existingConnectionId = null;
+  let existingWindowId = null;
   for (const [connId, playerData] of connectedPlayers.entries()) {
-    if (playerData.playerName === player.name || playerData.playerId === player.id) {
+    if (playerData.playerId === player.id) {
       existingConnectionId = connId;
+      existingWindowId = playerData.windowId;
       break;
     }
   }
@@ -230,82 +234,101 @@ async function authenticateSession(ctx, data) {
     const oldRoomId = oldPlayerData.roomId;
     const oldWs = oldPlayerData.ws;
     
-    console.log(`Player ${player.name} already connected (${existingConnectionId}), disconnecting old connection...`);
+    // Check if old connection is still open
+    const oldConnectionOpen = oldWs && oldWs.readyState === WebSocket.OPEN;
     
-    // End any active harvest sessions for the old connection
-    if (oldPlayerData.playerId) {
-      const activeSession = await findPlayerHarvestSession(db, oldPlayerData.playerId);
-      if (activeSession) {
-        await endHarvestSession(db, activeSession.roomNpcId, true);
-      }
-    }
-    
-    // Drop factory widget items and remove poofable items for old connection
-    if (oldRoomId) {
-      const factoryState = factoryWidgetState.get(existingConnectionId);
-      const oldRoom = await db.getRoomById(oldRoomId);
+    // If same windowId and old connection is closed, this is a reconnection - allow it
+    if (existingWindowId === windowId && windowId !== null && !oldConnectionOpen) {
+      console.log(`Player ${player.name} reconnecting with same windowId (${windowId}), old connection was closed...`);
+      // Remove old closed connection entry
+      connectedPlayers.delete(existingConnectionId);
+      cancelLoreKeeperEngagement(existingConnectionId);
+      // Continue below to create new connection
+    } else if (oldConnectionOpen) {
+      // Old connection is still open - disconnect it (new window opened or different windowId)
+      console.log(`Player ${player.name} already connected (${existingConnectionId}), disconnecting old connection...`);
       
-      if (factoryState && factoryState.roomId === oldRoomId && oldRoom && oldRoom.room_type === 'factory') {
-        // Drop items from factory slots to room ground
-        for (let i = 0; i < factoryState.slots.length; i++) {
-          const slot = factoryState.slots[i];
-          if (slot && slot.itemName) {
-            await db.addRoomItem(oldRoomId, slot.itemName, slot.quantity);
+      // End any active harvest sessions for the old connection
+      if (oldPlayerData.playerId) {
+        const activeSession = await findPlayerHarvestSession(db, oldPlayerData.playerId);
+        if (activeSession) {
+          await endHarvestSession(db, activeSession.roomNpcId, true);
+        }
+      }
+      
+      // Drop factory widget items and remove poofable items for old connection
+      if (oldRoomId) {
+        const factoryState = factoryWidgetState.get(existingConnectionId);
+        const oldRoom = await db.getRoomById(oldRoomId);
+        
+        if (factoryState && factoryState.roomId === oldRoomId && oldRoom && oldRoom.room_type === 'factory') {
+          // Drop items from factory slots to room ground
+          for (let i = 0; i < factoryState.slots.length; i++) {
+            const slot = factoryState.slots[i];
+            if (slot && slot.itemName) {
+              await db.addRoomItem(oldRoomId, slot.itemName, slot.quantity);
+            }
+          }
+          factoryWidgetState.delete(existingConnectionId);
+          
+          // Check if room is now empty and remove poofable items
+          if (isRoomEmpty(connectedPlayers, oldRoomId)) {
+            await db.removePoofableItemsFromRoom(oldRoomId);
           }
         }
-        factoryWidgetState.delete(existingConnectionId);
         
-        // Check if room is now empty and remove poofable items
-        if (isRoomEmpty(connectedPlayers, oldRoomId)) {
-          await db.removePoofableItemsFromRoom(oldRoomId);
+        // Clean up warehouse widget state
+        warehouseWidgetState.delete(existingConnectionId);
+        
+        // Notify others in the room that player left (from old connection)
+        broadcastToRoom(connectedPlayers, oldRoomId, {
+          type: 'playerLeft',
+          playerName: player.name
+        }, existingConnectionId);
+        
+        // Update room for others (remove player from room)
+        const updatedRoom = await db.getRoomById(oldRoomId);
+        for (const [otherConnId, otherPlayerData] of connectedPlayers) {
+          if (otherPlayerData.roomId === oldRoomId && otherConnId !== existingConnectionId) {
+            await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, updatedRoom);
+          }
         }
       }
       
-      // Clean up warehouse widget state
-      warehouseWidgetState.delete(existingConnectionId);
+      // Remove from connectedPlayers
+      connectedPlayers.delete(existingConnectionId);
       
-      // Notify others in the room that player left (from old connection)
-      broadcastToRoom(connectedPlayers, oldRoomId, {
-        type: 'playerLeft',
-        playerName: player.name
-      }, existingConnectionId);
+      // Cancel any Lore Keeper engagement timers
+      cancelLoreKeeperEngagement(existingConnectionId);
       
-      // Update room for others (remove player from room)
-      const updatedRoom = await db.getRoomById(oldRoomId);
-      for (const [otherConnId, otherPlayerData] of connectedPlayers) {
-        if (otherPlayerData.roomId === oldRoomId && otherConnId !== existingConnectionId) {
-          await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, updatedRoom);
-        }
+      // Send force close message to old client
+      if (oldWs.readyState === WebSocket.OPEN) {
+        oldWs.send(JSON.stringify({ 
+          type: 'forceClose', 
+          message: 'Another session has connected with this character. This window will be closed.' 
+        }));
+        // Give the client a moment to receive the message, then close the connection
+        setTimeout(() => {
+          if (oldWs.readyState === WebSocket.OPEN) {
+            oldWs.close(1000, 'Replaced by new connection');
+          }
+        }, 100);
       }
+      
+      // Broadcast system message: player left the game (from old connection)
+      broadcastToAll(connectedPlayers, {
+        type: 'systemMessage',
+        message: `${player.name} has left the game.`
+      });
+      
+      console.log(`Old connection ${existingConnectionId} for player ${player.name} has been disconnected`);
+    } else {
+      // Old connection is closed but different windowId - just clean up
+      console.log(`Player ${player.name} old connection (${existingConnectionId}) was closed, cleaning up...`);
+      connectedPlayers.delete(existingConnectionId);
+      cancelLoreKeeperEngagement(existingConnectionId);
+      // Continue below to create new connection
     }
-    
-    // Remove from connectedPlayers
-    connectedPlayers.delete(existingConnectionId);
-    
-    // Cancel any Lore Keeper engagement timers
-    cancelLoreKeeperEngagement(existingConnectionId);
-    
-    // Send force close message to old client
-    if (oldWs.readyState === WebSocket.OPEN) {
-      oldWs.send(JSON.stringify({ 
-        type: 'forceClose', 
-        message: 'Another session has connected with this character. This window will be closed.' 
-      }));
-      // Give the client a moment to receive the message, then close the connection
-      setTimeout(() => {
-        if (oldWs.readyState === WebSocket.OPEN) {
-          oldWs.close(1000, 'Replaced by new connection');
-        }
-      }, 100);
-    }
-    
-    // Broadcast system message: player left the game (from old connection)
-    broadcastToAll(connectedPlayers, {
-      type: 'systemMessage',
-      message: `${player.name} has left the game.`
-    });
-    
-    console.log(`Old connection ${existingConnectionId} for player ${player.name} has been disconnected`);
   }
 
   // Generate unique connection ID for this WebSocket
@@ -331,16 +354,17 @@ async function authenticateSession(ctx, data) {
     accountId: accountId
   });
   
-  // Register window in activeCharacterWindows if windowId is provided
+  // Register/update window in activeCharacterWindows if windowId is provided
+  // This updates the entry if it exists (reconnection) or creates a new one
   if (windowId && activeCharacterWindows) {
     activeCharacterWindows.set(player.id, {
       windowId: windowId,
       playerName: player.name,
       accountId: accountId,
-      openedAt: Date.now(),
+      openedAt: Date.now(), // Reset grace period on reconnection
       connectionId: connectionId
     });
-    console.log(`Registered window ${windowId} for player ${player.name} (playerId: ${player.id})`);
+    console.log(`Registered/updated window ${windowId} for player ${player.name} (playerId: ${player.id})`);
   }
 
   // Send initial room update (with full info for first display)

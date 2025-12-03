@@ -373,26 +373,38 @@
             }
         }
         
+        // Track server-side active status (from polling)
+        let serverActivePlayers = new Set();
+        
         // Update character list UI with active window indicators
         function updateCharacterListUI() {
             const characterList = document.getElementById('characterList');
             if (!characterList || currentCharacters.length === 0) return;
             
             characterList.innerHTML = currentCharacters.map(char => {
-                const isActive = characterWindows.has(char.name);
-                const windowRef = characterWindows.get(char.name);
-                const isWindowOpen = isActive && windowRef && !windowRef.closed;
+                // Check if player is active on server (from polling)
+                const isActiveOnServer = serverActivePlayers.has(char.name);
+                
+                // Check if we have a window reference
+                const hasWindowRef = characterWindows.has(char.name);
+                const windowRef = hasWindowRef ? characterWindows.get(char.name) : null;
+                const isWindowOpen = hasWindowRef && windowRef && !windowRef.closed;
+                
+                // Show active if either server says active OR window is open
+                const isActive = isActiveOnServer || isWindowOpen;
                 
                 return `
                     <div class="character-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                        <button class="player-btn" data-player="${char.name}" ${isWindowOpen ? 'disabled style="opacity: 0.6;"' : ''}>
+                        <button class="player-btn" data-player="${char.name}">
                             ${char.name}
                             ${char.flag_god_mode ? ' <span class="god-badge">GOD</span>' : ''}
                             ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
                         </button>
-                        ${isWindowOpen ? `
+                        ${isActive ? `
                             <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
-                            <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window">×</button>
+                            ${isWindowOpen ? `
+                                <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window & Disconnect">×</button>
+                            ` : ''}
                         ` : ''}
                     </div>
                 `;
@@ -402,9 +414,7 @@
             document.querySelectorAll('.player-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const playerName = btn.getAttribute('data-player');
-                    if (!btn.disabled) {
-                        selectCharacter(playerName);
-                    }
+                    selectCharacter(playerName);
                 });
             });
             
@@ -417,13 +427,13 @@
             });
         }
 
-        // Character selection - opens popup window
+        // Character selection - opens popup window or focuses existing
         async function selectCharacter(playerName) {
             // Check if window is already open
             if (characterWindows.has(playerName)) {
                 const existingWindow = characterWindows.get(playerName);
                 if (existingWindow && !existingWindow.closed) {
-                    // Window exists and is open - focus it
+                    // Window exists and is open - focus it (don't open new one)
                     existingWindow.focus();
                     return;
                 } else {
@@ -431,6 +441,9 @@
                     characterWindows.delete(playerName);
                 }
             }
+            
+            // If player is active on server but window is closed, we can reopen it
+            // The server connection is still active, so we just need to open a new window
             
             try {
                 const response = await fetch('/api/select-character', {
@@ -445,10 +458,15 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    // Check if player is already active on server (connection exists)
+                    // If so, we can just open a window to reconnect to existing session
+                    // If not, select-character will create a new session
+                    
                     // Generate unique window ID
                     const windowId = 'window_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                     
-                    // Open popup window
+                    // Open popup window (or main window if not in popup mode)
+                    // If player is already active, the existing WebSocket will be reused
                     const popupWindow = window.open(
                         `/game?popup=true&playerName=${encodeURIComponent(playerName)}&windowId=${encodeURIComponent(windowId)}`,
                         `game_${playerName}_${windowId}`,
@@ -459,10 +477,11 @@
                         // Store window reference
                         characterWindows.set(playerName, popupWindow);
                         
-                        // Listen for window close
+                        // Listen for window close (but don't disconnect from server)
                         const checkClosed = setInterval(() => {
                             if (popupWindow.closed) {
                                 clearInterval(checkClosed);
+                                // Remove window reference but keep server connection active
                                 characterWindows.delete(playerName);
                                 updateCharacterListUI();
                             }
@@ -731,20 +750,22 @@
                         const data = await response.json();
                         
                         if (data.success && data.activeWindows) {
-                            // Update character windows map based on server data
-                            const serverActivePlayers = new Set(data.activeWindows.map(w => w.playerName));
+                            // Update server active players set
+                            serverActivePlayers = new Set(data.activeWindows.map(w => w.playerName));
                             
-                            // Remove windows that are no longer active on server
+                            // Clean up window references for players no longer active on server
                             for (const [playerName, windowRef] of characterWindows.entries()) {
                                 if (!serverActivePlayers.has(playerName)) {
+                                    // Player is no longer active on server - clean up window reference
                                     if (windowRef && !windowRef.closed) {
-                                        windowRef.close();
+                                        // Don't close the window, just remove the reference
+                                        // The server will handle disconnection
                                     }
                                     characterWindows.delete(playerName);
                                 }
                             }
                             
-                            // Update UI
+                            // Update UI to show active status based on server state
                             updateCharacterListUI();
                         }
                     } catch (error) {
