@@ -236,12 +236,19 @@ function handleMessage(data) {
             // Load saved widget configuration
             if (data.config) {
                 console.log('Loading widget config:', data.config);
+                // Ensure activeWidgets is an array
                 if (data.config.activeWidgets && Array.isArray(data.config.activeWidgets)) {
                     activeWidgets = data.config.activeWidgets;
+                } else {
+                    console.log('activeWidgets is not a valid array, resetting to empty');
+                    activeWidgets = [];
                 }
                 if (data.config.scriptingWidgetPosition) {
                     scriptingWidgetPosition = data.config.scriptingWidgetPosition;
+                } else {
+                    scriptingWidgetPosition = 'top';
                 }
+                console.log('Applied widget config - activeWidgets:', activeWidgets, 'scriptingWidgetPosition:', scriptingWidgetPosition);
                 updateWidgetDisplay();
             }
             break;
@@ -4255,6 +4262,7 @@ function toggleWidget(widgetName) {
     }
     
     updateWidgetDisplay();
+    saveWidgetConfig();
 }
 
 // Save widget configuration to database

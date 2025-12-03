@@ -162,22 +162,39 @@ async function getPlayerById(id) {
 
 async function getPlayerWidgetConfig(playerId) {
   const player = await getPlayerById(playerId);
-  if (!player || !player.widget_config) {
+  if (!player) {
+    console.log(`[getPlayerWidgetConfig] Player ${playerId} not found`);
+    return { activeWidgets: [], scriptingWidgetPosition: 'top' };
+  }
+  if (!player.widget_config) {
+    console.log(`[getPlayerWidgetConfig] Player ${playerId} has no widget_config, returning default`);
     return { activeWidgets: [], scriptingWidgetPosition: 'top' };
   }
   try {
-    return JSON.parse(player.widget_config);
+    const config = JSON.parse(player.widget_config);
+    console.log(`[getPlayerWidgetConfig] Loaded widget_config for player ${playerId}:`, config);
+    // Ensure activeWidgets is an array
+    if (!Array.isArray(config.activeWidgets)) {
+      console.log(`[getPlayerWidgetConfig] activeWidgets is not an array, fixing...`);
+      config.activeWidgets = [];
+    }
+    return config;
   } catch (e) {
-    console.error('Error parsing widget_config for player', playerId, e);
+    console.error(`[getPlayerWidgetConfig] Error parsing widget_config for player ${playerId}:`, e, 'Raw value:', player.widget_config);
     return { activeWidgets: [], scriptingWidgetPosition: 'top' };
   }
 }
 
 async function updatePlayerWidgetConfig(playerId, config) {
+  const configJson = JSON.stringify(config);
+  console.log(`Updating widget_config for player ${playerId} to:`, configJson);
   await query(
     'UPDATE players SET widget_config = $1 WHERE id = $2',
-    [JSON.stringify(config), playerId]
+    [configJson, playerId]
   );
+  // Verify the update
+  const player = await getPlayerById(playerId);
+  console.log(`Verified widget_config after update:`, player.widget_config);
 }
 
 async function getAllPlayers() {

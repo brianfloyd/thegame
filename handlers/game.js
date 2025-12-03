@@ -3905,7 +3905,9 @@ async function updateWidgetConfig(ctx, data) {
     return;
   }
   
+  console.log(`Saving widget config for player ${playerData.playerId}:`, config);
   await db.updatePlayerWidgetConfig(playerData.playerId, config);
+  console.log(`Widget config saved successfully for player ${playerData.playerId}`);
   ws.send(JSON.stringify({ type: 'widgetConfigUpdated', config }));
 }
 
