@@ -85,6 +85,12 @@
         
         let currentAccount = null;
         let currentCharacters = [];
+        
+        // Track open character windows: characterName -> window reference
+        const characterWindows = new Map();
+        
+        // Track active windows polling interval
+        let activeWindowsPollInterval = null;
 
         // Poll session validity to detect if this window should be closed
         let sessionCheckInterval = null;
@@ -363,26 +369,69 @@
                     }
                 });
             } else {
-                characterList.innerHTML = currentCharacters.map(char => `
-                    <button class="player-btn" data-player="${char.name}">
-                        ${char.name}
-                        ${char.flag_god_mode ? ' <span class="god-badge">GOD</span>' : ''}
-                        ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
-                    </button>
-                `).join('');
-                
-                // Attach click handlers
-                document.querySelectorAll('.player-btn').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        const playerName = btn.getAttribute('data-player');
-                        selectCharacter(playerName);
-                    });
-                });
+                updateCharacterListUI();
             }
         }
+        
+        // Update character list UI with active window indicators
+        function updateCharacterListUI() {
+            const characterList = document.getElementById('characterList');
+            if (!characterList || currentCharacters.length === 0) return;
+            
+            characterList.innerHTML = currentCharacters.map(char => {
+                const isActive = characterWindows.has(char.name);
+                const windowRef = characterWindows.get(char.name);
+                const isWindowOpen = isActive && windowRef && !windowRef.closed;
+                
+                return `
+                    <div class="character-item" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <button class="player-btn" data-player="${char.name}" ${isWindowOpen ? 'disabled style="opacity: 0.6;"' : ''}>
+                            ${char.name}
+                            ${char.flag_god_mode ? ' <span class="god-badge">GOD</span>' : ''}
+                            ${char.flag_always_first_time ? ' <span class="noob-badge">NOOB</span>' : ''}
+                        </button>
+                        ${isWindowOpen ? `
+                            <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
+                            <button class="close-window-btn" data-player="${char.name}" style="background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="Close Window">×</button>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+            
+            // Attach click handlers
+            document.querySelectorAll('.player-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const playerName = btn.getAttribute('data-player');
+                    if (!btn.disabled) {
+                        selectCharacter(playerName);
+                    }
+                });
+            });
+            
+            // Attach close window handlers
+            document.querySelectorAll('.close-window-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const playerName = btn.getAttribute('data-player');
+                    closeCharacterWindow(playerName);
+                });
+            });
+        }
 
-        // Character selection
+        // Character selection - opens popup window
         async function selectCharacter(playerName) {
+            // Check if window is already open
+            if (characterWindows.has(playerName)) {
+                const existingWindow = characterWindows.get(playerName);
+                if (existingWindow && !existingWindow.closed) {
+                    // Window exists and is open - focus it
+                    existingWindow.focus();
+                    return;
+                } else {
+                    // Window reference exists but is closed - clean up
+                    characterWindows.delete(playerName);
+                }
+            }
+            
             try {
                 const response = await fetch('/api/select-character', {
                     method: 'POST',
@@ -396,7 +445,37 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    window.location.href = '/game';
+                    // Generate unique window ID
+                    const windowId = 'window_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                    
+                    // Open popup window
+                    const popupWindow = window.open(
+                        `/game?popup=true&playerName=${encodeURIComponent(playerName)}&windowId=${encodeURIComponent(windowId)}`,
+                        `game_${playerName}_${windowId}`,
+                        'width=1200,height=800,resizable=yes,scrollbars=yes,menubar=no,toolbar=no,location=no'
+                    );
+                    
+                    if (popupWindow) {
+                        // Store window reference
+                        characterWindows.set(playerName, popupWindow);
+                        
+                        // Listen for window close
+                        const checkClosed = setInterval(() => {
+                            if (popupWindow.closed) {
+                                clearInterval(checkClosed);
+                                characterWindows.delete(playerName);
+                                updateCharacterListUI();
+                            }
+                        }, 1000);
+                        
+                        // Listen for postMessage from popup
+                        window.addEventListener('message', handlePopupMessage);
+                        
+                        // Update UI
+                        updateCharacterListUI();
+                    } else {
+                        alert('Popup blocked! Please allow popups for this site and try again.');
+                    }
                 } else {
                     alert(data.error || 'Failed to select character');
                 }
@@ -404,6 +483,68 @@
                 console.error('Error selecting character:', error);
                 alert('Failed to select character. Please try again.');
             }
+        }
+        
+        // Handle messages from popup windows
+        function handlePopupMessage(event) {
+            // Security: Only accept messages from same origin
+            if (event.origin !== window.location.origin) {
+                return;
+            }
+            
+            const { type, playerName, windowId } = event.data;
+            
+            switch (type) {
+                case 'WINDOW_OPENED':
+                    // Popup has loaded and registered
+                    if (playerName && characterWindows.has(playerName)) {
+                        updateCharacterListUI();
+                    }
+                    break;
+                case 'WINDOW_HEARTBEAT':
+                    // Popup is alive
+                    if (playerName && characterWindows.has(playerName)) {
+                        updateCharacterListUI();
+                    }
+                    break;
+                case 'WINDOW_CLOSED':
+                    // Popup is closing
+                    if (playerName) {
+                        characterWindows.delete(playerName);
+                        updateCharacterListUI();
+                    }
+                    break;
+            }
+        }
+        
+        // Close character window
+        async function closeCharacterWindow(playerName) {
+            const popupWindow = characterWindows.get(playerName);
+            
+            if (popupWindow && !popupWindow.closed) {
+                // Send close request to popup
+                popupWindow.postMessage({
+                    type: 'WINDOW_CLOSE_REQUEST',
+                    playerName: playerName
+                }, window.location.origin);
+                
+                // Call server API to sever connection
+                try {
+                    await fetch(`/api/close-character-window?playerName=${encodeURIComponent(playerName)}`, {
+                        method: 'POST',
+                        credentials: 'include'
+                    });
+                } catch (error) {
+                    console.error('Error closing character window:', error);
+                }
+                
+                // Close the window
+                popupWindow.close();
+            }
+            
+            // Clean up
+            characterWindows.delete(playerName);
+            updateCharacterListUI();
         }
 
         // Create character
@@ -575,6 +716,59 @@
             }
         });
 
+        // Poll for active windows
+        function startActiveWindowsPolling() {
+            if (activeWindowsPollInterval) {
+                clearInterval(activeWindowsPollInterval);
+            }
+            
+            activeWindowsPollInterval = setInterval(async () => {
+                if (currentAccount && currentCharacters.length > 0) {
+                    try {
+                        const response = await fetch('/api/active-windows', {
+                            credentials: 'include'
+                        });
+                        const data = await response.json();
+                        
+                        if (data.success && data.activeWindows) {
+                            // Update character windows map based on server data
+                            const serverActivePlayers = new Set(data.activeWindows.map(w => w.playerName));
+                            
+                            // Remove windows that are no longer active on server
+                            for (const [playerName, windowRef] of characterWindows.entries()) {
+                                if (!serverActivePlayers.has(playerName)) {
+                                    if (windowRef && !windowRef.closed) {
+                                        windowRef.close();
+                                    }
+                                    characterWindows.delete(playerName);
+                                }
+                            }
+                            
+                            // Update UI
+                            updateCharacterListUI();
+                        }
+                    } catch (error) {
+                        // Silently fail - don't spam console
+                    }
+                }
+            }, 3000); // Poll every 3 seconds
+        }
+        
+        // Stop polling
+        function stopActiveWindowsPolling() {
+            if (activeWindowsPollInterval) {
+                clearInterval(activeWindowsPollInterval);
+                activeWindowsPollInterval = null;
+            }
+        }
+        
+        // Start polling when character selection is shown
+        const originalShowCharacterSelection = showCharacterSelection;
+        showCharacterSelection = function() {
+            originalShowCharacterSelection();
+            startActiveWindowsPolling();
+        };
+        
         // Check auth on page load
         checkAuth();
     </script>

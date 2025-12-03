@@ -180,7 +180,10 @@ async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, r
  * Authenticate a WebSocket session
  */
 async function authenticateSession(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, playerName } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, playerName, activeCharacterWindows } = ctx;
+  
+  // Get windowId from message data or context (fallback to context for backward compatibility)
+  const windowId = data.windowId || ctx.windowId || null;
   
   // Validate session
   if (!session || !sessionId) {
@@ -313,13 +316,32 @@ async function authenticateSession(ctx, data) {
 
   // Store connection using unique connectionId (only one connection per player allowed)
   const room = await db.getRoomById(player.current_room_id);
+  
+  // Get accountId from session
+  // sessionData from getSessionFromRequest contains accountId
+  const accountId = (session && session.sessionData && session.sessionData.accountId) || null;
+  
   connectedPlayers.set(connectionId, { 
     ws, 
     roomId: room.id, 
     playerName: player.name,
     playerId: player.id,
-    sessionId: sessionId
+    sessionId: sessionId,
+    windowId: windowId || null,
+    accountId: accountId
   });
+  
+  // Register window in activeCharacterWindows if windowId is provided
+  if (windowId && activeCharacterWindows) {
+    activeCharacterWindows.set(player.id, {
+      windowId: windowId,
+      playerName: player.name,
+      accountId: accountId,
+      openedAt: Date.now(),
+      connectionId: connectionId
+    });
+    console.log(`Registered window ${windowId} for player ${player.name} (playerId: ${player.id})`);
+  }
 
   // Send initial room update (with full info for first display)
   await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, room, true);

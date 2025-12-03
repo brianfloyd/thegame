@@ -3,6 +3,12 @@ let ws = null;
 let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
 
+// Popup window tracking
+let isPopupWindow = false;
+let windowId = null;
+let parentWindow = null;
+let heartbeatInterval = null;
+
 // Widget system state
 const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting'];
 // Default widgets for normal players: stats, compass, map, comms
@@ -95,6 +101,97 @@ const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
 const wsUrl = wsProtocol + location.host;
 
 // Connect to WebSocket server
+// Initialize popup detection and communication
+(function initPopupDetection() {
+    // Check if opened as popup
+    const urlParams = new URLSearchParams(window.location.search);
+    const isPopup = urlParams.get('popup') === 'true';
+    const popupWindowId = urlParams.get('windowId');
+    const popupPlayerName = urlParams.get('playerName');
+    
+    if (isPopup && window.opener) {
+        isPopupWindow = true;
+        windowId = popupWindowId;
+        parentWindow = window.opener;
+        
+        // Notify parent that window is open
+        parentWindow.postMessage({
+            type: 'WINDOW_OPENED',
+            playerName: popupPlayerName,
+            windowId: windowId
+        }, window.location.origin);
+        
+        // Set up heartbeat
+        heartbeatInterval = setInterval(() => {
+            if (parentWindow && !parentWindow.closed) {
+                parentWindow.postMessage({
+                    type: 'WINDOW_HEARTBEAT',
+                    playerName: popupPlayerName,
+                    windowId: windowId
+                }, window.location.origin);
+            } else {
+                // Parent window closed, stop heartbeat
+                if (heartbeatInterval) {
+                    clearInterval(heartbeatInterval);
+                    heartbeatInterval = null;
+                }
+            }
+        }, 2000); // Send heartbeat every 2 seconds
+        
+        // Listen for close requests from parent
+        window.addEventListener('message', (event) => {
+            // Security: Only accept messages from same origin
+            if (event.origin !== window.location.origin) {
+                return;
+            }
+            
+            const { type, playerName: msgPlayerName } = event.data;
+            
+            if (type === 'WINDOW_CLOSE_REQUEST' && msgPlayerName === popupPlayerName) {
+                // Parent requested close - close this window
+                window.close();
+            }
+        });
+        
+        // Notify parent when window is closing
+        window.addEventListener('beforeunload', () => {
+            if (parentWindow && !parentWindow.closed) {
+                parentWindow.postMessage({
+                    type: 'WINDOW_CLOSED',
+                    playerName: popupPlayerName,
+                    windowId: windowId
+                }, window.location.origin);
+            }
+            
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+        });
+        
+        // Handle focus/blur events
+        window.addEventListener('focus', () => {
+            if (parentWindow && !parentWindow.closed) {
+                parentWindow.postMessage({
+                    type: 'WINDOW_HEARTBEAT',
+                    playerName: popupPlayerName,
+                    windowId: windowId
+                }, window.location.origin);
+            }
+        });
+        
+        window.addEventListener('blur', () => {
+            if (parentWindow && !parentWindow.closed) {
+                parentWindow.postMessage({
+                    type: 'WINDOW_HEARTBEAT',
+                    playerName: popupPlayerName,
+                    windowId: windowId
+                }, window.location.origin);
+            }
+        });
+    }
+})();
+
 function connectWebSocket() {
     ws = new WebSocket(wsUrl);
 
@@ -103,7 +200,10 @@ function connectWebSocket() {
         
         // Authenticate with session
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
+            ws.send(JSON.stringify({ 
+                type: 'authenticateSession',
+                windowId: windowId || null
+            }));
         }
     };
 
@@ -336,13 +436,20 @@ function handleMessage(data) {
                 }
             }
             // Close the window after a brief delay to show the message
-            setTimeout(() => {
-                window.close();
-                // If window.close() doesn't work (some browsers block it), redirect to login
+            if (isPopupWindow) {
+                setTimeout(() => {
+                    window.close();
+                }, 1000);
+            } else {
                 setTimeout(() => {
                     window.location.href = '/';
-                }, 500);
-            }, 1000);
+                }, 1000);
+            }
+            break;
+        case 'error':
+            if (data.message) {
+                addToTerminal(data.message, 'error');
+            }
             break;
         case 'error':
             addToTerminal(data.message, 'error');
@@ -4757,8 +4864,13 @@ function initWidgetToggleBar() {
     const exitBtn = document.getElementById('exitToCharacterSelection');
     if (exitBtn) {
         exitBtn.addEventListener('click', () => {
-            // Redirect to character selection page
-            window.location.href = '/';
+            if (isPopupWindow) {
+                // If in popup, close the window
+                window.close();
+            } else {
+                // If in main window, redirect to character selection page
+                window.location.href = '/';
+            }
         });
     }
 }

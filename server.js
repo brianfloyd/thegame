@@ -108,6 +108,23 @@ const characterSelectionHandler = createCharacterSelectionHandler(db);
 // Only one session per account is allowed - new login invalidates old session
 const activeAccountSessions = new Map();
 
+// ============================================================
+// Shared State (declared early for use in setupRoutes)
+// ============================================================
+
+// Track connected players: connectionId -> { ws, roomId, playerName, playerId, sessionId, windowId }
+const connectedPlayers = new Map();
+let nextConnectionId = 1;
+
+// Track active character windows: playerId -> { windowId, playerName, accountId, openedAt, connectionId }
+const activeCharacterWindows = new Map();
+
+// Track factory widget state per player: connectionId -> { roomId, slots, textInput }
+const factoryWidgetState = new Map();
+
+// Track warehouse widget state per player: connectionId -> { roomId, warehouseLocationKey, items, capacity, deeds }
+const warehouseWidgetState = new Map();
+
 // Create authentication handlers
 const { 
   createLoginHandler, 
@@ -131,22 +148,11 @@ setupRoutes(app, {
   registerHandler,
   logoutHandler,
   getAccountInfoHandler,
-  activeAccountSessions
+  activeAccountSessions,
+  activeCharacterWindows,
+  connectedPlayers
 });
 
-// ============================================================
-// Shared State
-// ============================================================
-
-// Track connected players: connectionId -> { ws, roomId, playerName, playerId, sessionId }
-const connectedPlayers = new Map();
-let nextConnectionId = 1;
-
-// Track factory widget state per player: connectionId -> { roomId, slots, textInput }
-const factoryWidgetState = new Map();
-
-// Track warehouse widget state per player: connectionId -> { roomId, warehouseLocationKey, items, capacity, deeds }
-const warehouseWidgetState = new Map();
 
 // ============================================================
 // WebSocket Connection Handling
@@ -158,6 +164,7 @@ wss.on('connection', (ws, req) => {
   let connectionId = null;
   let sessionId = null;
   let playerName = null;
+  // Note: windowId will be extracted from authenticateSession message data
   
   // Get session from upgrade request
   const session = getSessionFromRequest(req);
@@ -181,7 +188,8 @@ wss.on('connection', (ws, req) => {
         sessionId,
         playerName,
         session,
-        nextConnectionId
+        nextConnectionId,
+        activeCharacterWindows
       };
       
       // Dispatch to appropriate handler
@@ -270,6 +278,12 @@ wss.on('connection', (ws, req) => {
       // Clean up factory state and Lore Keeper engagement timers
       factoryWidgetState.delete(connId);
       cleanupLoreKeeperEngagement(connId);
+      
+      // Clean up window tracking
+      if (disconnectedPlayerId) {
+        activeCharacterWindows.delete(disconnectedPlayerId);
+      }
+      
       connectedPlayers.delete(connId);
 
       // Notify others in the room

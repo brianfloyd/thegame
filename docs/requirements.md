@@ -1634,6 +1634,78 @@ The following 4 room types are FIXED, PERMANENT, and must always exist:
 - Depositing 150 shards becomes 1 crown + 50 shards in bank
 - Withdrawing 1 crown from bank gives 1 crown (or 100 shards if requested)
 
+## Multi-Window Character System
+
+### Overview
+The character selection system supports multiple simultaneous character sessions via popup windows. Each character can be opened in its own popup window, allowing players to play multiple characters at once from the same account.
+
+### Key Features
+
+1. **Popup Window Opening**: Clicking a character opens a new popup window (1200x800) instead of redirecting the main window
+2. **Window Tracking**: Server tracks active character windows per account
+3. **Status Display**: Landing page shows "Active" badge and "Close Window" button for characters with open windows
+4. **Window Communication**: Parent-child window communication via postMessage API
+5. **Heartbeat System**: Popup windows send periodic heartbeat messages to parent
+6. **Remote Close**: Landing page can close popup windows remotely
+7. **Exit Button Behavior**: Exit button closes popup if in popup mode, redirects if in main window
+
+### Architecture
+
+#### Client-Side (Landing Page)
+- **Window Tracking**: `characterWindows` Map stores window references (characterName -> window)
+- **Polling**: Polls `/api/active-windows` every 3 seconds to sync with server state
+- **postMessage**: Listens for messages from popup windows (WINDOW_OPENED, WINDOW_HEARTBEAT, WINDOW_CLOSED)
+- **UI Updates**: Dynamically shows/hides "Active" badge and "Close Window" button
+
+#### Client-Side (Popup Window)
+- **Popup Detection**: Detects if opened as popup via URL parameter `?popup=true&windowId=...&playerName=...`
+- **Parent Communication**: Sends WINDOW_OPENED, WINDOW_HEARTBEAT, WINDOW_CLOSED messages to parent
+- **Heartbeat**: Sends heartbeat every 2 seconds to indicate window is alive
+- **Close Handling**: Listens for WINDOW_CLOSE_REQUEST from parent and closes window
+- **Exit Button**: Closes popup window instead of redirecting
+
+#### Server-Side
+- **Window Tracking**: `activeCharacterWindows` Map (playerId -> { windowId, playerName, accountId, openedAt, connectionId })
+- **Connection Tracking**: `connectedPlayers` includes `windowId` and `accountId` fields
+- **API Endpoints**:
+  - `GET /api/active-windows` - Returns list of active character windows for current account
+  - `POST /api/close-character-window?playerName=...` - Closes WebSocket connection and removes window tracking
+- **WebSocket**: Window ID passed in `authenticateSession` message, stored with connection
+
+### Session Management
+
+- **Account Sessions**: Only one account session per account (unchanged)
+- **Player Sessions**: Multiple player sessions per account allowed (one per character window)
+- **Session Persistence**: Character sessions persist independently; account session remains active on landing page
+- **Server Restarts**: In-memory window tracking is lost on restart, but windows reconnect and re-register automatically
+
+### Window States
+
+A player can be in one of these states:
+1. **Not Connected**: No active window, character button is clickable
+2. **Active Window**: Window is open and connected, shows "Active" badge and "Close Window" button
+3. **Disconnected**: Window was closed or connection lost, cleaned up automatically
+
+### Files Modified
+
+- `public/index.html` - Character selection, window management, polling, postMessage handling
+- `public/client.js` - Popup detection, exit button logic, postMessage communication, heartbeat
+- `server.js` - Window tracking Maps, WebSocket connection handling
+- `handlers/game.js` - Window registration in authenticateSession
+- `routes/api.js` - Active windows and close window endpoints
+- `public/style.css` - Active window indicators (if needed)
+
+### Testing Considerations
+
+- Multiple popups open simultaneously
+- Closing popup from landing page
+- Closing popup directly (X button)
+- Popup losing connection
+- Returning to landing page while popup is open
+- Browser refresh scenarios
+- Popup blocker handling
+- Server restart scenarios (windows reconnect and re-register)
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database

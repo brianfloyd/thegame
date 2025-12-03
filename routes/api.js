@@ -273,6 +273,108 @@ function setupRoutes(app, options) {
   // Character selection endpoint (requires account session)
   app.post('/api/select-character', characterSelectionHandler);
   
+  // Get active character windows for current account
+  app.get('/api/active-windows', optionalSession, (req, res) => {
+    if (!req.session.accountId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    
+    try {
+      // Get activeCharacterWindows from server.js (passed via options)
+      const activeCharacterWindows = options.activeCharacterWindows || new Map();
+      const accountId = req.session.accountId;
+      
+      // Filter windows for this account
+      const accountWindows = [];
+      for (const [playerId, windowData] of activeCharacterWindows.entries()) {
+        if (windowData.accountId === accountId) {
+          // Check if connection is still active
+          const connectedPlayers = options.connectedPlayers || new Map();
+          let isConnected = false;
+          for (const [connId, playerData] of connectedPlayers.entries()) {
+            if (playerData.playerId === playerId && playerData.ws.readyState === 1) { // WebSocket.OPEN
+              isConnected = true;
+              break;
+            }
+          }
+          
+          if (isConnected) {
+            accountWindows.push({
+              playerId: playerId,
+              playerName: windowData.playerName,
+              windowId: windowData.windowId,
+              openedAt: windowData.openedAt
+            });
+          } else {
+            // Clean up disconnected window
+            activeCharacterWindows.delete(playerId);
+          }
+        }
+      }
+      
+      res.json({ success: true, activeWindows: accountWindows });
+    } catch (error) {
+      console.error('Error fetching active windows:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch active windows' });
+    }
+  });
+  
+  // Close character window endpoint
+  app.post('/api/close-character-window', optionalSession, async (req, res) => {
+    if (!req.session.accountId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    
+    const { playerName } = req.query;
+    if (!playerName) {
+      return res.status(400).json({ success: false, error: 'playerName required' });
+    }
+    
+    try {
+      const accountId = req.session.accountId;
+      const connectedPlayers = options.connectedPlayers || new Map();
+      const activeCharacterWindows = options.activeCharacterWindows || new Map();
+      
+      // Find player by name and verify ownership
+      const player = await options.db.getPlayerByName(playerName);
+      if (!player) {
+        return res.status(404).json({ success: false, error: 'Player not found' });
+      }
+      
+      // Verify player belongs to account
+      const userCharacters = await options.db.getUserCharacters(accountId);
+      const playerBelongsToAccount = userCharacters.some(char => char.id === player.id);
+      if (!playerBelongsToAccount) {
+        return res.status(403).json({ success: false, error: 'Player does not belong to account' });
+      }
+      
+      // Find and close WebSocket connection
+      let connectionClosed = false;
+      for (const [connId, playerData] of connectedPlayers.entries()) {
+        if (playerData.playerId === player.id && playerData.accountId === accountId) {
+          // Close WebSocket connection
+          if (playerData.ws.readyState === 1) { // WebSocket.OPEN
+            playerData.ws.close();
+            connectionClosed = true;
+          }
+          
+          // Remove from connected players
+          connectedPlayers.delete(connId);
+          
+          // Remove from active windows
+          activeCharacterWindows.delete(player.id);
+          
+          break;
+        }
+      }
+      
+      res.json({ success: true, connectionClosed });
+    } catch (error) {
+      console.error('Error closing character window:', error);
+      res.status(500).json({ success: false, error: 'Failed to close character window' });
+    }
+  });
+  
   // Create character endpoint (requires account session)
   app.post('/api/create-character', async (req, res) => {
     if (!req.session.accountId) {
