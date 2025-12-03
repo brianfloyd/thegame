@@ -285,13 +285,9 @@ function setupRoutes(app, options) {
       const accountId = req.session.accountId;
       const connectedPlayers = options.connectedPlayers || new Map();
       
-      // Grace period: consider player active for 5 minutes after window closes
-      const GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
-      const now = Date.now();
-      
       // Filter windows for this account
+      // Players stay active indefinitely until explicitly closed via "Close Window" button
       const accountWindows = [];
-      const windowsToCleanup = [];
       
       for (const [playerId, windowData] of activeCharacterWindows.entries()) {
         if (windowData.accountId === accountId) {
@@ -304,38 +300,16 @@ function setupRoutes(app, options) {
             }
           }
           
-          if (isConnected) {
-            // Connection is active - definitely include
-            accountWindows.push({
-              playerId: playerId,
-              playerName: windowData.playerName,
-              windowId: windowData.windowId,
-              openedAt: windowData.openedAt,
-              hasActiveConnection: true
-            });
-          } else {
-            // Connection is closed, but check if within grace period
-            const timeSinceOpened = now - windowData.openedAt;
-            if (timeSinceOpened < GRACE_PERIOD_MS) {
-              // Within grace period - still consider active (window was recently closed)
-              accountWindows.push({
-                playerId: playerId,
-                playerName: windowData.playerName,
-                windowId: windowData.windowId,
-                openedAt: windowData.openedAt,
-                hasActiveConnection: false
-              });
-            } else {
-              // Outside grace period - mark for cleanup
-              windowsToCleanup.push(playerId);
-            }
-          }
+          // Include player whether connection is active or not
+          // They stay "active" until explicitly closed
+          accountWindows.push({
+            playerId: playerId,
+            playerName: windowData.playerName,
+            windowId: windowData.windowId,
+            openedAt: windowData.openedAt,
+            hasActiveConnection: isConnected
+          });
         }
-      }
-      
-      // Clean up windows outside grace period
-      for (const playerId of windowsToCleanup) {
-        activeCharacterWindows.delete(playerId);
       }
       
       res.json({ success: true, activeWindows: accountWindows });
@@ -346,6 +320,8 @@ function setupRoutes(app, options) {
   });
   
   // Close character window endpoint
+  // This is the ONLY way to remove a player from activeCharacterWindows
+  // Players stay active indefinitely until this endpoint is called
   app.post('/api/close-character-window', optionalSession, async (req, res) => {
     if (!req.session.accountId) {
       return res.status(401).json({ success: false, error: 'Not authenticated' });
@@ -379,20 +355,22 @@ function setupRoutes(app, options) {
       for (const [connId, playerData] of connectedPlayers.entries()) {
         if (playerData.playerId === player.id && playerData.accountId === accountId) {
           // Close WebSocket connection
-          if (playerData.ws.readyState === 1) { // WebSocket.OPEN
+          if (playerData.ws && playerData.ws.readyState === 1) { // WebSocket.OPEN
             playerData.ws.close();
             connectionClosed = true;
           }
           
           // Remove from connected players
           connectedPlayers.delete(connId);
-          
-          // Remove from active windows
-          activeCharacterWindows.delete(player.id);
-          
           break;
         }
       }
+      
+      // Remove from activeCharacterWindows (this is the explicit close action)
+      // Players stay active indefinitely until this endpoint is called
+      activeCharacterWindows.delete(player.id);
+      
+      console.log(`Player ${playerName} (ID: ${player.id}) explicitly closed - removed from activeCharacterWindows`);
       
       res.json({ success: true, connectionClosed });
     } catch (error) {
