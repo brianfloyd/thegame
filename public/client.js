@@ -762,9 +762,13 @@ function handleMessage(data) {
                     option.textContent = map.name;
                     selector.appendChild(option);
                 });
-                // Set to current player's map if available
+                // Set to current player's map if available and load it
                 if (currentMapId) {
                     selector.value = currentMapId;
+                    // If map editor is open, load the current map
+                    if (mapEditor && !mapEditor.classList.contains('hidden')) {
+                        loadMapForEditor(currentMapId);
+                    }
                 }
             }
             if (targetMapSelect) {
@@ -2925,6 +2929,272 @@ let mapRooms = [];
 let currentRoomPos = { x: 0, y: 0 };
 let currentMapId = null;
 let currentMapName = null;
+// ============================================================
+// REUSABLE MAP RENDERER UTILITY
+// ============================================================
+
+/**
+ * Centralized map rendering utility for all map widgets
+ * Handles coordinate conversion, room drawing, click/hover detection
+ */
+class MapRenderer {
+    constructor(config) {
+        this.canvas = config.canvas;
+        this.ctx = config.ctx;
+        this.cellSize = config.cellSize || 10;
+        this.gridSize = config.gridSize || null; // null = dynamic, number = fixed grid
+        this.zoom = config.zoom || 1.0;
+        this.panX = config.panX || 0;
+        this.panY = config.panY || 0;
+        this.minCellSize = config.minCellSize || 8;
+        this.maxCellSize = config.maxCellSize || null;
+        
+        // Callbacks
+        this.onRoomClick = config.onRoomClick || null;
+        this.onRoomHover = config.onRoomHover || null;
+        this.getRoomColor = config.getRoomColor || this.defaultRoomColor;
+        this.getRoomBorder = config.getRoomBorder || this.defaultRoomBorder;
+        this.shouldDrawConnections = config.shouldDrawConnections || false;
+        
+        // Internal state
+        this.renderedBounds = null; // { minX, maxX, minY, maxY, offsetX, offsetY, cellSize }
+    }
+    
+    /**
+     * Calculate rendering bounds based on rooms and configuration
+     */
+    calculateBounds(rooms, centerRoom = null) {
+        if (this.gridSize !== null) {
+            // Fixed grid mode (like main map widget)
+            const halfSize = Math.floor(this.gridSize / 2);
+            if (centerRoom) {
+                return {
+                    minX: centerRoom.x - halfSize,
+                    maxX: centerRoom.x + halfSize,
+                    minY: centerRoom.y - halfSize,
+                    maxY: centerRoom.y + halfSize,
+                    cellSize: this.cellSize,
+                    offsetX: (this.canvas.width - this.gridSize * this.cellSize) / 2,
+                    offsetY: (this.canvas.height - this.gridSize * this.cellSize) / 2
+                };
+            }
+        }
+        
+        // Dynamic bounds mode (like jump/auto-path widgets)
+        if (rooms.length === 0) {
+            return null;
+        }
+        
+        const minX = Math.min(...rooms.map(r => r.x));
+        const maxX = Math.max(...rooms.map(r => r.x));
+        const minY = Math.min(...rooms.map(r => r.y));
+        const maxY = Math.max(...rooms.map(r => r.y));
+        
+        const gridWidth = maxX - minX + 1;
+        const gridHeight = maxY - minY + 1;
+        
+        // Calculate cell size to fit canvas
+        let cellSize = this.cellSize;
+        if (this.canvas && this.canvas.width && this.canvas.height) {
+            const cellSizeX = Math.floor((this.canvas.width - 40) / gridWidth);
+            const cellSizeY = Math.floor((this.canvas.height - 40) / gridHeight);
+            cellSize = Math.min(cellSizeX, cellSizeY);
+            if (this.maxCellSize) cellSize = Math.min(cellSize, this.maxCellSize);
+            cellSize = Math.max(cellSize, this.minCellSize);
+        }
+        
+        // Apply zoom if in editor mode
+        if (this.zoom !== 1.0) {
+            cellSize = cellSize * this.zoom;
+        }
+        
+        const offsetX = Math.floor((this.canvas.width - gridWidth * cellSize) / 2) - (this.panX * cellSize);
+        const offsetY = Math.floor((this.canvas.height - gridHeight * cellSize) / 2) + (this.panY * cellSize);
+        
+        return { minX, maxX, minY, maxY, cellSize, offsetX, offsetY };
+    }
+    
+    /**
+     * Convert screen coordinates to map coordinates
+     */
+    screenToMap(screenX, screenY) {
+        if (!this.renderedBounds) return null;
+        
+        const { minX, maxY, cellSize, offsetX, offsetY } = this.renderedBounds;
+        const gridX = Math.floor((screenX - offsetX) / cellSize) + minX;
+        const gridY = maxY - Math.floor((screenY - offsetY) / cellSize);
+        
+        return { x: gridX, y: gridY };
+    }
+    
+    /**
+     * Convert map coordinates to screen coordinates
+     */
+    mapToScreen(mapX, mapY) {
+        if (!this.renderedBounds) return null;
+        
+        const { minX, maxY, cellSize, offsetX, offsetY } = this.renderedBounds;
+        const screenX = offsetX + (mapX - minX) * cellSize;
+        const screenY = offsetY + (maxY - mapY) * cellSize;
+        
+        return { x: screenX, y: screenY };
+    }
+    
+    /**
+     * Get room at screen position
+     */
+    getRoomAtPosition(screenX, screenY, rooms) {
+        const coords = this.screenToMap(screenX, screenY);
+        if (!coords) return null;
+        
+        return rooms.find(r => r.x === coords.x && r.y === coords.y) || null;
+    }
+    
+    /**
+     * Draw a single room
+     */
+    drawRoom(room, bounds) {
+        if (!this.ctx || !bounds) return;
+        
+        const { minX, maxY, cellSize, offsetX, offsetY } = bounds;
+        
+        // Check if room is in visible bounds
+        if (room.x < bounds.minX || room.x > bounds.maxX || 
+            room.y < bounds.minY || room.y > bounds.maxY) {
+            return;
+        }
+        
+        const screenX = offsetX + (room.x - minX) * cellSize;
+        const screenY = offsetY + (maxY - room.y) * cellSize;
+        
+        // Get room styling
+        const fillColor = this.getRoomColor(room);
+        const border = this.getRoomBorder(room);
+        
+        // Draw room fill
+        this.ctx.fillStyle = fillColor;
+        const roomSize = cellSize - 2;
+        this.ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        
+        // Draw border
+        this.ctx.strokeStyle = border.color || '#333';
+        this.ctx.lineWidth = border.width || 1;
+        this.ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        
+        return { screenX, screenY, roomSize };
+    }
+    
+    /**
+     * Draw connections between adjacent rooms
+     */
+    drawConnections(rooms, bounds, roomMap) {
+        if (!this.ctx || !bounds || !this.shouldDrawConnections) return;
+        
+        const { minX, maxX, minY, maxY, cellSize, offsetX, offsetY } = bounds;
+        
+        this.ctx.strokeStyle = '#333';
+        this.ctx.lineWidth = 1;
+        
+        const directions = [
+            { dx: 0, dy: -1 }, // N
+            { dx: 1, dy: -1 }, // NE
+            { dx: 1, dy: 0 },  // E
+            { dx: 1, dy: 1 },  // SE
+            { dx: 0, dy: 1 },  // S
+            { dx: -1, dy: 1 }, // SW
+            { dx: -1, dy: 0 }, // W
+            { dx: -1, dy: -1 } // NW
+        ];
+        
+        rooms.forEach(room => {
+            if (room.x < minX || room.x > maxX || room.y < minY || room.y > maxY) return;
+            
+            const screenX = offsetX + (room.x - minX) * cellSize;
+            const screenY = offsetY + (maxY - room.y) * cellSize;
+            const roomCenterX = screenX + cellSize / 2;
+            const roomCenterY = screenY + cellSize / 2;
+            
+            directions.forEach(dir => {
+                const adjX = room.x + dir.dx;
+                const adjY = room.y + dir.dy;
+                const adjKey = `${adjX},${adjY}`;
+                
+                if (roomMap && roomMap.has(adjKey)) {
+                    const adjRoom = roomMap.get(adjKey);
+                    if (adjRoom.x >= minX && adjRoom.x <= maxX && 
+                        adjRoom.y >= minY && adjRoom.y <= maxY) {
+                        const adjScreenX = offsetX + (adjRoom.x - minX) * cellSize;
+                        const adjScreenY = offsetY + (maxY - adjRoom.y) * cellSize;
+                        const adjCenterX = adjScreenX + cellSize / 2;
+                        const adjCenterY = adjScreenY + cellSize / 2;
+                        
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(roomCenterX, roomCenterY);
+                        this.ctx.lineTo(adjCenterX, adjCenterY);
+                        this.ctx.stroke();
+                    }
+                }
+            });
+        });
+    }
+    
+    /**
+     * Render map with rooms
+     */
+    render(rooms, centerRoom = null, clearColor = '#0a0a0a') {
+        if (!this.canvas || !this.ctx) return;
+        
+        // Clear canvas
+        this.ctx.fillStyle = clearColor;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Calculate bounds
+        this.renderedBounds = this.calculateBounds(rooms, centerRoom);
+        if (!this.renderedBounds) return;
+        
+        // Create room map for connections
+        const roomMap = this.shouldDrawConnections ? new Map() : null;
+        if (roomMap) {
+            rooms.forEach(room => {
+                roomMap.set(`${room.x},${room.y}`, room);
+            });
+        }
+        
+        // Draw connections first (behind rooms)
+        if (this.shouldDrawConnections) {
+            this.drawConnections(rooms, this.renderedBounds, roomMap);
+        }
+        
+        // Draw rooms
+        rooms.forEach(room => {
+            this.drawRoom(room, this.renderedBounds);
+        });
+        
+        // Store bounds in canvas dataset for click detection
+        if (this.canvas) {
+            this.canvas.dataset.minX = this.renderedBounds.minX;
+            this.canvas.dataset.maxY = this.renderedBounds.maxY;
+            this.canvas.dataset.offsetX = this.renderedBounds.offsetX;
+            this.canvas.dataset.offsetY = this.renderedBounds.offsetY;
+            this.canvas.dataset.cellSize = this.renderedBounds.cellSize;
+        }
+    }
+    
+    /**
+     * Default room color function
+     */
+    defaultRoomColor(room) {
+        return '#666';
+    }
+    
+    /**
+     * Default room border function
+     */
+    defaultRoomBorder(room) {
+        return { color: '#333', width: 1 };
+    }
+}
+
 let mapCanvas = null;
 let mapCtx = null;
 let mapTooltip = null; // Tooltip element for room hover info
@@ -2935,6 +3205,9 @@ let roomTypeColors = { // Default colors
 };
 const MAP_SIZE = 25; // 25x25 grid
 const CELL_SIZE = 10; // Size of each cell in pixels
+
+// Main map renderer instance
+let mainMapRenderer = null;
 
 // Initialize map
 function initializeMap(rooms, currentRoom, mapId, typeColors) {
@@ -2965,6 +3238,44 @@ function initializeMap(rooms, currentRoom, mapId, typeColors) {
         mapCanvas.width = viewport.clientWidth;
         mapCanvas.height = viewport.clientHeight;
     }
+    
+    // Initialize or update MapRenderer
+    mainMapRenderer = new MapRenderer({
+        canvas: mapCanvas,
+        ctx: mapCtx,
+        cellSize: CELL_SIZE,
+        gridSize: MAP_SIZE,
+        shouldDrawConnections: true,
+        getRoomColor: (room) => {
+            const isCurrentRoom = room.mapId === currentMapId &&
+                                  room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y;
+            const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
+            
+            if (isCurrentRoom) {
+                return '#00ff00'; // Bright green for current room
+            } else if (hasConnection) {
+                return '#ffffff'; // White for rooms with connections
+            } else {
+                const roomType = room.roomType || room.room_type || 'normal';
+                return roomTypeColors[roomType] || roomTypeColors.normal || '#666';
+            }
+        },
+        getRoomBorder: (room) => {
+            const isCurrentRoom = room.mapId === currentMapId &&
+                                  room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y;
+            const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
+            
+            if (isCurrentRoom) {
+                return { color: '#ffff00', width: 2 }; // Yellow border for current room
+            } else if (hasConnection) {
+                return { color: '#cccccc', width: 1 }; // Light grey border for connected rooms
+            } else {
+                return { color: '#333', width: 1 }; // Dark border for other rooms
+            }
+        }
+    });
     
     // Create tooltip element if it doesn't exist
     if (!mapTooltip) {
@@ -3051,34 +3362,9 @@ function setupMapTooltips() {
 
 // Get room at screen coordinates
 function getRoomAtScreenPosition(screenX, screenY) {
-    if (!mapCanvas || mapRooms.length === 0) return null;
+    if (!mainMapRenderer || mapRooms.length === 0) return null;
     
-    const MAP_SIZE = 25;
-    const CELL_SIZE = 10;
-    
-    // Calculate visible range
-    const centerX = currentRoomPos.x;
-    const centerY = currentRoomPos.y;
-    const halfSize = Math.floor(MAP_SIZE / 2);
-    const minX = centerX - halfSize;
-    const maxX = centerX + halfSize;
-    const minY = centerY - halfSize;
-    const maxY = centerY + halfSize;
-    
-    // Calculate offset for centering
-    const offsetX = (mapCanvas.width - MAP_SIZE * CELL_SIZE) / 2;
-    const offsetY = (mapCanvas.height - MAP_SIZE * CELL_SIZE) / 2;
-    
-    // Convert screen coordinates to map coordinates
-    const mapX = minX + Math.floor((screenX - offsetX) / CELL_SIZE);
-    const mapY = maxY - Math.floor((screenY - offsetY) / CELL_SIZE); // Flip Y
-    
-    // Find room at these coordinates
-    return mapRooms.find(room => 
-        room.mapId === currentMapId && 
-        room.x === mapX && 
-        room.y === mapY
-    ) || null;
+    return mainMapRenderer.getRoomAtPosition(screenX, screenY, mapRooms.filter(room => room.mapId === currentMapId));
 }
 
 // Show map tooltip
@@ -3125,142 +3411,38 @@ function hideMapTooltip() {
 
 // Render the map
 function renderMap() {
-    if (!mapCanvas || !mapCtx) return;
+    if (!mainMapRenderer) return;
     
-    // Clear canvas
-    mapCtx.fillStyle = '#0a0a0a';
-    mapCtx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+    // Filter to only current map rooms
+    const currentMapRooms = mapRooms.filter(room => room.mapId === currentMapId);
     
-    // Calculate viewport bounds (centered on player)
-    const centerX = Math.floor(MAP_SIZE / 2);
-    const centerY = Math.floor(MAP_SIZE / 2);
-    
-    const minX = currentRoomPos.x - centerX;
-    const maxX = currentRoomPos.x + centerX;
-    const minY = currentRoomPos.y - centerY;
-    const maxY = currentRoomPos.y + centerY;
-    
-    // Create a map of rooms by coordinates
-    const roomMap = new Map();
-    mapRooms.forEach(room => {
-        roomMap.set(`${room.x},${room.y}`, room);
-    });
-    
-    // Draw grid and rooms
-    const offsetX = (mapCanvas.width - MAP_SIZE * CELL_SIZE) / 2;
-    const offsetY = (mapCanvas.height - MAP_SIZE * CELL_SIZE) / 2;
-    
-    // Draw connections first (so they appear behind rooms)
-    mapCtx.strokeStyle = '#333';
-    mapCtx.lineWidth = 1;
-    
-    mapRooms.forEach(room => {
-        if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
-            // Flip Y coordinate (screen Y increases downward, game Y increases upward)
-            const screenX = offsetX + (room.x - minX) * CELL_SIZE;
-            const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
-            const roomCenterX = screenX + CELL_SIZE / 2;
-            const roomCenterY = screenY + CELL_SIZE / 2;
-            
-            // Check for adjacent rooms and draw connections
-            const directions = [
-                { dx: 0, dy: -1 }, // N
-                { dx: 1, dy: -1 }, // NE
-                { dx: 1, dy: 0 },  // E
-                { dx: 1, dy: 1 },  // SE
-                { dx: 0, dy: 1 },  // S
-                { dx: -1, dy: 1 }, // SW
-                { dx: -1, dy: 0 }, // W
-                { dx: -1, dy: -1 } // NW
-            ];
-            
-            directions.forEach(dir => {
-                const adjX = room.x + dir.dx;
-                const adjY = room.y + dir.dy;
-                const adjKey = `${adjX},${adjY}`;
-                
-                if (roomMap.has(adjKey)) {
-                    const adjRoom = roomMap.get(adjKey);
-                    if (adjRoom.x >= minX && adjRoom.x <= maxX && adjRoom.y >= minY && adjRoom.y <= maxY) {
-                        const adjScreenX = offsetX + (adjRoom.x - minX) * CELL_SIZE;
-                        const adjScreenY = offsetY + (maxY - adjRoom.y) * CELL_SIZE;
-                        const adjCenterX = adjScreenX + CELL_SIZE / 2;
-                        const adjCenterY = adjScreenY + CELL_SIZE / 2;
-                        
-                        mapCtx.beginPath();
-                        mapCtx.moveTo(roomCenterX, roomCenterY);
-                        mapCtx.lineTo(adjCenterX, adjCenterY);
-                        mapCtx.stroke();
-                    }
-                }
-            });
-        }
-    });
-    
-    // Draw rooms (only current map - no preview rooms)
-    mapRooms.forEach(room => {
-        if (room.x >= minX && room.x <= maxX && room.y >= minY && room.y <= maxY) {
-            // Flip Y coordinate (screen Y increases downward, game Y increases upward)
-            // Use (maxY - room.y) to correctly invert Y-axis
-            const screenX = offsetX + (room.x - minX) * CELL_SIZE;
-            const screenY = offsetY + (maxY - room.y) * CELL_SIZE;
-            
-            // Check if this is the current room
-            const isCurrentRoom = room.mapId === currentMapId &&
-                                  room.x === currentRoomPos.x && 
-                                  room.y === currentRoomPos.y;
-            
-            // Check if this room has a connection to another map
-            const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
-            
-            // Draw room square
-            if (isCurrentRoom) {
-                mapCtx.fillStyle = '#00ff00'; // Bright green for current room (always highlighted)
-            } else if (hasConnection) {
-                mapCtx.fillStyle = '#ffffff'; // White for rooms with connections
-            } else {
-                // Use room type color
-                const roomType = room.roomType || room.room_type || 'normal';
-                mapCtx.fillStyle = roomTypeColors[roomType] || roomTypeColors.normal || '#666';
-            }
-            mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-            
-            // Draw border
-            if (isCurrentRoom) {
-                mapCtx.strokeStyle = '#ffff00'; // Yellow border for current room
-                mapCtx.lineWidth = 2;
-            } else if (hasConnection) {
-                mapCtx.strokeStyle = '#cccccc'; // Light grey border for connected rooms
-                mapCtx.lineWidth = 1;
-            } else {
-                mapCtx.strokeStyle = '#333'; // Dark border for other rooms
-                mapCtx.lineWidth = 1;
-            }
-            mapCtx.strokeRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-        }
-    });
+    // Render using MapRenderer
+    mainMapRenderer.render(currentMapRooms, currentRoomPos);
     
     // Always draw current room indicator, even if room not found in mapRooms
     // This ensures the player position is always visible
-    if (currentRoomPos.x >= minX && currentRoomPos.x <= maxX && 
-        currentRoomPos.y >= minY && currentRoomPos.y <= maxY) {
-        const screenX = offsetX + (currentRoomPos.x - minX) * CELL_SIZE;
-        const screenY = offsetY + (maxY - currentRoomPos.y) * CELL_SIZE;
+    if (mainMapRenderer.renderedBounds) {
+        const { minX, maxX, minY, maxY, cellSize, offsetX, offsetY } = mainMapRenderer.renderedBounds;
         
-        // Check if we already drew this room
-        const roomExists = mapRooms.some(r => 
-            r.mapId === currentMapId && 
-            r.x === currentRoomPos.x && 
-            r.y === currentRoomPos.y
-        );
-        
-        if (!roomExists) {
-            // Draw current room indicator (bright green with yellow border)
-            mapCtx.fillStyle = '#00ff00';
-            mapCtx.fillRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-            mapCtx.strokeStyle = '#ffff00';
-            mapCtx.lineWidth = 2;
-            mapCtx.strokeRect(screenX + 1, screenY + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        if (currentRoomPos.x >= minX && currentRoomPos.x <= maxX && 
+            currentRoomPos.y >= minY && currentRoomPos.y <= maxY) {
+            const screenX = offsetX + (currentRoomPos.x - minX) * cellSize;
+            const screenY = offsetY + (maxY - currentRoomPos.y) * cellSize;
+            
+            // Check if we already drew this room
+            const roomExists = currentMapRooms.some(r => 
+                r.x === currentRoomPos.x && 
+                r.y === currentRoomPos.y
+            );
+            
+            if (!roomExists) {
+                // Draw current room indicator (bright green with yellow border)
+                mapCtx.fillStyle = '#00ff00';
+                mapCtx.fillRect(screenX + 1, screenY + 1, cellSize - 2, cellSize - 2);
+                mapCtx.strokeStyle = '#ffff00';
+                mapCtx.lineWidth = 2;
+                mapCtx.strokeRect(screenX + 1, screenY + 1, cellSize - 2, cellSize - 2);
+            }
         }
     }
 }
@@ -4950,6 +5132,7 @@ let jumpWidgetRooms = [];
 let jumpWidgetCanvas = null;
 let jumpWidgetCtx = null;
 let jumpWidgetSelectedMap = null;
+let jumpWidgetRenderer = null;
 const JUMP_CELL_SIZE = 15;
 
 function openJumpWidget() {
@@ -4961,6 +5144,34 @@ function openJumpWidget() {
     // Initialize canvas
     jumpWidgetCanvas = document.getElementById('jumpMapCanvas');
     jumpWidgetCtx = jumpWidgetCanvas.getContext('2d');
+    
+    // Initialize MapRenderer for jump widget
+    jumpWidgetRenderer = new MapRenderer({
+        canvas: jumpWidgetCanvas,
+        ctx: jumpWidgetCtx,
+        cellSize: JUMP_CELL_SIZE,
+        gridSize: null, // Dynamic bounds
+        maxCellSize: JUMP_CELL_SIZE,
+        minCellSize: 8,
+        getRoomColor: (room) => {
+            const isCurrentRoom = room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y &&
+                                  jumpWidgetSelectedMap === currentMapId;
+            if (isCurrentRoom) {
+                return '#00ff00';
+            } else if (room.connected_map_id) {
+                return '#ffffff';
+            } else {
+                return '#666';
+            }
+        },
+        getRoomBorder: (room) => {
+            const isCurrentRoom = room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y &&
+                                  jumpWidgetSelectedMap === currentMapId;
+            return isCurrentRoom ? { color: '#ffff00', width: 2 } : { color: '#333', width: 1 };
+        }
+    });
     
     // Request map list from server
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -5026,18 +5237,18 @@ function populateJumpRooms(rooms) {
 }
 
 function clearJumpCanvas() {
-    if (!jumpWidgetCtx) return;
+    if (!jumpWidgetCtx || !jumpWidgetCanvas) return;
     jumpWidgetCtx.fillStyle = '#050505';
     jumpWidgetCtx.fillRect(0, 0, jumpWidgetCanvas.width, jumpWidgetCanvas.height);
 }
 
 function renderJumpMap() {
-    if (!jumpWidgetCtx || jumpWidgetRooms.length === 0) {
+    if (!jumpWidgetRenderer || jumpWidgetRooms.length === 0) {
         clearJumpCanvas();
         return;
     }
     
-    // Calculate bounds
+    // Calculate dynamic canvas size based on room bounds
     const minX = Math.min(...jumpWidgetRooms.map(r => r.x));
     const maxX = Math.max(...jumpWidgetRooms.map(r => r.x));
     const minY = Math.min(...jumpWidgetRooms.map(r => r.y));
@@ -5053,62 +5264,13 @@ function renderJumpMap() {
     jumpWidgetCanvas.width = canvasWidth;
     jumpWidgetCanvas.height = canvasHeight;
     
-    // Clear canvas
-    jumpWidgetCtx.fillStyle = '#050505';
-    jumpWidgetCtx.fillRect(0, 0, canvasWidth, canvasHeight);
-    
-    // Calculate offset to center the map
-    const offsetX = Math.floor((canvasWidth - gridWidth * JUMP_CELL_SIZE) / 2);
-    const offsetY = Math.floor((canvasHeight - gridHeight * JUMP_CELL_SIZE) / 2);
-    
-    // Store rendering info for click detection
-    jumpWidgetCanvas.dataset.minX = minX;
-    jumpWidgetCanvas.dataset.maxY = maxY;
-    jumpWidgetCanvas.dataset.offsetX = offsetX;
-    jumpWidgetCanvas.dataset.offsetY = offsetY;
-    
-    // Draw rooms
-    jumpWidgetRooms.forEach(room => {
-        const screenX = offsetX + (room.x - minX) * JUMP_CELL_SIZE;
-        const screenY = offsetY + (maxY - room.y) * JUMP_CELL_SIZE;
-        
-        // Check if current player is in this room
-        const isCurrentRoom = room.x === currentRoomPos.x && 
-                              room.y === currentRoomPos.y &&
-                              jumpWidgetSelectedMap === currentMapId;
-        
-        // Room fill color
-        if (isCurrentRoom) {
-            jumpWidgetCtx.fillStyle = '#00ff00';
-        } else if (room.connected_map_id) {
-            jumpWidgetCtx.fillStyle = '#ffffff';
-        } else {
-            jumpWidgetCtx.fillStyle = '#666';
-        }
-        
-        jumpWidgetCtx.fillRect(screenX + 1, screenY + 1, JUMP_CELL_SIZE - 2, JUMP_CELL_SIZE - 2);
-        
-        // Border
-        jumpWidgetCtx.strokeStyle = isCurrentRoom ? '#ffff00' : '#333';
-        jumpWidgetCtx.lineWidth = isCurrentRoom ? 2 : 1;
-        jumpWidgetCtx.strokeRect(screenX + 1, screenY + 1, JUMP_CELL_SIZE - 2, JUMP_CELL_SIZE - 2);
-    });
+    // Render using MapRenderer
+    jumpWidgetRenderer.render(jumpWidgetRooms, null, '#050505');
 }
 
 function getJumpRoomAtPosition(canvasX, canvasY) {
-    if (!jumpWidgetCanvas || jumpWidgetRooms.length === 0) return null;
-    
-    const minX = parseInt(jumpWidgetCanvas.dataset.minX);
-    const maxY = parseInt(jumpWidgetCanvas.dataset.maxY);
-    const offsetX = parseInt(jumpWidgetCanvas.dataset.offsetX);
-    const offsetY = parseInt(jumpWidgetCanvas.dataset.offsetY);
-    
-    // Convert canvas coords to grid coords
-    const gridX = Math.floor((canvasX - offsetX) / JUMP_CELL_SIZE) + minX;
-    const gridY = maxY - Math.floor((canvasY - offsetY) / JUMP_CELL_SIZE);
-    
-    // Find room at these coordinates
-    return jumpWidgetRooms.find(r => r.x === gridX && r.y === gridY);
+    if (!jumpWidgetRenderer || jumpWidgetRooms.length === 0) return null;
+    return jumpWidgetRenderer.getRoomAtPosition(canvasX, canvasY, jumpWidgetRooms);
 }
 
 function onJumpCanvasHover(e) {
@@ -5160,6 +5322,7 @@ let autoPathCanvas = null;
 let autoPathCtx = null;
 let autoPathSelectedMap = null;
 let autoPathSelectedRoom = null;
+let autoPathRenderer = null;
 const AUTO_PATH_CELL_SIZE = 15;
 
 function openAutoPathPanel() {
@@ -5171,6 +5334,48 @@ function openAutoPathPanel() {
     // Initialize canvas
     autoPathCanvas = document.getElementById('autoPathMapCanvas');
     autoPathCtx = autoPathCanvas.getContext('2d');
+    
+    // Initialize MapRenderer for auto-path widget
+    autoPathRenderer = new MapRenderer({
+        canvas: autoPathCanvas,
+        ctx: autoPathCtx,
+        cellSize: AUTO_PATH_CELL_SIZE,
+        gridSize: null, // Dynamic bounds
+        maxCellSize: AUTO_PATH_CELL_SIZE,
+        minCellSize: 8,
+        getRoomColor: (room) => {
+            const isCurrentRoom = currentRoomPos && currentMapId &&
+                                  room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y &&
+                                  autoPathSelectedMap === currentMapId;
+            const isSelectedRoom = autoPathSelectedRoom && autoPathSelectedRoom.id === room.id;
+            
+            if (isCurrentRoom) {
+                return '#00ff00';
+            } else if (isSelectedRoom) {
+                return '#ff8800';
+            } else if (room.connected_map_id) {
+                return '#ffffff';
+            } else {
+                return '#666';
+            }
+        },
+        getRoomBorder: (room) => {
+            const isCurrentRoom = currentRoomPos && currentMapId &&
+                                  room.x === currentRoomPos.x && 
+                                  room.y === currentRoomPos.y &&
+                                  autoPathSelectedMap === currentMapId;
+            const isSelectedRoom = autoPathSelectedRoom && autoPathSelectedRoom.id === room.id;
+            
+            if (isCurrentRoom) {
+                return { color: '#ffff00', width: 2 };
+            } else if (isSelectedRoom) {
+                return { color: '#ff8800', width: 2 };
+            } else {
+                return { color: '#333', width: 1 };
+            }
+        }
+    });
     
     // Request map list from server
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -5259,7 +5464,7 @@ function clearAutoPathCanvas() {
 }
 
 function renderAutoPathMap() {
-    if (!autoPathCtx || !autoPathCanvas || autoPathRooms.length === 0) {
+    if (!autoPathRenderer || autoPathRooms.length === 0) {
         clearAutoPathCanvas();
         return;
     }
@@ -5271,7 +5476,7 @@ function renderAutoPathMap() {
     const containerWidth = container.clientWidth - 30; // Account for padding
     const containerHeight = container.clientHeight - 30;
     
-    // Calculate bounds
+    // Size canvas to fit container
     const minX = Math.min(...autoPathRooms.map(r => r.x));
     const maxX = Math.max(...autoPathRooms.map(r => r.x));
     const minY = Math.min(...autoPathRooms.map(r => r.y));
@@ -5283,7 +5488,7 @@ function renderAutoPathMap() {
     // Calculate cell size to fit container, but maintain minimum size
     const cellSizeX = Math.floor((containerWidth - 40) / gridWidth);
     const cellSizeY = Math.floor((containerHeight - 40) / gridHeight);
-    const cellSize = Math.max(Math.min(cellSizeX, cellSizeY, AUTO_PATH_CELL_SIZE), 8); // Min 8px, max original size
+    const cellSize = Math.max(Math.min(cellSizeX, cellSizeY, AUTO_PATH_CELL_SIZE), 8);
     
     // Size canvas to fit container
     const canvasWidth = Math.min(gridWidth * cellSize + 40, containerWidth);
@@ -5292,83 +5497,17 @@ function renderAutoPathMap() {
     autoPathCanvas.width = canvasWidth;
     autoPathCanvas.height = canvasHeight;
     
-    // Store cell size for click detection
-    autoPathCanvas.dataset.cellSize = cellSize;
+    // Update renderer cell size
+    autoPathRenderer.cellSize = cellSize;
+    autoPathRenderer.maxCellSize = cellSize;
     
-    // Clear canvas
-    autoPathCtx.fillStyle = '#050505';
-    autoPathCtx.fillRect(0, 0, canvasWidth, canvasHeight);
-    
-    // Calculate offset to center the map
-    const offsetX = Math.floor((canvasWidth - gridWidth * cellSize) / 2);
-    const offsetY = Math.floor((canvasHeight - gridHeight * cellSize) / 2);
-    
-    // Store rendering info for click detection
-    autoPathCanvas.dataset.minX = minX;
-    autoPathCanvas.dataset.maxY = maxY;
-    autoPathCanvas.dataset.offsetX = offsetX;
-    autoPathCanvas.dataset.offsetY = offsetY;
-    autoPathCanvas.dataset.cellSize = cellSize;
-    
-    // Draw rooms
-    autoPathRooms.forEach(room => {
-        const screenX = offsetX + (room.x - minX) * cellSize;
-        const screenY = offsetY + (maxY - room.y) * cellSize;
-        
-        // Check if current player is in this room
-        // Note: currentRoomPos and currentMapId are set when map data is received
-        const isCurrentRoom = currentRoomPos && currentMapId &&
-                              room.x === currentRoomPos.x && 
-                              room.y === currentRoomPos.y &&
-                              autoPathSelectedMap === currentMapId;
-        
-        // Check if this is the selected destination room
-        const isSelectedRoom = autoPathSelectedRoom && autoPathSelectedRoom.id === room.id;
-        
-        // Room fill color
-        if (isCurrentRoom) {
-            autoPathCtx.fillStyle = '#00ff00';
-        } else if (isSelectedRoom) {
-            autoPathCtx.fillStyle = '#ff8800';
-        } else if (room.connected_map_id) {
-            autoPathCtx.fillStyle = '#ffffff';
-        } else {
-            autoPathCtx.fillStyle = '#666';
-        }
-        
-        const roomSize = cellSize - 2;
-        autoPathCtx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
-        
-        // Border
-        if (isCurrentRoom) {
-            autoPathCtx.strokeStyle = '#ffff00';
-            autoPathCtx.lineWidth = 2;
-        } else if (isSelectedRoom) {
-            autoPathCtx.strokeStyle = '#ff8800';
-            autoPathCtx.lineWidth = 2;
-        } else {
-            autoPathCtx.strokeStyle = '#333';
-            autoPathCtx.lineWidth = 1;
-        }
-        autoPathCtx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
-    });
+    // Render using MapRenderer
+    autoPathRenderer.render(autoPathRooms, null, '#050505');
 }
 
 function getAutoPathRoomAtPosition(canvasX, canvasY) {
-    if (!autoPathCanvas || autoPathRooms.length === 0) return null;
-    
-    const minX = parseInt(autoPathCanvas.dataset.minX);
-    const maxY = parseInt(autoPathCanvas.dataset.maxY);
-    const offsetX = parseInt(autoPathCanvas.dataset.offsetX);
-    const offsetY = parseInt(autoPathCanvas.dataset.offsetY);
-    const cellSize = parseFloat(autoPathCanvas.dataset.cellSize) || AUTO_PATH_CELL_SIZE;
-    
-    // Convert canvas coords to grid coords
-    const gridX = Math.floor((canvasX - offsetX) / cellSize) + minX;
-    const gridY = maxY - Math.floor((canvasY - offsetY) / cellSize);
-    
-    // Find room at these coordinates
-    return autoPathRooms.find(r => r.x === gridX && r.y === gridY);
+    if (!autoPathRenderer || autoPathRooms.length === 0) return null;
+    return autoPathRenderer.getRoomAtPosition(canvasX, canvasY, autoPathRooms);
 }
 
 function onAutoPathCanvasHover(e) {
@@ -5788,14 +5927,17 @@ function openMapEditor() {
     }
     
     // Load current player's map by default if available
-    if (currentMapId) {
-        loadMapForEditor(currentMapId);
-        // Set map selector to current map
-        const mapSelector = document.getElementById('mapSelector');
-        if (mapSelector) {
-            mapSelector.value = currentMapId;
+    // Use setTimeout to ensure getAllMaps response is processed first
+    setTimeout(() => {
+        if (currentMapId) {
+            loadMapForEditor(currentMapId);
+            // Set map selector to current map
+            const mapSelector = document.getElementById('mapSelector');
+            if (mapSelector) {
+                mapSelector.value = currentMapId;
+            }
         }
-    }
+    }, 100);
 }
 
 // Close map editor
