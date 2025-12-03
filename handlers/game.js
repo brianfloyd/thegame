@@ -488,9 +488,45 @@ async function move(ctx, data) {
     return;
   }
 
-  // Check if auto-navigation is active
+  // Check if auto-navigation or path execution is active
   const playerData = connectedPlayers.get(connectionId);
-  if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
+  
+  // Check path execution first (higher priority)
+  if (playerData && playerData.pathExecution && playerData.pathExecution.isActive) {
+    const { steps, currentStep, isLooping } = playerData.pathExecution;
+    // Calculate the actual step index (handle loop wrapping) - same logic as executeNextPathStep
+    let actualStep = currentStep;
+    if (currentStep >= steps.length && isLooping) {
+      actualStep = currentStep % steps.length;
+    }
+    if (actualStep < steps.length && steps.length > 0) {
+      const expectedStep = steps[actualStep];
+      const moveDirection = data.direction ? data.direction.toUpperCase() : null;
+      const expectedDirection = expectedStep.direction ? expectedStep.direction.toUpperCase() : null;
+      // If this move matches the expected step, allow it (it's from path execution)
+      console.log(`[Path Execution Check] currentStep=${currentStep}, actualStep=${actualStep}, moveDirection=${moveDirection}, expectedDirection=${expectedDirection}, stepCount=${steps.length}, isLooping=${isLooping}`);
+      if (moveDirection && expectedDirection && moveDirection === expectedDirection) {
+        // This is the path execution move, allow it to proceed
+        console.log(`[Path Execution] Move allowed: ${moveDirection}`);
+      } else {
+        // Manual move attempt during path execution - block it
+        console.log(`[Path Execution] Move blocked: direction mismatch or missing data`);
+        ws.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
+        }));
+        return;
+      }
+    } else {
+      // Should not happen, but block manual moves
+      console.log(`[Path Execution] Move blocked: invalid step index`);
+      ws.send(JSON.stringify({ 
+        type: 'error', 
+        message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
+      }));
+      return;
+    }
+  } else if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
     // Check if this move is part of auto-navigation (matches current step)
     const { path, currentStep } = playerData.autoNavigation;
     if (currentStep < path.length) {
@@ -854,9 +890,16 @@ async function move(ctx, data) {
 
   console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
   
-  // Continue auto-navigation if active
-  if (playerData.autoNavigation && playerData.autoNavigation.isActive) {
-    // Increment step
+  // Continue path execution or auto-navigation if active
+  if (playerData.pathExecution && playerData.pathExecution.isActive) {
+    // Path execution move
+    playerData.pathExecution.currentStep++;
+    playerData.pathExecution.timeoutId = null;
+    
+    // Continue to next step
+    executeNextPathStep(ctx, connectionId);
+  } else if (playerData.autoNavigation && playerData.autoNavigation.isActive) {
+    // Auto-navigation move
     playerData.autoNavigation.currentStep++;
     playerData.autoNavigation.timeoutId = null;
     
@@ -3805,11 +3848,40 @@ async function executeNextAutoNavigationStep(ctx, connectionId) {
   if (currentStep >= path.length) {
     // Navigation complete
     playerData.autoNavigation = null;
-    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
-      playerData.ws.send(JSON.stringify({ 
-        type: 'autoNavigationComplete',
-        message: 'Auto-navigation complete! You have reached your destination.'
-      }));
+    
+    // Check if there's a pending path execution
+    if (playerData.pendingPathExecution) {
+      // Start path execution immediately
+      const pendingPath = playerData.pendingPathExecution;
+      playerData.pendingPathExecution = null;
+      
+      // Start path execution
+      playerData.pathExecution = {
+        pathId: pendingPath.pathId,
+        pathType: pendingPath.pathType,
+        steps: pendingPath.steps,
+        currentStep: 0,
+        isActive: true,
+        timeoutId: null,
+        isLooping: pendingPath.pathType === 'loop'
+      };
+      
+      // Begin first path step
+      executeNextPathStep(ctx, connectionId);
+      
+      if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+        playerData.ws.send(JSON.stringify({ 
+          type: 'autoNavigationComplete',
+          message: 'Reached path origin. Starting path execution...'
+        }));
+      }
+    } else {
+      if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+        playerData.ws.send(JSON.stringify({ 
+          type: 'autoNavigationComplete',
+          message: 'Auto-navigation complete! You have reached your destination.'
+        }));
+      }
     }
     return;
   }
@@ -4162,6 +4234,350 @@ async function getPathingRoom(ctx, data) {
   }
 }
 
+/**
+ * Get all paths/loops for the current player across all maps
+ */
+async function getAllPlayerPaths(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  try {
+    const paths = await db.getAllPathsByPlayer(playerData.playerId);
+    ws.send(JSON.stringify({
+      type: 'allPlayerPaths',
+      paths: paths
+    }));
+  } catch (error) {
+    console.error('Error getting all player paths:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get paths: ' + error.message }));
+  }
+}
+
+/**
+ * Get detailed information about a specific path/loop including all steps
+ */
+async function getPathDetails(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  const { pathId } = data;
+  if (!pathId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Path ID required' }));
+    return;
+  }
+
+  try {
+    const path = await db.getPathById(pathId);
+    if (!path) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Path not found' }));
+      return;
+    }
+
+    // Verify path belongs to player (security check)
+    if (path.player_id !== playerData.playerId) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Access denied' }));
+      return;
+    }
+
+    // Get all steps for this path
+    const steps = await db.getPathSteps(pathId);
+    
+    // Get room details for each step
+    const stepsWithDetails = await Promise.all(steps.map(async (step) => {
+      const room = await db.getRoomById(step.room_id);
+      return {
+        stepIndex: step.step_index,
+        roomId: step.room_id,
+        roomName: room ? room.name : 'Unknown',
+        x: room ? room.x : null,
+        y: room ? room.y : null,
+        direction: step.direction,
+        mapId: room ? room.map_id : null
+      };
+    }));
+
+    ws.send(JSON.stringify({
+      type: 'pathDetails',
+      path: {
+        id: path.id,
+        name: path.name,
+        pathType: path.path_type,
+        originRoomId: path.origin_room_id,
+        mapId: path.map_id
+      },
+      steps: stepsWithDetails
+    }));
+  } catch (error) {
+    console.error('Error getting path details:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get path details: ' + error.message }));
+  }
+}
+
+/**
+ * Start executing a path or loop
+ */
+async function startPathExecution(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  const { pathId } = data;
+  if (!pathId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Path ID required' }));
+    return;
+  }
+
+  try {
+    // Get path details
+    const path = await db.getPathById(pathId);
+    if (!path) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Path not found' }));
+      return;
+    }
+
+    // Verify path belongs to player
+    if (path.player_id !== playerData.playerId) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Access denied' }));
+      return;
+    }
+
+    // Get path steps
+    const steps = await db.getPathSteps(pathId);
+    if (!steps || steps.length === 0) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Path has no steps' }));
+      return;
+    }
+    
+    // Filter out steps with empty directions (these shouldn't exist, but handle gracefully)
+    const validSteps = steps.filter(s => s.direction && s.direction.trim() !== '');
+    if (validSteps.length === 0) {
+      console.error('Path execution: No valid steps with directions found');
+      ws.send(JSON.stringify({ 
+        type: 'error', 
+        message: 'Path has no valid steps with directions. Please recreate the path.' 
+      }));
+      return;
+    }
+    
+    if (validSteps.length < steps.length) {
+      console.warn(`Path execution: Filtered out ${steps.length - validSteps.length} steps with empty directions`);
+    }
+    
+    console.log(`Path execution: Loaded ${validSteps.length} valid steps with directions:`, validSteps.map(s => s.direction));
+
+    // Check if player is at origin room
+    const isAtOrigin = playerData.roomId === path.origin_room_id;
+
+    if (!isAtOrigin) {
+      // Need to navigate to origin first
+      const { findPath } = require('../utils/pathfinding');
+      const autoPath = await findPath(playerData.roomId, path.origin_room_id, db);
+      
+      if (autoPath === null) {
+        ws.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'No path found to origin room.' 
+        }));
+        return;
+      }
+
+      // Store pending path execution (use filtered valid steps)
+      playerData.pendingPathExecution = {
+        pathId: path.id,
+        pathType: path.path_type,
+        steps: validSteps.map(s => ({ direction: s.direction, roomId: s.room_id })),
+        originRoomId: path.origin_room_id
+      };
+
+      // Start auto-navigation to origin
+      playerData.autoNavigation = {
+        path: autoPath,
+        currentStep: 0,
+        isActive: true,
+        timeoutId: null
+      };
+
+      // Begin first movement step
+      executeNextAutoNavigationStep(ctx, connectionId);
+
+      ws.send(JSON.stringify({ 
+        type: 'pathExecutionStarted',
+        message: 'Navigating to path origin...',
+        needsNavigation: true
+      }));
+    } else {
+      // Already at origin, start path execution immediately (use filtered valid steps)
+      playerData.pathExecution = {
+        pathId: path.id,
+        pathType: path.path_type,
+        steps: validSteps.map(s => ({ direction: s.direction, roomId: s.room_id })),
+        currentStep: 0,
+        isActive: true,
+        timeoutId: null,
+        isLooping: path.path_type === 'loop'
+      };
+
+      // Begin first path step
+      executeNextPathStep(ctx, connectionId);
+
+      ws.send(JSON.stringify({ 
+        type: 'pathExecutionStarted',
+        message: 'Path execution started.',
+        needsNavigation: false
+      }));
+    }
+  } catch (error) {
+    console.error('Error starting path execution:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to start path execution: ' + error.message }));
+  }
+}
+
+/**
+ * Execute the next step in path/loop execution
+ */
+async function executeNextPathStep(ctx, connectionId) {
+  const { db, connectedPlayers, factoryWidgetState, warehouseWidgetState, sessionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive) {
+    return; // Path execution not active or cleared
+  }
+  
+  const { steps, currentStep, isLooping } = playerData.pathExecution;
+  
+  // Calculate the actual step index (handle loop wrapping)
+  let stepIndex = currentStep;
+  if (currentStep >= steps.length) {
+    if (isLooping) {
+      // Loop: wrap to beginning
+      stepIndex = currentStep % steps.length;
+      playerData.pathExecution.currentStep = stepIndex;
+    } else {
+      // Path: stop execution
+      playerData.pathExecution = null;
+      if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+        playerData.ws.send(JSON.stringify({ 
+          type: 'pathExecutionComplete',
+          message: 'Path execution complete!'
+        }));
+      }
+      return;
+    }
+  }
+  
+  // Get the next step
+  const step = steps[stepIndex];
+  
+  if (!step || !step.direction) {
+    console.error('Invalid step in path execution:', step, 'at index', stepIndex);
+    clearPathExecution(connectedPlayers, connectionId);
+    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      playerData.ws.send(JSON.stringify({ 
+        type: 'pathExecutionFailed',
+        message: 'Path execution stopped: invalid step data'
+      }));
+    }
+    return;
+  }
+  
+  // Get player to check auto_loop_time_ms
+  const player = await db.getPlayerByName(playerData.playerName);
+  const delayMs = (player && player.auto_loop_time_ms) ? player.auto_loop_time_ms : 2000;
+  
+  // Wait for delay, then execute move
+  const timeoutId = setTimeout(async () => {
+    // Check if path execution is still active
+    if (!playerData.pathExecution || !playerData.pathExecution.isActive) {
+      return;
+    }
+    
+    // Call move handler directly
+    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      try {
+        const moveCtx = {
+          ws: playerData.ws,
+          db,
+          connectedPlayers,
+          factoryWidgetState,
+          warehouseWidgetState,
+          connectionId,
+          sessionId,
+          playerName: playerData.playerName
+        };
+        
+        // Call move handler - it will check path execution state and allow the move
+        console.log(`Path execution: Executing step ${stepIndex}/${steps.length}, direction: ${step.direction}, currentStep: ${playerData.pathExecution.currentStep}`);
+        await move(moveCtx, { direction: step.direction });
+        
+        // Note: currentStep is incremented in the move handler after successful move
+        // The move handler calls executeNextPathStep to continue
+      } catch (err) {
+        // Move failed - stop path execution
+        console.error('Path execution move error:', err);
+        clearPathExecution(connectedPlayers, connectionId);
+        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+          playerData.ws.send(JSON.stringify({ 
+            type: 'pathExecutionFailed',
+            message: 'Path execution stopped due to an error: ' + (err.message || err.toString())
+          }));
+        }
+      }
+    } else {
+      // WebSocket closed - stop path execution
+      clearPathExecution(connectedPlayers, connectionId);
+    }
+  }, delayMs);
+  
+  // Store timeout ID for cleanup
+  playerData.pathExecution.timeoutId = timeoutId;
+}
+
+/**
+ * Clear path execution state
+ */
+function clearPathExecution(connectedPlayers, connectionId) {
+  const playerData = connectedPlayers.get(connectionId);
+  if (playerData && playerData.pathExecution) {
+    if (playerData.pathExecution.timeoutId) {
+      clearTimeout(playerData.pathExecution.timeoutId);
+    }
+    playerData.pathExecution = null;
+  }
+  if (playerData && playerData.pendingPathExecution) {
+    playerData.pendingPathExecution = null;
+  }
+}
+
+/**
+ * Stop path/loop execution
+ */
+async function stopPathExecution(ctx, data) {
+  const { ws, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+
+  clearPathExecution(connectedPlayers, connectionId);
+  
+  ws.send(JSON.stringify({ 
+    type: 'pathExecutionStopped',
+    message: 'Path/Loop execution stopped.'
+  }));
+}
+
 module.exports = {
   authenticateSession,
   getWidgetConfig,
@@ -4172,6 +4588,10 @@ module.exports = {
   cancelPathing,
   getPathingRoom,
   getMapData,
+  getAllPlayerPaths,
+  getPathDetails,
+  startPathExecution,
+  stopPathExecution,
   move,
   look,
   inventory,

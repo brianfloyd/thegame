@@ -54,6 +54,10 @@ const handlerMap = {
   savePath: gameHandlers.savePath,
   cancelPathing: gameHandlers.cancelPathing,
   getPathingRoom: gameHandlers.getPathingRoom,
+  getAllPlayerPaths: gameHandlers.getAllPlayerPaths,
+  getPathDetails: gameHandlers.getPathDetails,
+  startPathExecution: gameHandlers.startPathExecution,
+  stopPathExecution: gameHandlers.stopPathExecution,
   getMapData: gameHandlers.getMapData,
   
   // Map editor handlers

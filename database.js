@@ -234,6 +234,13 @@ async function getPathsByPlayerAndMap(playerId, mapId) {
   );
 }
 
+async function getAllPathsByPlayer(playerId) {
+  return getAll(
+    'SELECT * FROM loops WHERE player_id = $1 ORDER BY created_at DESC',
+    [playerId]
+  );
+}
+
 async function getPathById(pathId) {
   return getOne('SELECT * FROM loops WHERE id = $1', [pathId]);
 }
@@ -285,6 +292,13 @@ async function getPathsByPlayerAndMap(playerId, mapId) {
   return getAll(
     'SELECT * FROM loops WHERE player_id = $1 AND map_id = $2 ORDER BY created_at DESC',
     [playerId, mapId]
+  );
+}
+
+async function getAllPathsByPlayer(playerId) {
+  return getAll(
+    'SELECT * FROM loops WHERE player_id = $1 ORDER BY created_at DESC',
+    [playerId]
   );
 }
 
@@ -2484,6 +2498,7 @@ module.exports = {
   // Paths and Loops
   createPath,
   getPathsByPlayerAndMap,
+  getAllPathsByPlayer,
   getPathById,
   getPathSteps,
   deletePath

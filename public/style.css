@@ -2659,6 +2659,48 @@ body {
     fill: currentColor;
 }
 
+.scripting-select {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    padding: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.scripting-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.path-preview-dialog {
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    line-height: 1.4;
+}
+
+.path-preview-dialog strong {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.path-preview-dialog #closePathPreviewBtn {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    line-height: 1;
+}
+
+.path-preview-dialog #closePathPreviewBtn:hover {
+    color: #ffff00;
+}
+
 /* Map Editor Overlay */
 .map-editor-overlay {
     position: fixed;

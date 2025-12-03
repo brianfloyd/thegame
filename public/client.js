@@ -29,6 +29,12 @@ let currentPath = []; // Array of path steps: [{roomId, roomName, x, y, directio
 let pathStartRoom = null;
 let pathingCursorRoom = null;
 
+// Path/Loop execution state
+let allPlayerPaths = []; // All paths/loops for the player
+let selectedPathId = null; // Currently selected path/loop
+let isPathExecuting = false; // Execution state
+let pathPreviewData = null; // Preview route data
+
 // Communication widget state
 let commMode = 'talk'; // 'talk', 'resonate', 'telepath'
 let commHistory = {
@@ -309,6 +315,50 @@ function handleMessage(data) {
             const pathTypeLabel = data.pathType === 'loop' ? 'Loop' : 'Path';
             addToTerminal(`${pathTypeLabel} "${data.name}" saved successfully!`, 'success');
             exitPathingMode();
+            // Reload paths list
+            if (activeWidgets.includes('scripting')) {
+                loadAllPlayerPaths();
+            }
+            break;
+        case 'allPlayerPaths':
+            // Store all paths/loops
+            allPlayerPaths = data.paths || [];
+            populatePathDropdown();
+            break;
+        case 'pathDetails':
+            // Path details received for preview
+            if (data.path && data.steps) {
+                calculatePathPreview(data.path, data.steps);
+            }
+            break;
+        case 'pathExecutionStarted':
+            // Path/Loop execution started
+            isPathExecuting = true;
+            addToTerminal(data.message || 'Path/Loop execution started.', 'success');
+            updatePathExecutionUI();
+            // Close preview dialog if open
+            const previewDialog = document.getElementById('pathPreviewDialog');
+            if (previewDialog) {
+                previewDialog.style.display = 'none';
+            }
+            break;
+        case 'pathExecutionComplete':
+            // Path execution completed (paths only, loops don't complete)
+            isPathExecuting = false;
+            addToTerminal(data.message || 'Path execution complete!', 'success');
+            updatePathExecutionUI();
+            break;
+        case 'pathExecutionStopped':
+            // Path/Loop execution stopped
+            isPathExecuting = false;
+            addToTerminal(data.message || 'Path/Loop execution stopped.', 'info');
+            updatePathExecutionUI();
+            break;
+        case 'pathExecutionFailed':
+            // Path/Loop execution failed
+            isPathExecuting = false;
+            addToTerminal(data.message || 'Path/Loop execution failed.', 'error');
+            updatePathExecutionUI();
             break;
         case 'pathingCancelled':
             // Pathing was cancelled
@@ -650,11 +700,38 @@ function handleMessage(data) {
             populateAutoPathRooms(data.rooms);
             break;
         case 'autoPathCalculated':
-            if (data.path) {
+            if (data.success && data.path) {
                 autoNavigationPath = data.path;
                 displayAutoPathSummary(data.path);
+                
+                // Check if this was for path preview
+                if (window.pendingPathPreview) {
+                    const pending = window.pendingPathPreview;
+                    window.pendingPathPreview = null;
+                    
+                    // Convert auto-path to algorithm rooms format
+                    // Path structure: { roomId, direction, roomName, mapId, mapName }
+                    const algorithmRooms = data.path.map(step => ({
+                        roomId: step.roomId,
+                        roomName: step.roomName || 'Unknown',
+                        x: step.x || null,
+                        y: step.y || null,
+                        direction: step.direction,
+                        mapId: step.mapId,
+                        mapName: step.mapName || `Map ${step.mapId}`
+                    }));
+                    
+                    showPathPreview({
+                        algorithmRooms: algorithmRooms,
+                        playerRooms: pending.playerRooms,
+                        path: pending.path
+                    });
+                }
             } else {
                 addToTerminal(data.message || 'Failed to calculate path', 'error');
+                if (window.pendingPathPreview) {
+                    window.pendingPathPreview = null;
+                }
             }
             break;
         case 'autoNavigationStarted':
@@ -3605,6 +3682,199 @@ function updateMapPosition(newRoom, mapId) {
 }
 
 // ============================================================
+// Path/Loop Execution Functions
+// ============================================================
+
+function loadAllPlayerPaths() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentPlayerName) return;
+    
+    ws.send(JSON.stringify({ type: 'getAllPlayerPaths' }));
+}
+
+function populatePathDropdown() {
+    const dropdown = document.getElementById('pathLoopSelect');
+    if (!dropdown) return;
+    
+    // Clear existing options except the first placeholder
+    dropdown.innerHTML = '<option value="">Select Path/Loop...</option>';
+    
+    // Add all paths/loops
+    allPlayerPaths.forEach(path => {
+        const option = document.createElement('option');
+        option.value = path.id;
+        const typeLabel = path.path_type === 'loop' ? '[Loop]' : '[Path]';
+        option.textContent = `${typeLabel} ${path.name} (Map: ${path.map_id})`;
+        dropdown.appendChild(option);
+    });
+}
+
+function onPathSelectChange() {
+    const dropdown = document.getElementById('pathLoopSelect');
+    const startBtn = document.getElementById('startPathBtn');
+    
+    if (!dropdown || !startBtn) return;
+    
+    selectedPathId = dropdown.value ? parseInt(dropdown.value) : null;
+    
+    // Enable/disable start button
+    startBtn.disabled = !selectedPathId || isPathExecuting;
+    
+    // If path selected, request details for preview
+    if (selectedPathId && !isPathExecuting) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'getPathDetails', pathId: selectedPathId }));
+        }
+    } else {
+        // Hide preview if no path selected
+        const previewDialog = document.getElementById('pathPreviewDialog');
+        if (previewDialog) {
+            previewDialog.style.display = 'none';
+        }
+    }
+}
+
+async function calculatePathPreview(path, steps) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentPlayerName) return;
+    
+    // Get current room
+    const currentRoom = mapRooms.find(r => 
+        r.mapId === currentMapId && 
+        r.x === currentRoomPos.x && 
+        r.y === currentRoomPos.y
+    );
+    
+    if (!currentRoom) {
+        console.error('Current room not found for path preview');
+        return;
+    }
+    
+    const algorithmRooms = [];
+    const playerRooms = steps.map(step => ({
+        roomId: step.roomId,
+        roomName: step.roomName,
+        x: step.x,
+        y: step.y,
+        direction: step.direction,
+        mapId: step.mapId,
+        isAlgorithm: false
+    }));
+    
+    // Check if player is at origin
+    const isAtOrigin = currentRoom.id === path.originRoomId;
+    
+    if (!isAtOrigin) {
+        // Need to calculate path to origin
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            // Request path calculation
+            ws.send(JSON.stringify({ 
+                type: 'calculateAutoPath', 
+                targetRoomId: path.originRoomId 
+            }));
+            
+            // Store pending preview calculation
+            window.pendingPathPreview = {
+                path: path,
+                playerRooms: playerRooms
+            };
+            return;
+        }
+    }
+    
+    // Show preview with just player rooms (already at origin)
+    showPathPreview({
+        algorithmRooms: [],
+        playerRooms: playerRooms,
+        path: path
+    });
+}
+
+function showPathPreview(routeData) {
+    const previewDialog = document.getElementById('pathPreviewDialog');
+    const previewContent = document.getElementById('pathPreviewContent');
+    
+    if (!previewDialog || !previewContent) return;
+    
+    pathPreviewData = routeData;
+    
+    let html = '';
+    
+    // Algorithm route section (if any)
+    if (routeData.algorithmRooms && routeData.algorithmRooms.length > 0) {
+        html += `<div style="margin-bottom: 10px;"><strong style="color: #888;">Algorithm Route (${routeData.algorithmRooms.length} rooms):</strong></div>`;
+        routeData.algorithmRooms.forEach((step, index) => {
+            const prevMapId = routeData.algorithmRooms[index - 1]?.mapId || currentMapId;
+            const mapTransition = step.mapId !== prevMapId 
+                ? `<span style="color: #888; font-style: italic;">→ Map: ${step.mapName || step.mapId}</span> ` 
+                : '';
+            html += `<div style="color: #888; font-style: italic; margin-left: 10px;">${mapTransition}${step.direction} → ${step.roomName}</div>`;
+        });
+        html += '<div style="margin-top: 10px; margin-bottom: 10px; border-top: 1px solid #333;"></div>';
+    }
+    
+    // Player path/loop section
+    const pathTypeLabel = routeData.path.pathType === 'loop' ? 'Loop' : 'Path';
+    html += `<div style="margin-bottom: 10px;"><strong style="color: #00ff00;">Your ${pathTypeLabel} (${routeData.playerRooms.length} rooms):</strong></div>`;
+    routeData.playerRooms.forEach((step, index) => {
+        const prevMapId = routeData.playerRooms[index - 1]?.mapId || currentMapId;
+        const mapTransition = step.mapId !== prevMapId 
+            ? `<span style="color: #00ff00;">→ Map: ${step.mapId}</span> ` 
+            : '';
+        html += `<div style="color: #00ff00; margin-left: 10px;">${mapTransition}${step.direction} → ${step.roomName}</div>`;
+    });
+    
+    previewContent.innerHTML = html;
+    previewDialog.style.display = 'block';
+}
+
+function startPathExecution() {
+    if (!selectedPathId) {
+        addToTerminal('Please select a path or loop first.', 'error');
+        return;
+    }
+    
+    if (isPathExecuting) {
+        addToTerminal('Path/Loop execution is already active.', 'error');
+        return;
+    }
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ 
+            type: 'startPathExecution', 
+            pathId: selectedPathId 
+        }));
+    }
+}
+
+function stopPathExecution() {
+    if (!isPathExecuting) return;
+    
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stopPathExecution' }));
+    }
+}
+
+function updatePathExecutionUI() {
+    const dropdown = document.getElementById('pathLoopSelect');
+    const startBtn = document.getElementById('startPathBtn');
+    const stopBtn = document.getElementById('stopPathBtn');
+    
+    if (!dropdown || !startBtn || !stopBtn) return;
+    
+    if (isPathExecuting) {
+        // Execution active
+        dropdown.disabled = true;
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'block';
+    } else {
+        // Execution inactive
+        dropdown.disabled = false;
+        startBtn.style.display = 'block';
+        stopBtn.style.display = 'none';
+        startBtn.disabled = !selectedPathId;
+    }
+}
+
+// ============================================================
 // Pathing Mode Functions
 // ============================================================
 
@@ -3933,10 +4203,22 @@ function savePath(name, pathType) {
     if (!currentPath || currentPath.length === 0) return;
     
     // Convert path steps to format expected by server
-    const steps = currentPath.map(step => ({
-        roomId: step.roomId,
-        direction: step.direction || ''
-    }));
+    // Filter out steps without directions (shouldn't happen, but be safe)
+    const validSteps = currentPath
+        .filter(step => step.direction && step.direction.trim() !== '')
+        .map(step => ({
+            roomId: step.roomId,
+            direction: step.direction
+        }));
+    
+    if (validSteps.length === 0) {
+        addToTerminal('Cannot save path: No valid steps with directions found.', 'error');
+        return;
+    }
+    
+    if (validSteps.length < currentPath.length) {
+        console.warn(`Filtered out ${currentPath.length - validSteps.length} steps without directions when saving path`);
+    }
     
     ws.send(JSON.stringify({
         type: 'savePath',
@@ -3944,7 +4226,7 @@ function savePath(name, pathType) {
         pathType: pathType,
         mapId: currentMapId,
         originRoomId: pathStartRoom.id,
-        steps: steps
+        steps: validSteps
     }));
 }
 
@@ -5062,6 +5344,11 @@ function updateWidgetDisplay() {
         // Hide scripting slots first
         if (scriptingTopSlot) scriptingTopSlot.style.display = 'none';
         if (scriptingBottomSlot) scriptingBottomSlot.style.display = 'none';
+        
+        // Load paths when scripting widget becomes visible
+        if (activeWidgets.includes('scripting')) {
+            loadAllPlayerPaths();
+        }
         
         // Position scripting widget based on scriptingWidgetPosition
         if (scriptingWidgetPosition === 'top') {
@@ -6447,6 +6734,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (scriptingWalkBtn) {
             scriptingWalkBtn.addEventListener('click', () => {
                 openAutoPathPanel();
+            });
+        }
+        
+        // Path/Loop execution controls
+        const pathLoopSelect = document.getElementById('pathLoopSelect');
+        if (pathLoopSelect) {
+            pathLoopSelect.addEventListener('change', onPathSelectChange);
+        }
+        
+        const startPathBtn = document.getElementById('startPathBtn');
+        if (startPathBtn) {
+            startPathBtn.addEventListener('click', startPathExecution);
+        }
+        
+        const stopPathBtn = document.getElementById('stopPathBtn');
+        if (stopPathBtn) {
+            stopPathBtn.addEventListener('click', stopPathExecution);
+        }
+        
+        const closePathPreviewBtn = document.getElementById('closePathPreviewBtn');
+        if (closePathPreviewBtn) {
+            closePathPreviewBtn.addEventListener('click', () => {
+                const previewDialog = document.getElementById('pathPreviewDialog');
+                if (previewDialog) {
+                    previewDialog.style.display = 'none';
+                }
             });
         }
         
