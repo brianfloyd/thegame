@@ -11,6 +11,7 @@ import MapWidget from './components/MapWidget.js';
 import CompassWidget from './components/CompassWidget.js';
 import CommsWidget from './components/CommsWidget.js';
 import Inventory from './components/Inventory.js';
+import NPCWidget from './components/NPCWidget.js';
 import MapRenderer from './utils/MapRenderer.js';
 
 // Initialize game
@@ -23,6 +24,7 @@ const mapWidget = new MapWidget(game);
 const compassWidget = new CompassWidget(game);
 const commsWidget = new CommsWidget(game);
 const inventory = new Inventory(game);
+const npcWidget = new NPCWidget(game);
 
 // Initialize all components
 terminal.init();
@@ -31,6 +33,7 @@ mapWidget.init();
 compassWidget.init();
 commsWidget.init();
 inventory.init();
+npcWidget.init();
 
 // Set up command line handler
 const commandInput = document.getElementById('commandInput');
@@ -600,6 +603,7 @@ const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'go
 let activeWidgets = ['stats', 'compass', 'map', 'comms']; // Default active widgets
 let godMode = false;
 let hasWarehouseDeed = false;
+let npcWidgetVisible = false; // NPC widget is special - auto-managed
 
 // Update godMode and hasWarehouseDeed from server messages
 game.messageBus.on('player:stats', (data) => {
@@ -717,6 +721,9 @@ function toggleWidget(widgetName) {
     saveWidgetConfig();
 }
 
+// Expose updateWidgetDisplay globally for NPCWidget and other components
+window.updateWidgetDisplay = updateWidgetDisplay;
+
 // Update widget display
 function updateWidgetDisplay() {
     // If scripting widget is being shown and execution is active, show status panel
@@ -792,7 +799,38 @@ function updateWidgetDisplay() {
         emptyWidget.classList.add('hidden');
     }
     
-    // Show active widgets in slots
+    // Update NPC widget visibility from component
+    if (typeof npcWidget !== 'undefined' && npcWidget) {
+        npcWidgetVisible = npcWidget.getVisibility();
+    }
+    
+    // Build list of widgets to actually display in slots
+    // Auto-managed widgets (factory, npc, warehouse) take priority, then activeWidgets
+    let widgetsToShow = [];
+    
+    // NPC widget takes slot if visible (auto-managed)
+    if (npcWidgetVisible) {
+        widgetsToShow.push('npc');
+    }
+    
+    // Add toggleable widgets from activeWidgets (filtered by availability)
+    const filteredActiveWidgets = activeWidgets.filter(w => {
+        if (w === 'godmode' && !godMode) return false;
+        if (w === 'warehouse' && !hasWarehouseDeed) return false;
+        return true;
+    });
+    widgetsToShow.push(...filteredActiveWidgets);
+    
+    // Limit to 4 slots
+    widgetsToShow = widgetsToShow.slice(0, 4);
+    
+    // Hide auto-managed widgets if not in widgetsToShow
+    const npcWidgetEl = document.getElementById('widget-npc');
+    if (npcWidgetEl && !widgetsToShow.includes('npc')) {
+        npcWidgetEl.classList.add('hidden');
+    }
+    
+    // Show widgets in their slots
     slots.forEach((slot, index) => {
         // Always hide empty widget placeholder in this slot
         const slotEmptyWidget = slot.querySelector('.widget-empty');
@@ -800,8 +838,8 @@ function updateWidgetDisplay() {
             slotEmptyWidget.classList.add('hidden');
         }
         
-        if (index < activeWidgets.length) {
-            const widgetName = activeWidgets[index];
+        if (index < widgetsToShow.length) {
+            const widgetName = widgetsToShow[index];
             const widget = document.getElementById(`widget-${widgetName}`);
             if (widget) {
                 slot.style.display = 'block';
