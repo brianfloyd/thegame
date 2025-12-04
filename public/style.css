@@ -625,7 +625,7 @@ body {
         0 0 10px currentColor,
         0 0 15px currentColor,
         0 0 20px currentColor;
-    animation: lorekeeper-pulse 2s ease-in-out infinite;
+    animation: lorekeeper-pulse 2s ease-in-out 3;
 }
 
 /* Lore Keeper glowing text for [text] (preserves original color) */
@@ -636,7 +636,7 @@ body {
         0 0 10px currentColor,
         0 0 15px currentColor,
         0 0 20px currentColor;
-    animation: lorekeeper-pulse 2s ease-in-out infinite;
+    animation: lorekeeper-pulse 2s ease-in-out 3;
     /* Color is inherited from parent, not overridden */
 }
 
@@ -648,7 +648,7 @@ body {
         0 0 10px currentColor,
         0 0 15px currentColor,
         0 0 20px currentColor;
-    animation: lorekeeper-pulse 2s ease-in-out infinite;
+    animation: lorekeeper-pulse 2s ease-in-out 3;
 }
 
 .markup-glow-preserve {
@@ -658,7 +658,7 @@ body {
         0 0 10px currentColor,
         0 0 15px currentColor,
         0 0 20px currentColor;
-    animation: lorekeeper-pulse 2s ease-in-out infinite;
+    animation: lorekeeper-pulse 2s ease-in-out 3;
 }
 
 /* Markup animations for custom effects */

@@ -102,6 +102,19 @@ function getFormattedMessage(messageKey, placeholders = {}) {
     if (messageKey === 'room_on_ground') {
       return 'On the ground: ' + (placeholders['[items array]'] || 'Nothing');
     }
+    // Harvest message fallbacks
+    if (messageKey === 'harvest_begin') {
+      return `You begin harvesting the ${placeholders.npcName || 'creature'}.`;
+    }
+    if (messageKey === 'harvest_miss') {
+      return `Your harvest from ${placeholders.npcName || 'creature'} misses this cycle.`;
+    }
+    if (messageKey === 'harvest_item_produced') {
+      return `${placeholders.npcName || 'creature'} pulses ${placeholders.quantity || 0} ${placeholders.itemName || 'item'} for harvest.`;
+    }
+    if (messageKey === 'harvest_cooldown') {
+      return `${placeholders.npcName || 'creature'} has been harvested and must cooldown before continue harvest.`;
+    }
     return messageKey; // Fallback to key itself
   }
   

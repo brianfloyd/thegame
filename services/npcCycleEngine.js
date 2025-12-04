@@ -220,7 +220,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 // Miss - send miss message to all players in the room (for consistency with other harvest messages)
                 // Get formatted message from database with markup support
                 const missMessage = messageCache.getFormattedMessage('harvest_miss', { npcName: npcName });
-                console.log(`[NPC Cycle] Harvest miss for room_npc ${roomNpc.id}, hitRate=${(hitRate * 100).toFixed(1)}%`);
+                console.log(`[NPC Cycle] Harvest miss for room_npc ${roomNpc.id}, hitRate=${(hitRate * 100).toFixed(1)}%, message: "${missMessage}"`);
                 
                 // Send miss message to all players in the room (same approach as item production messages)
                 if (roomNpc.roomId) {
@@ -279,7 +279,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       itemName: item.itemName 
                     });
                     
-                    console.log(`[NPC Cycle] Sending harvest message: "${npcName} pulses ${item.quantity} ${item.itemName} for harvest." for room_npc ${roomNpc.id}, room ${roomNpc.roomId}`);
+                    console.log(`[NPC Cycle] Sending harvest item message: "${itemMessage}" for room_npc ${roomNpc.id}, room ${roomNpc.roomId}`);
                     
                     // Send to all players in the room
                     let messageSent = false;
@@ -369,7 +369,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               // Get formatted message from database with markup support
               if (roomId) {
                 const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
-                console.log(`[NPC Cycle] Sending cooldown message: "${npcName} has been harvested and must cooldown before continue harvest." for room_npc ${roomNpc.id}, room ${roomId}`);
+                console.log(`[NPC Cycle] Sending cooldown message: "${cooldownMessage}" for room_npc ${roomNpc.id}, room ${roomId}`);
                 
                 // Send synchronously to all players in the room (no await, immediate send)
                 let cooldownMessageSent = false;
