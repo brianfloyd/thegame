@@ -211,7 +211,11 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       color: npc.display_color || npc.color || '#00ffff',
       baseCycleTime: baseCycleTime,
       harvestableTime: npc.harvestableTime || 60000,
-      cooldownTime: npc.cooldownTime || 120000
+      cooldownTime: npc.cooldownTime || 120000,
+      statusMessageIdle: npc.statusMessageIdle || '(idle)',
+      statusMessageReady: npc.statusMessageReady || '(ready)',
+      statusMessageHarvesting: npc.statusMessageHarvesting || '(harvesting)',
+      statusMessageCooldown: npc.statusMessageCooldown || '(cooldown)'
     };
     
     // Calculate harvest/cooldown progress
@@ -435,14 +439,18 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     // Add state description if available (similar to client-side logic)
     if (npc.state && typeof npc.state === 'object') {
       const cycles = npc.state.cycles || 0;
+      let statusMessage = '';
       if (cycles === 0) {
-        npcDisplay += ' (idle)';
+        statusMessage = npc.statusMessageIdle || '(idle)';
       } else if (npc.harvestStatus === 'active') {
-        npcDisplay += ' (harvesting)';
+        statusMessage = npc.statusMessageHarvesting || '(harvesting)';
       } else if (npc.harvestStatus === 'cooldown') {
-        npcDisplay += ' (cooldown)';
+        statusMessage = npc.statusMessageCooldown || '(cooldown)';
       } else {
-        npcDisplay += ' (ready)';
+        statusMessage = npc.statusMessageReady || '(ready)';
+      }
+      if (statusMessage) {
+        npcDisplay += ' ' + statusMessage;
       }
     }
     combinedEntities.push(npcDisplay);
@@ -453,7 +461,7 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   
   // Format room items
   const itemsString = roomItems.length > 0 
-    ? roomItems.map(item => item.name + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
+    ? roomItems.map(item => (item.name || item.item_name) + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
     : 'Nothing';
   
   // Get formatted messages from cache

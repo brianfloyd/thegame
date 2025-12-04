@@ -668,8 +668,19 @@ body {
 }
 
 @keyframes markup-pulse {
-    0%, 100% { font-size: 1em; }
-    50% { font-size: 0.75em; }
+    0%, 100% { 
+        transform: scale(1);
+    }
+    50% { 
+        transform: scale(0.5);
+    }
+}
+
+/* Ensure pulse animation doesn't affect line height */
+.markup-pulse {
+    display: inline-block;
+    transform-origin: center;
+    vertical-align: baseline;
 }
 
 @keyframes lorekeeper-pulse {
@@ -1646,7 +1657,7 @@ body {
 }
 
 .error-message {
-    color: #ff0000;
+    /* Color is handled by markup (!text! makes it red), only set default if no markup */
     margin-top: 10px;
 }
 

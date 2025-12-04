@@ -684,7 +684,10 @@ async function move(ctx, data) {
         message: `Auto-navigation stopped: ${directionName} path blocked.` 
       }));
     } else {
-      ws.send(JSON.stringify({ type: 'error', message: `Ouch! You walked into the wall to the ${directionName}.` }));
+      // Get wall collision message from database
+      const messageCache = require('../utils/messageCache');
+      const wallMessage = messageCache.getFormattedMessage('movement_wall_collision', { direction: directionName });
+      ws.send(JSON.stringify({ type: 'error', message: wallMessage }));
     }
     return;
   }
@@ -835,14 +838,18 @@ async function move(ctx, data) {
     let npcDisplay = npc.name;
     if (npc.state && typeof npc.state === 'object') {
       const cycles = npc.state.cycles || 0;
+      let statusMessage = '';
       if (cycles === 0) {
-        npcDisplay += ' (idle)';
+        statusMessage = npc.statusMessageIdle || '(idle)';
       } else if (npc.state.harvest_active) {
-        npcDisplay += ' (harvesting)';
+        statusMessage = npc.statusMessageHarvesting || '(harvesting)';
       } else if (npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) {
-        npcDisplay += ' (cooldown)';
+        statusMessage = npc.statusMessageCooldown || '(cooldown)';
       } else {
-        npcDisplay += ' (ready)';
+        statusMessage = npc.statusMessageReady || '(ready)';
+      }
+      if (statusMessage) {
+        npcDisplay += ' ' + statusMessage;
       }
     }
     combinedEntities.push(npcDisplay);
@@ -853,7 +860,7 @@ async function move(ctx, data) {
   
   // Format room items
   const itemsString = roomItemsInNewRoom.length > 0 
-    ? roomItemsInNewRoom.map(item => item.name + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
+    ? roomItemsInNewRoom.map(item => (item.name || item.item_name) + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
     : 'Nothing';
   
   // Get formatted messages
@@ -1509,7 +1516,10 @@ async function harvest(ctx, data) {
     }
   }
   
-  ws.send(JSON.stringify({ type: 'message', message: `You begin harvesting the ${roomNpc.name}.` }));
+  // Get formatted message from database
+  const messageCache = require('../utils/messageCache');
+  const beginMessage = messageCache.getFormattedMessage('harvest_begin', { npcName: roomNpc.name });
+  ws.send(JSON.stringify({ type: 'message', message: beginMessage }));
 }
 
 /**

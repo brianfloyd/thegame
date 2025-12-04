@@ -10,7 +10,7 @@ let parentWindow = null;
 let heartbeatInterval = null;
 
 // Widget system state
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting'];
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting', 'runekeeper'];
 // All widgets start off by default - empty widget panel
 let activeWidgets = [];
 let scriptingWidgetPosition = 'top'; // 'top' or 'bottom' - which row the scripting widget occupies
@@ -45,6 +45,59 @@ let commHistory = {
     telepath: []
 };
 let commTargetPlayer = null; // For telepathy mode
+
+// Load Rune Keeper ASCII art (reloads each time widget is shown)
+function loadRuneKeeperArt() {
+    const contentDiv = document.getElementById('runekeeperContent');
+    if (!contentDiv) {
+        console.error('Rune Keeper content div not found');
+        return;
+    }
+    
+    // Always reload the file with cache-busting timestamp
+    const cacheBuster = `?t=${Date.now()}`;
+    const url = `/ascii-images/runekeeper.txt${cacheBuster}`;
+    console.log('Loading Rune Keeper art from:', url);
+    
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then(text => {
+            if (!text || text.trim() === '') {
+                throw new Error('File is empty');
+            }
+            
+            // Center the ASCII art by finding the longest line and padding all lines
+            const lines = text.split('\n');
+            // Filter out completely empty lines for maxLength calculation
+            const nonEmptyLines = lines.filter(line => line.trimEnd().length > 0);
+            if (nonEmptyLines.length === 0) {
+                throw new Error('No content in file');
+            }
+            
+            // Find the longest line (excluding trailing whitespace)
+            const maxLength = Math.max(...nonEmptyLines.map(line => line.trimEnd().length));
+            
+            // Center each line by padding it
+            const centeredLines = lines.map(line => {
+                const trimmed = line.trimEnd();
+                if (trimmed.length === 0) return '';
+                const padding = Math.max(0, Math.floor((maxLength - trimmed.length) / 2));
+                return ' '.repeat(padding) + trimmed;
+            });
+            
+            contentDiv.textContent = centeredLines.join('\n');
+            console.log('Rune Keeper art loaded successfully');
+        })
+        .catch(error => {
+            console.error('Error loading Rune Keeper art:', error);
+            contentDiv.textContent = `Error loading ASCII art: ${error.message}`;
+        });
+}
 
 // Load comms history from localStorage
 function loadCommsHistory() {
@@ -699,6 +752,16 @@ function handleMessage(data) {
                         msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
                         terminalContent.appendChild(msgDiv);
                         terminalContent.scrollTop = terminalContent.scrollHeight;
+                        
+                        // Save plain text message to history too
+                        if (currentPlayerName && ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'saveTerminalMessage',
+                                message: data.message,
+                                messageType: 'info',
+                                messageHtml: msgDiv.innerHTML
+                            }));
+                        }
                     } else {
                         addToTerminal(data.message, 'info');
                     }
@@ -1509,21 +1572,55 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
             playersLine.className = 'players-line';
             
             // Combine players and NPCs
-            const combinedEntities = [];
-            otherPlayers.forEach(p => combinedEntities.push(p));
-            if (npcs && npcs.length > 0) {
-                npcs.forEach(npc => {
-                    const stateDesc = getNPCStateDescription(npc);
-                    combinedEntities.push(npc.name + (stateDesc ? ` (${stateDesc})` : ''));
-                });
-            }
-            
-            if (combinedEntities.length > 0) {
-                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${combinedEntities.join(', ')}`;
-                saveTerminalContentToHistory('Also here: ' + combinedEntities.join(', '), 'info');
+            // Use server-formatted message if available (includes proper comma formatting and markup)
+            if (messages && messages.alsoHere) {
+                // Server already formatted it with commas and markup
+                if (typeof parseMarkup !== 'undefined') {
+                    playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${parseMarkup(messages.alsoHere.replace('Also here: ', ''), '#00ffff')}`;
+                } else {
+                    playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${messages.alsoHere.replace('Also here: ', '')}`;
+                }
+                saveTerminalContentToHistory(messages.alsoHere, 'info');
             } else {
-                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> <span class="player-item">No one else is here.</span>`;
-                saveTerminalContentToHistory('Also here: No one else is here.', 'info');
+                // Fallback: format manually (shouldn't happen if server sends messages.alsoHere)
+                const combinedEntities = [];
+                otherPlayers.forEach(p => combinedEntities.push(p));
+                if (npcs && npcs.length > 0) {
+                    npcs.forEach(npc => {
+                        let npcDisplay = npc.name;
+                        // Use status messages from NPC data if available
+                        if (npc.state && typeof npc.state === 'object') {
+                            const cycles = npc.state.cycles || 0;
+                            let statusMessage = '';
+                            if (cycles === 0) {
+                                statusMessage = npc.statusMessageIdle || '(idle)';
+                            } else if (npc.state.harvest_active || npc.harvestStatus === 'active') {
+                                statusMessage = npc.statusMessageHarvesting || '(harvesting)';
+                            } else if ((npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) || npc.harvestStatus === 'cooldown') {
+                                statusMessage = npc.statusMessageCooldown || '(cooldown)';
+                            } else {
+                                statusMessage = npc.statusMessageReady || '(ready)';
+                            }
+                            if (statusMessage) {
+                                npcDisplay += ' ' + statusMessage;
+                            }
+                        }
+                        combinedEntities.push(npcDisplay);
+                    });
+                }
+                
+                if (combinedEntities.length > 0) {
+                    const formattedList = combinedEntities.join(', ');
+                    if (typeof parseMarkup !== 'undefined') {
+                        playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${parseMarkup(formattedList, '#00ffff')}`;
+                    } else {
+                        playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${formattedList}`;
+                    }
+                    saveTerminalContentToHistory('Also here: ' + formattedList, 'info');
+                } else {
+                    playersLine.innerHTML = `<span class="players-section-title">Also here:</span> <span class="player-item">No one else is here.</span>`;
+                    saveTerminalContentToHistory('Also here: No one else is here.', 'info');
+                }
             }
             
             playersDiv.appendChild(playersLine);
@@ -1802,7 +1899,14 @@ function addToTerminal(message, type = 'info', saveToHistory = true) {
     const terminalContent = document.getElementById('terminalContent');
     const msgDiv = document.createElement('div');
     msgDiv.className = type === 'error' ? 'error-message' : 'info-message';
-    msgDiv.textContent = message;
+    
+    // Apply markup parsing if available
+    if (typeof parseMarkup !== 'undefined') {
+        msgDiv.innerHTML = parseMarkup(message, '#00ffff');
+    } else {
+        msgDiv.textContent = message;
+    }
+    
     terminalContent.appendChild(msgDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
     
@@ -4169,8 +4273,21 @@ function addPathStep(room, direction) {
 
 function updatePathStepCounter() {
     const counter = document.getElementById('pathStepCounter');
+    const messageSpan = document.getElementById('pathingModeMessage');
+    
     if (counter) {
         counter.textContent = `Steps: ${currentPath.length}`;
+    }
+    
+    // Update message based on whether path has started (more than just starting room)
+    if (messageSpan) {
+        if (currentPath.length > 1 && pathingCursorRoom) {
+            // Path has started - show current room name and coordinates
+            messageSpan.textContent = `${pathingCursorRoom.name} (${pathingCursorRoom.x}, ${pathingCursorRoom.y})`;
+        } else {
+            // Path hasn't started yet - show instruction message
+            messageSpan.textContent = 'Pathing Mode Active - Click rooms to build path';
+        }
     }
 }
 
@@ -5730,6 +5847,11 @@ function updateWidgetDisplay() {
                             }
                         }
                     });
+                }
+                
+                // Special handling for runekeeper widget - load ASCII art
+                if (widgetName === 'runekeeper') {
+                    loadRuneKeeperArt();
                 }
                 
                 // Make toggleable widgets draggable

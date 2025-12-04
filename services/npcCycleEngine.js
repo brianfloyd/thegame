@@ -11,6 +11,7 @@ const {
   checkHarvestHit, 
   getHarvestFormulaConfig 
 } = require('../utils/harvestFormulas');
+const messageCache = require('../utils/messageCache');
 
 // NPC Cycle Engine Configuration
 const NPC_TICK_INTERVAL = 1000; // milliseconds (configurable)
@@ -217,7 +218,8 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               
               if (!harvestHit) {
                 // Miss - send miss message to all players in the room (for consistency with other harvest messages)
-                const missMessage = `Your harvest from <span style="color: #00ffff">${npcName}</span> misses this cycle.`;
+                // Get formatted message from database with markup support
+                const missMessage = messageCache.getFormattedMessage('harvest_miss', { npcName: npcName });
                 console.log(`[NPC Cycle] Harvest miss for room_npc ${roomNpc.id}, hitRate=${(hitRate * 100).toFixed(1)}%`);
                 
                 // Send miss message to all players in the room (same approach as item production messages)
@@ -230,8 +232,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       try {
                         playerData.ws.send(JSON.stringify({ 
                           type: 'message', 
-                          message: missMessage,
-                          html: true
+                          message: missMessage
                         }));
                         missMessageSent = true;
                         console.log(`[NPC Cycle] Miss message sent to player ${playerData.playerName} (connId: ${connId})`);
@@ -271,8 +272,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                     await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
                     
                     // Send message to all players in the room about item production
-                    // Format: NPC name (cyan), quantity (white bold), item name (orange), rest (yellow)
-                    const itemMessage = `<span style="color: #00ffff">${npcName}</span> pulses <span style="color: #ffffff; font-weight: bold">${item.quantity}</span> <span style="color: #ffa500">${item.itemName}</span> for harvest.`;
+                    // Get formatted message from database with markup support
+                    const itemMessage = messageCache.getFormattedMessage('harvest_item_produced', { 
+                      npcName: npcName, 
+                      quantity: item.quantity, 
+                      itemName: item.itemName 
+                    });
                     
                     console.log(`[NPC Cycle] Sending harvest message: "${npcName} pulses ${item.quantity} ${item.itemName} for harvest." for room_npc ${roomNpc.id}, room ${roomNpc.roomId}`);
                     
@@ -283,11 +288,10 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                           playerData.ws && 
                           playerData.ws.readyState === WebSocket.OPEN) {
                         try {
-                          playerData.ws.send(JSON.stringify({ 
-                            type: 'message', 
-                            message: itemMessage,
-                            html: true
-                          }));
+                        playerData.ws.send(JSON.stringify({ 
+                          type: 'message', 
+                          message: itemMessage
+                        }));
                           messageSent = true;
                           console.log(`[NPC Cycle] Message sent to player ${playerData.playerName} (connId: ${connId})`);
                         } catch (sendErr) {
@@ -362,8 +366,9 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               // CRITICAL: Send cooldown message IMMEDIATELY, before ending harvest session
               // This ensures the message is sent even if the player disconnects during endHarvestSession
               // Send to all players in room (like harvest item production messages)
+              // Get formatted message from database with markup support
               if (roomId) {
-                const cooldownMessage = `<span style="color: #00ffff">${npcName}</span> has been harvested and must cooldown before continue harvest.`;
+                const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
                 console.log(`[NPC Cycle] Sending cooldown message: "${npcName} has been harvested and must cooldown before continue harvest." for room_npc ${roomNpc.id}, room ${roomId}`);
                 
                 // Send synchronously to all players in the room (no await, immediate send)
@@ -376,8 +381,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       try {
                         playerData.ws.send(JSON.stringify({ 
                           type: 'message', 
-                          message: cooldownMessage,
-                          html: true
+                          message: cooldownMessage
                         }));
                         cooldownMessageSent = true;
                         console.log(`[NPC Cycle] Cooldown message sent to player ${playerData.playerName} (connId: ${connId})`);
