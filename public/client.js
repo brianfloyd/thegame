@@ -268,6 +268,12 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('WebSocket connected');
         
+        // Emit connection event to GameBus
+        GameBus.emit('game:connected', {
+            ws: ws,
+            playerName: currentPlayerName
+        });
+        
         // Authenticate with session
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ 
@@ -441,6 +447,24 @@ function handleMessage(data) {
             if (currentPlayerName && !idleLookInterval) {
                 startIdleLookTimer();
             }
+            // Emit to GameBus - components will handle updates
+            GameBus.emit('room:update', {
+                room: data.room,
+                players: data.players,
+                exits: data.exits,
+                npcs: data.npcs,
+                roomItems: data.roomItems,
+                showFullInfo: data.showFullInfo,
+                messages: data.messages,
+                factoryWidgetState: data.factoryWidgetState,
+                warehouseWidgetState: data.warehouseWidgetState,
+                hasWarehouseDeed: data.hasWarehouseDeed
+            });
+            // Update GameStore
+            if (GameStore && data.room) {
+                GameStore.updateRoom(data.room, data.players, data.npcs, data.roomItems, data.exits, data.room.mapName);
+            }
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Check if path is paused and player has moved to a different room
             if (isPathPaused && pausedPathRoomId && data.room) {
@@ -487,12 +511,32 @@ function handleMessage(data) {
             }
             break;
         case 'playerJoined':
+            // Emit to GameBus - terminal component will handle display
+            GameBus.emit('player:joined', {
+                playerName: data.playerName,
+                direction: data.direction,
+                message: data.message
+            });
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             addPlayerToTerminal(data.playerName, data.direction, data.message);
             break;
         case 'playerLeft':
+            // Emit to GameBus - terminal component will handle display
+            GameBus.emit('player:left', {
+                playerName: data.playerName,
+                direction: data.direction,
+                message: data.message
+            });
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             removePlayerFromTerminal(data.playerName, data.direction, data.message);
             break;
         case 'resonated':
+            // Emit to GameBus - terminal component will handle display
+            GameBus.emit('resonated', {
+                playerName: data.playerName,
+                message: data.message
+            });
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             displayResonatedMessage(data.playerName, data.message);
             // Check if this is from current player or another player
             const isResonatedFromSelf = data.playerName === currentPlayerName;
@@ -513,6 +557,11 @@ function handleMessage(data) {
             addToCommHistory('telepath', currentPlayerName, data.message, false, data.toPlayer);
             break;
         case 'systemMessage':
+            // Emit to GameBus - terminal component will handle display
+            GameBus.emit('system:message', {
+                message: data.message
+            });
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             displaySystemMessage(data.message);
             break;
         case 'loreKeeperMessage':
@@ -529,6 +578,23 @@ function handleMessage(data) {
             });
             break;
         case 'moved':
+            // Emit to GameBus - components will handle updates
+            GameBus.emit('room:moved', {
+                room: data.room,
+                players: data.players,
+                exits: data.exits,
+                npcs: data.npcs,
+                roomItems: data.roomItems,
+                showFullInfo: data.showFullInfo,
+                messages: data.messages,
+                factoryWidgetState: data.factoryWidgetState,
+                warehouseWidgetState: data.warehouseWidgetState
+            });
+            // Update GameStore
+            if (GameStore && data.room) {
+                GameStore.updateRoom(data.room, data.players, data.npcs, data.roomItems, data.exits, data.room.mapName);
+            }
+            // Legacy function call for backward compatibility (will be removed in Phase 4)
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Track if we're in a warehouse room
             isInWarehouseRoom = data.room.roomType === 'warehouse';
@@ -718,66 +784,19 @@ function handleMessage(data) {
             }
             break;
         case 'error':
+            // Emit error to GameBus - terminal component will handle it
             if (data.message) {
-                addToTerminal(data.message, 'error');
+                GameBus.emit('terminal:error', { message: data.message });
             }
             break;
-        case 'error':
-            addToTerminal(data.message, 'error');
-            break;
         case 'message':
+            // Emit message to GameBus - terminal component will handle it consistently
             if (data.message) {
-                if (data.html) {
-                    // Support HTML formatting for messages
-                    const terminalContent = document.getElementById('terminalContent');
-                    const msgDiv = document.createElement('div');
-                    msgDiv.className = 'info-message';
-                    // Check if message contains HTML table (like who command) - don't parse markup for those
-                    const isHtmlTable = data.message.includes('<table') || data.message.includes('<div class="who-list">');
-                    if (isHtmlTable) {
-                        // Direct HTML insertion for tables (who command, etc.)
-                        msgDiv.innerHTML = data.message;
-                    } else if (typeof parseMarkup !== 'undefined') {
-                        // Apply markup parsing for other HTML messages (NPC descriptions, room descriptions, etc.)
-                        msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
-                    } else {
-                        msgDiv.innerHTML = data.message;
-                    }
-                    terminalContent.appendChild(msgDiv);
-                    terminalContent.scrollTop = terminalContent.scrollHeight;
-                    
-                    // Save HTML message to history
-                    if (currentPlayerName && ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({
-                            type: 'saveTerminalMessage',
-                            message: data.message,
-                            messageType: 'info',
-                            messageHtml: msgDiv.innerHTML
-                        }));
-                    }
-                } else {
-                    // Apply markup parsing to plain text messages too
-                    if (typeof parseMarkup !== 'undefined') {
-                        const terminalContent = document.getElementById('terminalContent');
-                        const msgDiv = document.createElement('div');
-                        msgDiv.className = 'info-message';
-                        msgDiv.innerHTML = parseMarkup(data.message, '#00ffff');
-                        terminalContent.appendChild(msgDiv);
-                        terminalContent.scrollTop = terminalContent.scrollHeight;
-                        
-                        // Save plain text message to history too
-                        if (currentPlayerName && ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                type: 'saveTerminalMessage',
-                                message: data.message,
-                                messageType: 'info',
-                                messageHtml: msgDiv.innerHTML
-                            }));
-                        }
-                    } else {
-                        addToTerminal(data.message, 'info');
-                    }
-                }
+                GameBus.emit('terminal:message', {
+                    message: data.message,
+                    type: 'info',
+                    html: data.html || null
+                });
             }
             break;
         case 'merchantList':
