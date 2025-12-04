@@ -1146,26 +1146,16 @@ function openAutoPathPanel() {
     
     autoPathCtx = autoPathCanvas.getContext('2d');
     
-    // Get container and size canvas
+    // Add resize observer to handle container size changes (canvas will be sized in renderAutoPathMap)
     const container = autoPathCanvas.parentElement;
-    if (container) {
-        autoPathCanvas.width = container.clientWidth;
-        autoPathCanvas.height = container.clientHeight;
-        
-        // Add resize observer to handle container size changes
-        if (!autoPathResizeObserver) {
-            autoPathResizeObserver = new ResizeObserver(() => {
-                if (autoPathCanvas && container) {
-                    autoPathCanvas.width = container.clientWidth;
-                    autoPathCanvas.height = container.clientHeight;
-                    // Re-render if we have rooms
-                    if (autoPathRooms.length > 0) {
-                        renderAutoPathMap();
-                    }
-                }
-            });
-            autoPathResizeObserver.observe(container);
-        }
+    if (container && !autoPathResizeObserver) {
+        autoPathResizeObserver = new ResizeObserver(() => {
+            // Re-render if we have rooms (renderAutoPathMap will handle canvas sizing)
+            if (autoPathRooms.length > 0) {
+                renderAutoPathMap();
+            }
+        });
+        autoPathResizeObserver.observe(container);
     }
     
     // Initialize MapRenderer for auto-path widget
@@ -1325,24 +1315,41 @@ function renderAutoPathMap() {
         return;
     }
     
-    // Ensure canvas is sized (should be handled by ResizeObserver, but check here too)
+    // Get container dimensions (matching old client.js approach)
     const container = autoPathCanvas.parentElement;
-    if (container) {
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
-        
-        // Only resize if dimensions changed
-        if (autoPathCanvas.width !== containerWidth || autoPathCanvas.height !== containerHeight) {
-            autoPathCanvas.width = containerWidth;
-            autoPathCanvas.height = containerHeight;
-        }
-    }
+    if (!container) return;
     
-    // Update renderer references in case they changed
+    const containerWidth = container.clientWidth - 30; // Account for padding
+    const containerHeight = container.clientHeight - 30;
+    
+    // Calculate bounds manually (matching old client.js)
+    const minX = Math.min(...autoPathRooms.map(r => r.x));
+    const maxX = Math.max(...autoPathRooms.map(r => r.x));
+    const minY = Math.min(...autoPathRooms.map(r => r.y));
+    const maxY = Math.max(...autoPathRooms.map(r => r.y));
+    
+    const gridWidth = maxX - minX + 1;
+    const gridHeight = maxY - minY + 1;
+    
+    // Calculate cell size to fit container, but maintain minimum size
+    const cellSizeX = Math.floor((containerWidth - 40) / gridWidth);
+    const cellSizeY = Math.floor((containerHeight - 40) / gridHeight);
+    const cellSize = Math.max(Math.min(cellSizeX, cellSizeY, AUTO_PATH_CELL_SIZE), 8);
+    
+    // Size canvas to fit container
+    const canvasWidth = Math.min(gridWidth * cellSize + 40, containerWidth);
+    const canvasHeight = Math.min(gridHeight * cellSize + 40, containerHeight);
+    
+    autoPathCanvas.width = canvasWidth;
+    autoPathCanvas.height = canvasHeight;
+    
+    // Update renderer cell size and references (matching old client.js)
     autoPathRenderer.canvas = autoPathCanvas;
     autoPathRenderer.ctx = autoPathCtx;
+    autoPathRenderer.cellSize = cellSize;
+    autoPathRenderer.maxCellSize = cellSize;
     
-    // Render using MapRenderer (it will calculate bounds dynamically)
+    // Render using MapRenderer
     autoPathRenderer.render(autoPathRooms, null, '#050505');
 }
 
@@ -1383,7 +1390,7 @@ function onAutoPathCanvasClick(e) {
         autoPathSelectedRoom = room;
         renderAutoPathMap();
         
-        // Calculate path
+        // Calculate path (matching old client.js implementation)
         game.send({ 
             type: 'calculateAutoPath', 
             targetRoomId: room.id 
@@ -1391,21 +1398,38 @@ function onAutoPathCanvasClick(e) {
     }
 }
 
-// Handle auto-path calculated from server
+// Handle auto-path calculated from server (matching old client.js implementation)
 game.messageBus.on('autopath:calculated', (data) => {
+    console.log('Auto-path calculated event received:', data);
     if (data.success && data.path) {
         autoNavigationPath = data.path;
+        console.log('Calling displayAutoPathSummary with path:', data.path);
         displayAutoPathSummary(data.path);
     } else {
-        terminal.addMessage(data.message || 'Failed to calculate path', 'error');
+        console.log('Auto-path calculation failed:', data.message);
+        autoNavigationPath = null;
+        const summary = document.getElementById('autoPathSummary');
+        if (summary) {
+            summary.style.display = 'none';
+        }
+        if (data.message) {
+            terminal.addMessage(data.message, 'error');
+        }
     }
 });
 
 function displayAutoPathSummary(path) {
+    console.log('displayAutoPathSummary called with path:', path);
     const summary = document.getElementById('autoPathSummary');
     const stepsDiv = document.getElementById('autoPathSteps');
     
-    if (!summary || !stepsDiv) return;
+    console.log('Summary element:', summary);
+    console.log('Steps div element:', stepsDiv);
+    
+    if (!summary || !stepsDiv) {
+        console.error('Summary or steps div not found!');
+        return;
+    }
     
     if (!path || path.length === 0) {
         stepsDiv.innerHTML = '<div class="path-step">Already at destination!</div>';
@@ -1428,7 +1452,9 @@ function displayAutoPathSummary(path) {
         });
     }
     
+    console.log('Setting summary display to block');
     summary.style.display = 'block';
+    console.log('Summary display after setting:', summary.style.display);
 }
 
 function startAutoNavigation() {
