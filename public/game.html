@@ -53,6 +53,9 @@
                     <button class="widget-icon" data-widget="scripting" title="Automation">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 9V7c0-1.1-.9-2-2-2h-3c0-1.66-1.34-3-3-3S9 3.34 9 5H6c-1.1 0-2 .9-2 2v2c-1.66 0-3 1.34-3 3s1.34 3 3 3v4c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4c1.66 0 3-1.34 3-3s-1.34-3-3-3zm-2 10H6V7h12v12zm-9-6c-.83 0-1.5-.67-1.5-1.5S8.17 10 9 10s1.5.67 1.5 1.5S9.83 13 9 13zm7.5-1.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zM8 15h8v2H8v-2z"/></svg>
                     </button>
+                    <button class="widget-icon" data-widget="runekeeper" title="Rune Keeper">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d=""/></svg>
+                    </button>
                     <button class="widget-exit-btn" id="exitToCharacterSelection" title="Return to Character Selection">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
                     </button>
@@ -106,7 +109,7 @@
                             </div>
                             <div class="widget-content">
                                 <div id="pathingModeIndicator" class="pathing-mode-indicator" style="display: none;">
-                                    <span>Pathing Mode Active - Click rooms to build path</span>
+                                    <span id="pathingModeMessage">Pathing Mode Active - Click rooms to build path</span>
                                     <span id="pathStepCounter">Steps: 0</span>
                                 </div>
                                 <div class="map-viewport" id="mapViewport">
@@ -249,6 +252,13 @@
                                     <input type="text" class="comm-input" id="commInput" placeholder="Type message..." />
                                     <button class="comm-send-btn" id="commSendBtn">Send</button>
                                 </div>
+                            </div>
+                        </div>
+                        <!-- Rune Keeper Widget -->
+                        <div class="widget hidden" id="widget-runekeeper" data-widget="runekeeper">
+                            <div class="widget-header">Rune Keeper</div>
+                            <div class="widget-content" id="runekeeperContent" style="font-family: 'Courier New', monospace; font-size: 4px; line-height: 0.9; white-space: pre; overflow: hidden; color: #00ff00; background: #000; padding: 5px; height: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center;">
+                                <!-- ASCII art will be loaded here -->
                             </div>
                         </div>
                     </div>

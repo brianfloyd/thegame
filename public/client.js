@@ -46,6 +46,11 @@ let commHistory = {
 };
 let commTargetPlayer = null; // For telepathy mode
 
+// Idle auto-look system
+let lastInteractionTime = Date.now(); // Track last keypad/command line interaction
+let idleLookInterval = null; // Interval for checking idle time
+const IDLE_LOOK_DELAY = 30000; // 30 seconds of inactivity before auto-look
+
 // Load Rune Keeper ASCII art (reloads each time widget is shown)
 function loadRuneKeeperArt() {
     const contentDiv = document.getElementById('runekeeperContent');
@@ -284,6 +289,9 @@ function connectWebSocket() {
     ws.onclose = () => {
         console.log('WebSocket disconnected');
         
+        // Stop idle look timer on disconnect
+        stopIdleLookTimer();
+        
         // If restart was requested, redirect to character selection
         if (restartRequested) {
             restartRequested = false; // Clear flag
@@ -429,6 +437,10 @@ function handleMessage(data) {
             // Pathing was cancelled
             break;
         case 'roomUpdate':
+            // Start idle look timer when player enters game (first room update)
+            if (currentPlayerName && !idleLookInterval) {
+                startIdleLookTimer();
+            }
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Check if path is paused and player has moved to a different room
             if (isPathPaused && pausedPathRoomId && data.room) {
@@ -475,10 +487,10 @@ function handleMessage(data) {
             }
             break;
         case 'playerJoined':
-            addPlayerToTerminal(data.playerName, data.direction);
+            addPlayerToTerminal(data.playerName, data.direction, data.message);
             break;
         case 'playerLeft':
-            removePlayerFromTerminal(data.playerName, data.direction);
+            removePlayerFromTerminal(data.playerName, data.direction, data.message);
             break;
         case 'resonated':
             displayResonatedMessage(data.playerName, data.message);
@@ -1531,33 +1543,62 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
             const alsoHereLine = document.createElement('span');
             alsoHereLine.className = 'players-line';
             
-            // Parse markup and set innerHTML
+            // Parse markup and set innerHTML first
             if (typeof parseMarkup !== 'undefined') {
                 alsoHereLine.innerHTML = parseMarkup(messages.alsoHere, '#00ffff');
             } else {
                 alsoHereLine.textContent = messages.alsoHere;
             }
             
-            // Add click handlers for player names (if they exist in the message)
+            // Add click handlers for player names by replacing them in the parsed HTML
+            // Do this carefully to preserve the message structure
             const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
             otherPlayers.forEach(playerName => {
-                const playerSpans = alsoHereLine.querySelectorAll(`span:contains("${playerName}"), *:contains("${playerName}")`);
-                // If we can't find spans, try to find text nodes and wrap them
+                // Find all text nodes and replace player names with clickable spans
                 const walker = document.createTreeWalker(alsoHereLine, NodeFilter.SHOW_TEXT);
+                const nodesToProcess = [];
                 let node;
                 while (node = walker.nextNode()) {
-                    if (node.textContent.includes(playerName)) {
-                        const parent = node.parentNode;
-                        if (parent && !parent.classList.contains('player-item')) {
-                            const span = document.createElement('span');
-                            span.className = 'player-item';
-                            span.setAttribute('data-player', playerName);
-                            span.textContent = playerName;
-                            node.textContent = node.textContent.replace(playerName, '');
-                            parent.insertBefore(span, node);
-                        }
+                    // Only process if the text contains the player name as a whole word
+                    // and the parent is not already a player-item
+                    const parent = node.parentNode;
+                    if (parent && !parent.classList.contains('player-item') && 
+                        !parent.querySelector(`[data-player="${playerName}"]`) &&
+                        new RegExp(`\\b${playerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(node.textContent)) {
+                        nodesToProcess.push(node);
                     }
                 }
+                
+                // Process each text node
+                nodesToProcess.forEach(textNode => {
+                    const text = textNode.textContent;
+                    const regex = new RegExp(`\\b(${playerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'g');
+                    if (!regex.test(text)) return;
+                    
+                    const parent = textNode.parentNode;
+                    if (!parent) return;
+                    
+                    // Split text by player name and create fragments
+                    const parts = text.split(regex);
+                    const fragment = document.createDocumentFragment();
+                    
+                    for (let i = 0; i < parts.length; i++) {
+                        if (parts[i] === playerName) {
+                            // Create clickable player span
+                            const playerSpan = document.createElement('span');
+                            playerSpan.className = 'player-item';
+                            playerSpan.setAttribute('data-player', playerName);
+                            playerSpan.textContent = playerName;
+                            fragment.appendChild(playerSpan);
+                        } else if (parts[i]) {
+                            // Add text node
+                            fragment.appendChild(document.createTextNode(parts[i]));
+                        }
+                    }
+                    
+                    // Replace the original text node with the fragment
+                    parent.replaceChild(fragment, textNode);
+                });
             });
             
             alsoHereDiv.appendChild(alsoHereLine);
@@ -1790,18 +1831,24 @@ function displayInventory(items) {
 }
 
 // Add player to terminal
-function addPlayerToTerminal(playerName, direction) {
+function addPlayerToTerminal(playerName, direction, message) {
     if (playerName === currentPlayerName) return;
     
     const terminalContent = document.getElementById('terminalContent');
     
-    // Display entry message
+    // Display entry message (use provided message from server or generate fallback)
     const entryMsg = document.createElement('div');
     entryMsg.className = 'player-movement-message';
-    if (direction) {
-        entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> enters from the ${direction}.`;
+    if (message && typeof parseMarkup !== 'undefined') {
+        // Use server-provided formatted message with markup
+        entryMsg.innerHTML = parseMarkup(message, '#00ffff');
     } else {
-        entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has arrived.`;
+        // Fallback to old format if message not provided
+        if (direction) {
+            entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> enters from the ${direction}.`;
+        } else {
+            entryMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has arrived.`;
+        }
     }
     terminalContent.appendChild(entryMsg);
     
@@ -1810,40 +1857,31 @@ function addPlayerToTerminal(playerName, direction) {
     const allPlayersLines = terminalContent.querySelectorAll('.players-line');
     const playersLine = allPlayersLines.length > 0 ? allPlayersLines[allPlayersLines.length - 1] : null;
     
-    if (playersLine) {
-        // Remove "No one else is here." message if it exists
-        const noPlayersMsg = playersLine.querySelector('.player-item');
-        if (noPlayersMsg && noPlayersMsg.textContent.includes('No one else is here')) {
-            noPlayersMsg.remove();
-        }
-        
-        // Check if player already listed
-        const existing = playersLine.querySelector(`[data-player="${playerName}"]`);
-        if (!existing) {
-            const playerSpan = document.createElement('span');
-            playerSpan.className = 'player-item';
-            playerSpan.setAttribute('data-player', playerName);
-            const existingPlayers = playersLine.querySelectorAll('.player-item[data-player]');
-            playerSpan.textContent = (existingPlayers.length > 0 ? ', ' : ' ') + playerName;
-            playersLine.appendChild(playerSpan);
-        }
-    }
+    // Don't manually add players to the "Also here" line - let the server send a room update
+    // with the properly formatted message that includes all players and NPCs in correct order
+    // The room update will be triggered by the server when a player enters
     
     // Scroll to bottom
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
 // Remove player from terminal
-function removePlayerFromTerminal(playerName, direction) {
+function removePlayerFromTerminal(playerName, direction, message) {
     const terminalContent = document.getElementById('terminalContent');
     
-    // Display departure message
+    // Display departure message (use provided message from server or generate fallback)
     const departMsg = document.createElement('div');
     departMsg.className = 'player-movement-message';
-    if (direction) {
-        departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> left to the ${direction}.`;
+    if (message && typeof parseMarkup !== 'undefined') {
+        // Use server-provided formatted message with markup
+        departMsg.innerHTML = parseMarkup(message, '#00ffff');
     } else {
-        departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has left.`;
+        // Fallback to old format if message not provided
+        if (direction) {
+            departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> left to the ${direction}.`;
+        } else {
+            departMsg.innerHTML = `<span class="player-name-highlight">${playerName}</span> has left.`;
+        }
     }
     terminalContent.appendChild(departMsg);
     
@@ -1935,7 +1973,13 @@ function displaySystemMessage(message) {
     
     const messageDiv = document.createElement('div');
     messageDiv.className = 'system-message';
-    messageDiv.textContent = message;
+    if (typeof parseMarkup !== 'undefined') {
+        // Use server-provided formatted message with markup
+        messageDiv.innerHTML = parseMarkup(message, '#00ffff');
+    } else {
+        // Fallback to plain text if parseMarkup not available
+        messageDiv.textContent = message;
+    }
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
@@ -2531,6 +2575,9 @@ async function selectCharacter(playerName) {
 // Handle command input
 const commandInput = document.getElementById('commandInput');
 commandInput.addEventListener('keypress', (e) => {
+    // Reset idle timer on any keypress in command input
+    resetIdleTimer();
+    
     if (e.key === 'Enter') {
         const command = commandInput.value.trim();
         if (command) {
@@ -2538,6 +2585,11 @@ commandInput.addEventListener('keypress', (e) => {
             commandInput.value = '';
         }
     }
+});
+
+// Also track typing in command input (not just Enter)
+commandInput.addEventListener('input', () => {
+    resetIdleTimer();
 });
 
 // Execute command
@@ -3071,6 +3123,9 @@ document.querySelectorAll('.compass-btn').forEach(btn => {
 
 // Handle keypad movement in main game
 function handleKeypadMovement(key) {
+    // Reset idle timer on keypad movement
+    resetIdleTimer();
+    
     // If in pathing mode, handle pathing navigation instead
     if (pathingModeActive) {
         handlePathingModeKeypad(key);
@@ -3207,10 +3262,48 @@ function movePlayer(direction) {
         return;
     }
 
+    // Reset idle timer on movement
+    resetIdleTimer();
+    
     ws.send(JSON.stringify({
         type: 'move',
         direction: direction
     }));
+}
+
+// Idle auto-look timer functions
+function resetIdleTimer() {
+    lastInteractionTime = Date.now();
+}
+
+function startIdleLookTimer() {
+    // Clear any existing timer
+    stopIdleLookTimer();
+    
+    // Reset interaction time
+    resetIdleTimer();
+    
+    // Check for idle state every 5 seconds
+    idleLookInterval = setInterval(() => {
+        const timeSinceLastInteraction = Date.now() - lastInteractionTime;
+        
+        // Only trigger if player is in game (has WebSocket connection and currentPlayerName)
+        if (ws && ws.readyState === WebSocket.OPEN && currentPlayerName && timeSinceLastInteraction >= IDLE_LOOK_DELAY) {
+            // Trigger look command
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'look' }));
+                // Reset timer after triggering look
+                resetIdleTimer();
+            }
+        }
+    }, 5000); // Check every 5 seconds
+}
+
+function stopIdleLookTimer() {
+    if (idleLookInterval) {
+        clearInterval(idleLookInterval);
+        idleLookInterval = null;
+    }
 }
 
 // Update player stats display (dynamically renders all stats from database)

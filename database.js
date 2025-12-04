@@ -623,10 +623,15 @@ async function createScriptableNPC(npc) {
     enable_fortitude_bonuses = true
   } = npc;
 
+  const status_message_idle = npc.status_message_idle || '(idle)';
+  const status_message_ready = npc.status_message_ready || '(ready)';
+  const status_message_harvesting = npc.status_message_harvesting || '(harvesting)';
+  const status_message_cooldown = npc.status_message_cooldown || '(cooldown)';
+
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown]
   );
 
   return result.rows[0].id;
@@ -664,7 +669,11 @@ async function updateScriptableNPC(npc) {
     puzzle_award_delay_seconds = null,
     puzzle_award_delay_response = null,
     enable_resonance_bonuses = true,
-    enable_fortitude_bonuses = true
+    enable_fortitude_bonuses = true,
+    status_message_idle = '(idle)',
+    status_message_ready = '(ready)',
+    status_message_harvesting = '(harvesting)',
+    status_message_cooldown = '(cooldown)'
   } = npc;
 
   await query(
@@ -678,9 +687,10 @@ async function updateScriptableNPC(npc) {
       puzzle_incorrect_attempt_responses = $24, puzzle_award_once_only = $25, puzzle_award_after_delay = $26,
       puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28,
       harvest_prerequisite_item = $29, harvest_prerequisite_message = $30,
-      enable_resonance_bonuses = $31, enable_fortitude_bonuses = $32
-     WHERE id = $33`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, id]
+      enable_resonance_bonuses = $31, enable_fortitude_bonuses = $32,
+      status_message_idle = $33, status_message_ready = $34, status_message_harvesting = $35, status_message_cooldown = $36
+     WHERE id = $37`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, id]
   );
 }
 
@@ -693,7 +703,8 @@ async function getNPCsInRoom(roomId) {
             sn.puzzle_solution_word, sn.puzzle_success_response, sn.puzzle_failure_response,
             sn.puzzle_reward_item, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
             sn.puzzle_incorrect_attempt_responses, sn.puzzle_award_once_only, sn.puzzle_award_after_delay,
-            sn.puzzle_award_delay_seconds, sn.puzzle_award_delay_response
+            sn.puzzle_award_delay_seconds, sn.puzzle_award_delay_response,
+            sn.status_message_idle, sn.status_message_ready, sn.status_message_harvesting, sn.status_message_cooldown
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.room_id = $1 AND rn.active = TRUE
@@ -727,7 +738,11 @@ async function getNPCsInRoom(roomId) {
     puzzleAwardOnceOnly: row.puzzle_award_once_only || false,
     puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
     puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
-    puzzleAwardDelayResponse: row.puzzle_award_delay_response
+    puzzleAwardDelayResponse: row.puzzle_award_delay_response,
+    statusMessageIdle: row.status_message_idle || '(idle)',
+    statusMessageReady: row.status_message_ready || '(ready)',
+    statusMessageHarvesting: row.status_message_harvesting || '(harvesting)',
+    statusMessageCooldown: row.status_message_cooldown || '(cooldown)'
   }));
 }
 

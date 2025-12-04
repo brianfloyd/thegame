@@ -326,9 +326,11 @@ wss.on('connection', (ws, req) => {
       });
 
       // Broadcast system message: player left the game
+      const messageCache = require('./utils/messageCache');
+      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: disconnectedPlayerName });
       broadcastToAll(connectedPlayers, {
         type: 'systemMessage',
-        message: `${disconnectedPlayerName} has left the game.`
+        message: leftMessage
       });
 
       console.log(`Player ${disconnectedPlayerName} disconnected (${connId})`);

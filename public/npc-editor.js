@@ -934,6 +934,35 @@ function renderNpcForm() {
                             </p>
                         </div>
                     </div>
+                    <!-- Row ADV2: Status Messages (with markup support) -->
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-full">
+                            <div class="npc-section-title" style="margin-top: 20px; margin-bottom: 10px;">Status Messages</div>
+                            <p class="npc-help-text" style="color: #888; font-size: 11px; margin-bottom: 10px;">
+                                Customize status messages displayed next to NPC name in rooms. Supports markup (e.g., !Pulsing! for red text).
+                            </p>
+                        </div>
+                    </div>
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-half">
+                            <label>Idle Status</label>
+                            <input type="text" id="npcStatusMessageIdle" value="${selectedNpc.status_message_idle || '(idle)'}" placeholder="(idle)">
+                        </div>
+                        <div class="npc-field-group npc-field-half">
+                            <label>Ready Status</label>
+                            <input type="text" id="npcStatusMessageReady" value="${selectedNpc.status_message_ready || '(ready)'}" placeholder="(ready)">
+                        </div>
+                    </div>
+                    <div class="npc-row">
+                        <div class="npc-field-group npc-field-half">
+                            <label>Harvesting Status</label>
+                            <input type="text" id="npcStatusMessageHarvesting" value="${selectedNpc.status_message_harvesting || '(harvesting)'}" placeholder="(harvesting)">
+                        </div>
+                        <div class="npc-field-group npc-field-half">
+                            <label>Cooldown Status</label>
+                            <input type="text" id="npcStatusMessageCooldown" value="${selectedNpc.status_message_cooldown || '(cooldown)'}" placeholder="(cooldown)">
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Save Button -->
@@ -1274,6 +1303,12 @@ function saveNpc() {
     // Advanced settings
     const enable_resonance_bonuses = document.getElementById('npcEnableResonanceBonuses')?.checked !== false;
     const enable_fortitude_bonuses = document.getElementById('npcEnableFortitudeBonuses')?.checked !== false;
+    
+    // Status messages (with markup support)
+    const status_message_idle = document.getElementById('npcStatusMessageIdle')?.value.trim() || '(idle)';
+    const status_message_ready = document.getElementById('npcStatusMessageReady')?.value.trim() || '(ready)';
+    const status_message_harvesting = document.getElementById('npcStatusMessageHarvesting')?.value.trim() || '(harvesting)';
+    const status_message_cooldown = document.getElementById('npcStatusMessageCooldown')?.value.trim() || '(cooldown)';
 
     const payloadNpc = {
         name,
@@ -1307,7 +1342,11 @@ function saveNpc() {
         puzzle_award_delay_seconds,
         puzzle_award_delay_response,
         enable_resonance_bonuses,
-        enable_fortitude_bonuses
+        enable_fortitude_bonuses,
+        status_message_idle,
+        status_message_ready,
+        status_message_harvesting,
+        status_message_cooldown
     };
 
     // Add Lore Keeper data if this is a lorekeeper type

@@ -17,6 +17,7 @@ const {
 } = require('../utils/broadcast');
 const { findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
 const { verifyGodMode } = require('../utils/broadcast');
+const messageCache = require('../utils/messageCache');
 
 // Track Lore Keeper engagement timers per connectionId
 const loreKeeperEngagementTimers = new Map();
@@ -316,9 +317,10 @@ async function authenticateSession(ctx, data) {
       }
       
       // Broadcast system message: player left the game (from old connection)
+      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: player.name });
       broadcastToAll(connectedPlayers, {
         type: 'systemMessage',
-        message: `${player.name} has left the game.`
+        message: leftMessage
       });
       
       console.log(`Old connection ${existingConnectionId} for player ${player.name} has been disconnected`);
@@ -382,10 +384,23 @@ async function authenticateSession(ctx, data) {
   }));
 
   // Broadcast system message: player entered the game
+  const enteredMessage = messageCache.getFormattedMessage('player_entered_game', { playerName: player.name });
   broadcastToAll(connectedPlayers, {
     type: 'systemMessage',
-    message: `${player.name} has entered the game.`
+    message: enteredMessage
   }, connectionId);
+  
+  // Send room update to all other players in the room so they see the new player
+  const otherPlayersInRoom = getConnectedPlayersInRoom(connectedPlayers, room.id).filter(p => p !== player.name);
+  for (const otherPlayerName of otherPlayersInRoom) {
+    // Find connection ID for this player
+    for (const [otherConnId, otherPlayerData] of connectedPlayers.entries()) {
+      if (otherPlayerData.playerName === otherPlayerName && otherPlayerData.roomId === room.id) {
+        await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, room, false);
+        break;
+      }
+    }
+  }
 
   // Send map data (only rooms from current map - no preview of connected maps)
   const mapRooms = await db.getRoomsByMap(room.map_id);
@@ -421,9 +436,12 @@ async function authenticateSession(ctx, data) {
   }));
 
   // Notify others in the room (exclude this connection)
+  // Send formatted message from database
+  const arrivedMessage = messageCache.getFormattedMessage('player_arrived', { playerName: playerName });
   broadcastToRoom(connectedPlayers, room.id, {
     type: 'playerJoined',
-    playerName: playerName
+    playerName: playerName,
+    message: arrivedMessage
   }, connectionId);
 
   // Trigger Lore Keeper engagement for entering this room
@@ -685,7 +703,6 @@ async function move(ctx, data) {
       }));
     } else {
       // Get wall collision message from database
-      const messageCache = require('../utils/messageCache');
       const wallMessage = messageCache.getFormattedMessage('movement_wall_collision', { direction: directionName });
       ws.send(JSON.stringify({ type: 'error', message: wallMessage }));
     }
@@ -773,10 +790,15 @@ async function move(ctx, data) {
   const enteredFrom = oppositeDirection[direction] || 'somewhere';
 
   // Notify players in old room
+  // Send formatted message from database
+  const leftMessage = leftDirection 
+    ? messageCache.getFormattedMessage('player_left_to', { playerName: playerName, direction: leftDirection })
+    : messageCache.getFormattedMessage('player_left', { playerName: playerName });
   broadcastToRoom(connectedPlayers, oldRoomId, {
     type: 'playerLeft',
     playerName: playerName,
-    direction: leftDirection
+    direction: leftDirection,
+    message: leftMessage
   }, connectionId);
 
   // Send moved message to moving player
@@ -827,11 +849,12 @@ async function move(ctx, data) {
   }
 
   // Get formatted messages for the new room
-  const messageCache = require('../utils/messageCache');
   
   // Combine players and NPCs (players first, then NPCs)
+  // Sort players alphabetically for consistent ordering
   const combinedEntities = [];
-  playersInNewRoom.forEach(playerName => {
+  const sortedPlayers = [...playersInNewRoom].sort();
+  sortedPlayers.forEach(playerName => {
     combinedEntities.push(playerName);
   });
   npcsInNewRoom.forEach(npc => {
@@ -949,11 +972,28 @@ async function move(ctx, data) {
   }
 
   // Notify players in new room
+  // Send formatted message from database
+  const entersMessage = enteredFrom
+    ? messageCache.getFormattedMessage('player_enters_from', { playerName: playerName, direction: enteredFrom })
+    : messageCache.getFormattedMessage('player_arrived', { playerName: playerName });
   broadcastToRoom(connectedPlayers, targetRoom.id, {
     type: 'playerJoined',
     playerName: playerName,
-    direction: enteredFrom
+    direction: enteredFrom,
+    message: entersMessage
   }, connectionId);
+  
+  // Send room update to all other players in the new room so they see the updated "Also here:" list
+  const otherPlayersInNewRoom = getConnectedPlayersInRoom(connectedPlayers, targetRoom.id).filter(p => p !== playerName);
+  for (const otherPlayerName of otherPlayersInNewRoom) {
+    // Find connection ID for this player
+    for (const [otherConnId, otherPlayerData] of connectedPlayers.entries()) {
+      if (otherPlayerData.playerName === otherPlayerName && otherPlayerData.roomId === targetRoom.id) {
+        await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, targetRoom, false);
+        break;
+      }
+    }
+  }
 
   // Trigger Lore Keeper engagement for entering the new room
   await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, targetRoom.id);
@@ -1517,7 +1557,6 @@ async function harvest(ctx, data) {
   }
   
   // Get formatted message from database
-  const messageCache = require('../utils/messageCache');
   const beginMessage = messageCache.getFormattedMessage('harvest_begin', { npcName: roomNpc.name });
   ws.send(JSON.stringify({ type: 'message', message: beginMessage }));
 }
@@ -4315,7 +4354,6 @@ async function getPathingRoom(ctx, data) {
  */
 async function getGameMessages(ctx, data) {
   const { ws } = ctx;
-  const messageCache = require('../utils/messageCache');
   const category = data.category || null;
 
   try {

@@ -174,7 +174,7 @@ function generateMarkupCSS(effects, color) {
     }
     
     if (effects.pulse) {
-        css += `animation: markup-pulse 2s ease infinite;`;
+        css += `display: inline-block; transform-origin: center; vertical-align: baseline; animation: markup-pulse 2s ease infinite;`;
     }
     
     return css;

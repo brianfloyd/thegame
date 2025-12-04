@@ -20,3 +20,4 @@ INSERT INTO game_messages (message_key, message_template, category, description,
     ('room_on_ground', 'On the ground: {[items array]}', 'room', 'Message displaying items on the ground in the room', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
 ON CONFLICT (message_key) DO NOTHING;
 
+

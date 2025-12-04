@@ -27,3 +27,4 @@ SELECT room_type, color FROM room_type_colors ORDER BY room_type;
 
 
 
+

@@ -428,8 +428,9 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   // Format NPCs with state descriptions
   const combinedEntities = [];
   
-  // Add real players first
-  playersInRoom.forEach(playerName => {
+  // Add real players first (sort alphabetically for consistent ordering)
+  const sortedPlayers = [...playersInRoom].sort();
+  sortedPlayers.forEach(playerName => {
     combinedEntities.push(playerName);
   });
   

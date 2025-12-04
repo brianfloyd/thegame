@@ -11,3 +11,4 @@ UPDATE players SET assignable_points = 5 WHERE assignable_points IS NULL OR assi
 
 
 
+

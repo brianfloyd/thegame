@@ -5,3 +5,4 @@ ALTER TABLE players ADD COLUMN IF NOT EXISTS auto_navigation_time_ms INTEGER DEF
 UPDATE players SET auto_navigation_time_ms = 1000 WHERE auto_navigation_time_ms IS NULL;
 
 
+

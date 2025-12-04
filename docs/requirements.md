@@ -1706,6 +1706,29 @@ A player can be in one of these states:
 - Popup blocker handling
 - Server restart scenarios (windows reconnect and re-register)
 
+## Rune Keeper Widget
+
+### Overview
+The Rune Keeper widget is a toggleable widget that displays ASCII art from the runekeeper.txt file. It provides a visual display of the Rune Keeper character art in the game interface.
+
+### Features
+- **Toggleable Widget**: Can be toggled on/off via the widget toggle bar
+- **ASCII Art Display**: Loads and displays ASCII art from `/ascii-images/runekeeper.txt`
+- **Retro Styling**: Uses monospace font with green-on-black terminal aesthetic matching the game theme
+- **Auto-Loading**: ASCII art is automatically loaded when the widget is first shown
+
+### Widget Configuration
+- **Widget Name**: `runekeeper`
+- **Icon**: Empty icon placeholder (to be customized)
+- **File Location**: `public/ascii-images/runekeeper.txt`
+- **Display Style**: Monospace font (Courier New), 8px font size, green text (#00ff00) on black background
+
+### Implementation Details
+- Widget is added to `TOGGLEABLE_WIDGETS` array
+- ASCII art is loaded via `fetch()` when widget is first displayed
+- Art is cached after first load to avoid repeated requests
+- Widget follows standard widget slot management system
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database
@@ -1717,6 +1740,30 @@ A player can be in one of these states:
 - Combat system utilizing stats and abilities
 - Map zoom and pan controls
 - Room labels on map
+
+## Idle Auto-Look Feature
+
+### Overview
+The Idle Auto-Look feature automatically re-renders the room description (as if the player used the `look` command) when a player sits idle without interacting with the game UI. This provides a classic MUD-style gameplay feel where the room description refreshes periodically during inactivity.
+
+### Behavior
+- **Idle Detection**: Tracks player interaction with keypad and command line only
+- **Widget Interactions**: Widget interactions (stats, compass, map, comms, etc.) do NOT reset the idle timer
+- **Auto-Look Trigger**: After 30 seconds of inactivity, automatically sends a `look` command to refresh the room view
+- **Timer Reset**: Idle timer resets on:
+  - Any keypad movement (numpad 1-9)
+  - Any command line input (typing or Enter)
+  - Any movement command (via command line or compass clicks)
+- **Timer Management**: 
+  - Starts automatically when player enters the game (first room update)
+  - Stops automatically when WebSocket disconnects
+  - Checks for idle state every 5 seconds
+
+### Technical Implementation
+- **Idle Delay**: 30 seconds (`IDLE_LOOK_DELAY = 30000ms`)
+- **Check Interval**: 5 seconds (checks every 5 seconds if idle threshold is met)
+- **Interaction Tracking**: `lastInteractionTime` timestamp updated on all keypad/command interactions
+- **Auto-Look Execution**: Sends `{ type: 'look' }` WebSocket message when idle threshold is reached
 
 ## Auto-Pathing Feature
 
