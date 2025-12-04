@@ -146,7 +146,6 @@ function getPlayersInRoom(connectedPlayers, roomId) {
   // Validate inputs - try module-level reference if passed reference is invalid
   let playersMap = connectedPlayers;
   if (!playersMap || !(playersMap instanceof Map)) {
-    console.log(`[NPC Cycle] DEBUG: Using module-level connectedPlayers reference`);
     playersMap = globalConnectedPlayers;
   }
   
@@ -172,20 +171,10 @@ function getPlayersInRoom(connectedPlayers, roomId) {
       const playerRoomId = typeof playerData.roomId === 'string' ? parseInt(playerData.roomId, 10) : playerData.roomId;
       const targetRoomId = typeof roomId === 'string' ? parseInt(roomId, 10) : roomId;
       
-      // Debug logging for roomId comparison (only log mismatches to avoid spam)
-      if (playerData.roomId && playerRoomId !== targetRoomId && Math.abs(playerRoomId - targetRoomId) < 10) {
-        // Only log if roomIds are close (suggests type mismatch)
-        console.log(`[NPC Cycle] DEBUG: RoomId mismatch for ${playerData.playerName}: playerRoomId=${playerRoomId} (${typeof playerData.roomId}), targetRoomId=${targetRoomId} (${typeof roomId})`);
-      }
-      
       if (playerRoomId === targetRoomId) {
         // Validate WebSocket connection
         if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
           players.push({ connId, playerData });
-        } else {
-          // Log why player was skipped (for debugging)
-          const wsState = playerData.ws ? playerData.ws.readyState : 'no_ws';
-          console.log(`[NPC Cycle] DEBUG: Skipping player ${playerData.playerName} (connId: ${connId}) - wsState: ${wsState}, expected: ${WebSocket.OPEN}`);
         }
       }
     });
@@ -211,7 +200,6 @@ function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'mes
   
   // Fallback to passed reference only if module-level is invalid
   if (!playersMap || !(playersMap instanceof Map)) {
-    console.log(`[NPC Cycle] WARNING: Module-level connectedPlayers invalid, using passed reference`);
     playersMap = connectedPlayers;
   }
   
@@ -225,32 +213,11 @@ function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'mes
   const players = getPlayersInRoom(playersMap, roomId);
   
   if (players.length === 0) {
-    // Enhanced debugging: Show all connected players and their roomIds
-    const debugInfo = [];
-    let mapSize = 0;
-    try {
-      if (playersMap && playersMap instanceof Map) {
-        mapSize = playersMap.size;
-        playersMap.forEach((pd, cid) => {
-          if (pd) {
-            // Normalize roomId types for comparison
-            const pdRoomId = typeof pd.roomId === 'string' ? parseInt(pd.roomId, 10) : pd.roomId;
-            const targetRoomId = typeof roomId === 'string' ? parseInt(roomId, 10) : roomId;
-            const roomMatch = pdRoomId === targetRoomId ? '***MATCH***' : '';
-            const wsState = pd.ws ? pd.ws.readyState : 'no_ws';
-            debugInfo.push(`${roomMatch}connId:${cid}, roomId:${pd.roomId}(${typeof pd.roomId}), target:${roomId}(${typeof roomId}), name:${pd?.playerName || 'unknown'}, wsState:${wsState}`);
-          }
-        });
-      } else {
-        debugInfo.push(`Map is invalid: ${typeof playersMap}`);
-      }
-    } catch (debugErr) {
-      debugInfo.push(`Error getting debug info: ${debugErr.message}`);
-      console.error(`[NPC Cycle] ERROR in debug logging:`, debugErr);
+    // Log warning if there are connected players but none in this room
+    const mapSize = playersMap && playersMap instanceof Map ? playersMap.size : 0;
+    if (mapSize > 0) {
+      console.log(`[NPC Cycle] WARNING: No players in room ${roomId} to receive ${messageType} (${mapSize} total connected)`);
     }
-    
-    // Always log this - it's critical for debugging
-    console.log(`[NPC Cycle] WARNING: No players in room ${roomId} to receive ${messageType}. Total connected: ${mapSize}, Debug: [${debugInfo.join('; ')}]`);
     return false;
   }
   
@@ -261,7 +228,6 @@ function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'mes
       const messageStr = JSON.stringify(message);
       playerData.ws.send(messageStr);
       messageSent = true;
-      console.log(`[NPC Cycle] ${messageType} sent to player ${playerData.playerName} (connId: ${connId}, roomId: ${roomId})`);
     } catch (sendErr) {
       console.error(`[NPC Cycle] Error sending ${messageType} to player ${playerData.playerName} (connId: ${connId}):`, sendErr);
     }
@@ -315,11 +281,8 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
         return;
       }
       
-      // Debug: Log reference info on first cycle or if size changes significantly
-      if (!startNPCCycleEngine._lastSize || Math.abs(currentConnectedPlayers.size - startNPCCycleEngine._lastSize) > 0) {
-        console.log(`[NPC Cycle] DEBUG: connectedPlayers reference valid, size: ${currentConnectedPlayers.size}`);
-        startNPCCycleEngine._lastSize = currentConnectedPlayers.size;
-      }
+      // Track size for internal use (no logging)
+      startNPCCycleEngine._lastSize = currentConnectedPlayers.size;
       
       const activeNPCs = await db.getAllActiveNPCs();
       const now = Date.now();
