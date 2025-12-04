@@ -64,6 +64,36 @@ export default class CompassWidget extends Component {
      * Update compass buttons based on available exits
      */
     updateButtons(exits) {
+        // Exits can be either an array (['N', 'S', 'E']) or an object ({ north: true, south: true })
+        // Convert array to object format if needed
+        let exitsObj = {};
+        
+        if (Array.isArray(exits)) {
+            // Convert array format to object format
+            const directionToKey = {
+                'N': 'north',
+                'S': 'south',
+                'E': 'east',
+                'W': 'west',
+                'NE': 'northeast',
+                'NW': 'northwest',
+                'SE': 'southeast',
+                'SW': 'southwest',
+                'U': 'up',
+                'D': 'down'
+            };
+            
+            exits.forEach(dir => {
+                const key = directionToKey[dir];
+                if (key) {
+                    exitsObj[key] = true;
+                }
+            });
+        } else if (exits && typeof exits === 'object') {
+            // Already an object, use as-is
+            exitsObj = exits;
+        }
+        
         const exitMap = {
             'N': 'north',
             'S': 'south',
@@ -80,7 +110,7 @@ export default class CompassWidget extends Component {
         Object.entries(this.compassButtons).forEach(([dir, btn]) => {
             if (btn) {
                 const exitKey = exitMap[dir];
-                const isAvailable = exits[exitKey];
+                const isAvailable = exitsObj[exitKey] === true;
                 
                 if (isAvailable) {
                     btn.disabled = false;
