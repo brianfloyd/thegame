@@ -739,10 +739,10 @@ async function getNPCsInRoom(roomId) {
     puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
     puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
     puzzleAwardDelayResponse: row.puzzle_award_delay_response,
-    statusMessageIdle: row.status_message_idle || '(idle)',
-    statusMessageReady: row.status_message_ready || '(ready)',
-    statusMessageHarvesting: row.status_message_harvesting || '(harvesting)',
-    statusMessageCooldown: row.status_message_cooldown || '(cooldown)'
+    statusMessageIdle: row.status_message_idle ?? '(idle)',
+    statusMessageReady: row.status_message_ready ?? '(ready)',
+    statusMessageHarvesting: row.status_message_harvesting ?? '(harvesting)',
+    statusMessageCooldown: row.status_message_cooldown ?? '(cooldown)'
   }));
 }
 

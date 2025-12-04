@@ -79,10 +79,77 @@ function normalizeCommand(input) {
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
     
+    // Special handling for 's' command - check if it's followed by arguments
+    // If 's' alone, treat as south
+    // If 's' followed by item name, treat as sell
+    if (cmd === 's') {
+        if (args.length === 0) {
+            // 's' alone = south
+            // Check if auto-navigation/path execution is active, break it first
+            if (isAutoNavigating || isPathExecuting) {
+                console.log('[parseCommand] Breaking auto-navigation/path execution with directional input');
+                if (isAutoNavigating) {
+                    isAutoNavigating = false; // Set flag immediately
+                    game.send({ type: 'stopAutoNavigation' });
+                    terminal.addMessage('Auto-navigation interrupted by manual movement.', 'warning');
+                }
+                if (isPathExecuting) {
+                    isPathExecuting = false; // Set flag immediately
+                    executionTracking.isActive = false;
+                    hideAutomationStatus();
+                    game.send({ type: 'stopPathExecution' });
+                    terminal.addMessage('Path/Loop execution interrupted by manual movement.', 'warning');
+                }
+                // Small delay to ensure server processes stop before move
+                setTimeout(() => {
+                    terminal.resetIdleTimer();
+                    game.send({ type: 'move', direction: 'S' });
+                }, 50);
+                return null; // Don't return move command immediately
+            }
+            terminal.resetIdleTimer();
+            return { type: 'move', direction: 'S' };
+        } else {
+            // 's' with args = sell (unless args are direction keywords)
+            const directionKeywords = ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down', 'n', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'u', 'd'];
+            const firstArg = args[0].toLowerCase();
+            if (directionKeywords.includes(firstArg)) {
+                // It's a direction, treat as south
+                if (isAutoNavigating || isPathExecuting) {
+                    console.log('[parseCommand] Breaking auto-navigation/path execution with directional input');
+                    if (isAutoNavigating) {
+                        isAutoNavigating = false; // Set flag immediately
+                        game.send({ type: 'stopAutoNavigation' });
+                        terminal.addMessage('Auto-navigation interrupted by manual movement.', 'warning');
+                    }
+                    if (isPathExecuting) {
+                        isPathExecuting = false; // Set flag immediately
+                        executionTracking.isActive = false;
+                        hideAutomationStatus();
+                        game.send({ type: 'stopPathExecution' });
+                        terminal.addMessage('Path/Loop execution interrupted by manual movement.', 'warning');
+                    }
+                    // Small delay to ensure server processes stop before move
+                    setTimeout(() => {
+                        terminal.resetIdleTimer();
+                        game.send({ type: 'move', direction: 'S' });
+                    }, 50);
+                    return null; // Don't return move command immediately
+                }
+                terminal.resetIdleTimer();
+                return { type: 'move', direction: 'S' };
+            } else {
+                // It's an item name, treat as sell
+                const quantity = args.length > 1 ? parseInt(args[args.length - 1]) : 1;
+                const itemName = quantity > 1 ? args.slice(0, -1).join(' ') : args.join(' ');
+                return { type: 'sell', itemName: itemName, quantity: isNaN(quantity) ? 1 : quantity };
+            }
+        }
+    }
+    
     // Command abbreviations
     const commandMap = {
         'n': 'move', 'north': 'move',
-        's': 'move', 'south': 'move',
         'e': 'move', 'east': 'move',
         'w': 'move', 'west': 'move',
         'ne': 'move', 'northeast': 'move',
@@ -91,6 +158,7 @@ function normalizeCommand(input) {
         'sw': 'move', 'southwest': 'move',
         'u': 'move', 'up': 'move',
         'd': 'move', 'down': 'move',
+        'south': 'move',
         'look': 'look', 'l': 'look',
         'inventory': 'inventory', 'inv': 'inventory', 'i': 'inventory',
         'take': 'take', 't': 'take',
@@ -98,13 +166,13 @@ function normalizeCommand(input) {
         'harvest': 'harvest', 'h': 'harvest',
         'collect': 'harvest', 'c': 'harvest',
         'gather': 'harvest', 'g': 'harvest',
-        'talk': 'talk', 'say': 'talk', 't': 'talk',
+        'talk': 'talk', 'say': 'talk',
         'resonate': 'resonate', 'res': 'resonate', 'r': 'resonate',
         'telepath': 'telepath', 'tele': 'telepath', 'tell': 'telepath', 'whisper': 'telepath',
         'help': 'help', '?': 'help',
         'list': 'list', 'li': 'list', 'ls': 'list',
         'buy': 'buy', 'b': 'buy',
-        'sell': 'sell', 's': 'sell',
+        'sell': 'sell',
         'warehouse': 'warehouse', 'wh': 'warehouse',
         'store': 'store', 'st': 'store',
         'withdraw': 'withdraw', 'wd': 'withdraw',
@@ -123,11 +191,11 @@ function normalizeCommand(input) {
         return null; // Don't send to server
     }
     
-    // Handle movement commands
+    // Handle movement commands - also check if we should break auto-navigation/path execution
     if (commandType === 'move') {
         const directionMap = {
             'n': 'N', 'north': 'N',
-            's': 'S', 'south': 'S',
+            'south': 'S',
             'e': 'E', 'east': 'E',
             'w': 'W', 'west': 'W',
             'ne': 'NE', 'northeast': 'NE',
@@ -139,6 +207,28 @@ function normalizeCommand(input) {
         };
         const direction = directionMap[cmd];
         if (direction) {
+            // If auto-navigation or path execution is active, break it first
+            if (isAutoNavigating || isPathExecuting) {
+                console.log('[parseCommand] Breaking auto-navigation/path execution with directional input');
+                if (isAutoNavigating) {
+                    isAutoNavigating = false; // Set flag immediately
+                    game.send({ type: 'stopAutoNavigation' });
+                    terminal.addMessage('Auto-navigation interrupted by manual movement.', 'warning');
+                }
+                if (isPathExecuting) {
+                    isPathExecuting = false; // Set flag immediately
+                    executionTracking.isActive = false;
+                    hideAutomationStatus();
+                    game.send({ type: 'stopPathExecution' });
+                    terminal.addMessage('Path/Loop execution interrupted by manual movement.', 'warning');
+                }
+                // Small delay to ensure server processes stop before move
+                setTimeout(() => {
+                    terminal.resetIdleTimer();
+                    game.send({ type: 'move', direction: direction });
+                }, 50);
+                return null; // Don't return move command immediately
+            }
             terminal.resetIdleTimer();
             return { type: 'move', direction: direction };
         }
@@ -310,14 +400,63 @@ document.addEventListener('keydown', (e) => {
         const direction = numpadMap[e.key];
         if (direction) {
             e.preventDefault();
+            
+            // If auto-navigation or path execution is active, break it first
+            if (isAutoNavigating || isPathExecuting) {
+                console.log('[numpad] Breaking auto-navigation/path execution with numpad input');
+                if (isAutoNavigating) {
+                    isAutoNavigating = false; // Set flag immediately
+                    game.send({ type: 'stopAutoNavigation' });
+                    terminal.addMessage('Auto-navigation interrupted by manual movement.', 'warning');
+                }
+                if (isPathExecuting) {
+                    isPathExecuting = false; // Set flag immediately
+                    executionTracking.isActive = false;
+                    hideAutomationStatus();
+                    game.send({ type: 'stopPathExecution' });
+                    terminal.addMessage('Path/Loop execution interrupted by manual movement.', 'warning');
+                }
+                // Small delay to ensure server processes stop before move
+                setTimeout(() => {
+                    terminal.resetIdleTimer();
+                    game.send({ type: 'move', direction: direction });
+                }, 50);
+                return; // Don't send move immediately
+            }
+            
             terminal.resetIdleTimer();
             game.send({ type: 'move', direction: direction });
         }
     }
     
     // Handle U (up) key
+    const commandInput = document.getElementById('commandInput');
     if (e.key === 'u' || e.key === 'U') {
-        if (e.target === commandInput) return; // Don't trigger if typing in command input
+        if (commandInput && e.target === commandInput) return; // Don't trigger if typing in command input
+        
+        // If auto-navigation or path execution is active, break it first
+        if (isAutoNavigating || isPathExecuting) {
+            console.log('[keyboard] Breaking auto-navigation/path execution with U key');
+            if (isAutoNavigating) {
+                isAutoNavigating = false; // Set flag immediately
+                game.send({ type: 'stopAutoNavigation' });
+                terminal.addMessage('Auto-navigation interrupted by manual movement.', 'warning');
+            }
+            if (isPathExecuting) {
+                isPathExecuting = false; // Set flag immediately
+                executionTracking.isActive = false;
+                hideAutomationStatus();
+                game.send({ type: 'stopPathExecution' });
+                terminal.addMessage('Path/Loop execution interrupted by manual movement.', 'warning');
+            }
+            // Small delay to ensure server processes stop before move
+            setTimeout(() => {
+                terminal.resetIdleTimer();
+                game.send({ type: 'move', direction: 'U' });
+            }, 50);
+            return; // Don't send move immediately
+        }
+        
         terminal.resetIdleTimer();
         game.send({ type: 'move', direction: 'U' });
     }
@@ -580,6 +719,13 @@ function toggleWidget(widgetName) {
 
 // Update widget display
 function updateWidgetDisplay() {
+    // If scripting widget is being shown and execution is active, show status panel
+    if (activeWidgets.includes('scripting') && executionTracking.isActive) {
+        // Use setTimeout to ensure DOM is updated first
+        setTimeout(() => {
+            showAutomationStatus();
+        }, 50);
+    }
     const toggleBar = document.querySelector('.widget-toggle-bar');
     const slots = document.querySelectorAll('.widget-slot[data-slot]:not([data-slot^="scripting"])');
     
@@ -669,6 +815,13 @@ function updateWidgetDisplay() {
                     // Force map to reload when shown (but don't send look command to avoid infinite loop)
                     setTimeout(() => {
                         mapWidget.render();
+                    }, 100);
+                }
+                
+                // Show automation status if scripting widget is shown and execution is active
+                if (widgetName === 'scripting' && executionTracking.isActive) {
+                    setTimeout(() => {
+                        showAutomationStatus();
                     }, 100);
                 }
             } else {
@@ -769,6 +922,17 @@ game.messageBus.on('room:moved', (data) => {
     if (data.room) {
         currentRoomPos = { x: data.room.x, y: data.room.y };
         currentMapId = data.room.mapId;
+        
+        // Update execution tracking if active (only during auto-navigation or path execution)
+        // Don't track manual player movement - only track when actively executing
+        if (executionTracking.isActive && (isAutoNavigating || isPathExecuting)) {
+            executionTracking.totalRoomsVisited++;
+            updatePathStepPosition();
+        } else if (executionTracking.isActive && !isAutoNavigating && !isPathExecuting) {
+            // Execution was marked active but we're not actually executing - stop tracking
+            console.log('[room:moved] Execution tracking active but not executing, stopping');
+            executionTracking.isActive = false;
+        }
     }
 });
 
@@ -1122,15 +1286,21 @@ let currentMapIdForAutoPath = null;
 
 game.messageBus.on('room:update', (data) => {
     if (data.room) {
+        // Update both auto-path and global position
         currentRoomPosForAutoPath = { x: data.room.x, y: data.room.y };
         currentMapIdForAutoPath = data.room.mapId;
+        currentRoomPos = { x: data.room.x, y: data.room.y };
+        currentMapId = data.room.mapId;
     }
 });
 
 game.messageBus.on('room:moved', (data) => {
     if (data.room) {
+        // Update both auto-path and global position
         currentRoomPosForAutoPath = { x: data.room.x, y: data.room.y };
         currentMapIdForAutoPath = data.room.mapId;
+        currentRoomPos = { x: data.room.x, y: data.room.y };
+        currentMapId = data.room.mapId;
     }
 });
 
@@ -1232,7 +1402,13 @@ function openAutoPathPanel() {
     // GO button handler
     const goBtn = document.getElementById('autoPathGoBtn');
     if (goBtn) {
-        goBtn.onclick = startAutoNavigation;
+        console.log('[openAutoPathPanel] GO button found, attaching handler');
+        goBtn.onclick = () => {
+            console.log('[GO Button] Clicked! Calling startAutoNavigation');
+            startAutoNavigation();
+        };
+    } else {
+        console.error('[openAutoPathPanel] GO button not found!');
     }
 }
 
@@ -1458,9 +1634,29 @@ function displayAutoPathSummary(path) {
 }
 
 function startAutoNavigation() {
+    console.log('[startAutoNavigation] Function called');
+    console.log('[startAutoNavigation] autoNavigationPath:', autoNavigationPath);
+    
     if (!autoNavigationPath || autoNavigationPath.length === 0) {
+        console.error('[startAutoNavigation] No path to navigate!');
         terminal.addMessage('No path to navigate', 'error');
         return;
+    }
+    
+    console.log('[startAutoNavigation] Starting with path length:', autoNavigationPath.length);
+    
+    // Ensure automation widget is open to show status
+    if (!activeWidgets.includes('scripting')) {
+        console.log('[startAutoNavigation] Opening automation widget to show status');
+        toggleWidget('scripting');
+        // Give widget time to render
+        setTimeout(() => {
+            console.log('[startAutoNavigation] Widget should be open now, initializing tracking');
+            initializeAutoNavTracking();
+        }, 200);
+    } else {
+        console.log('[startAutoNavigation] Automation widget already open');
+        initializeAutoNavTracking();
     }
     
     game.send({ 
@@ -1474,18 +1670,64 @@ function startAutoNavigation() {
     terminal.addMessage('Auto-navigation started. Movement commands are now blocked.', 'info');
 }
 
+function initializeAutoNavTracking() {
+    console.log('[initializeAutoNavTracking] Called');
+    if (autoNavigationPath && autoNavigationPath.length > 0) {
+        // Reset tracking for new path
+        executionTracking = {
+            totalRoomsVisited: 0,
+            currentPathStep: 0,
+            totalPathSteps: autoNavigationPath.length,
+            isLooping: false,
+            loopCount: 0,
+            isActive: true
+        };
+        console.log('[initializeAutoNavTracking] Tracking initialized:', executionTracking);
+        showAutomationStatus();
+    } else {
+        console.warn('[initializeAutoNavTracking] No autoNavigationPath available');
+    }
+}
+
 // Handle auto-navigation messages
 game.messageBus.on('autonav:started', (data) => {
+    console.log('[autonav:started] Event received, data:', data);
+    console.log('[autonav:started] autoNavigationPath:', autoNavigationPath);
+    
     isAutoNavigating = true;
     updateCompassButtonsState();
+    
+    // Initialize execution tracking for auto-navigation
+    if (autoNavigationPath && autoNavigationPath.length > 0) {
+        executionTracking = {
+            totalRoomsVisited: 0,
+            currentPathStep: 0,
+            totalPathSteps: autoNavigationPath.length,
+            isLooping: false,
+            loopCount: 0,
+            isActive: true
+        };
+        console.log('[autonav:started] Execution tracking initialized:', executionTracking);
+        showAutomationStatus();
+    } else {
+        console.warn('[autonav:started] No autoNavigationPath available!');
+    }
+    
     if (data.message) {
         terminal.addMessage(data.message, 'info');
     }
 });
 
 game.messageBus.on('autonav:complete', (data) => {
+    console.log('[autonav:complete] Auto-navigation completed');
     isAutoNavigating = false;
     autoNavigationPath = null;
+    executionTracking.isActive = false;
+    // Don't hide status immediately - let user see final stats briefly
+    // But stop tracking further updates
+    setTimeout(() => {
+        hideAutomationStatus();
+    }, 2000); // Hide after 2 seconds
     updateCompassButtonsState();
     if (data.message) {
         terminal.addMessage(data.message, 'info');
@@ -1493,8 +1735,11 @@ game.messageBus.on('autonav:complete', (data) => {
 });
 
 game.messageBus.on('autonav:failed', (data) => {
+    console.log('[autonav:failed] Auto-navigation failed');
     isAutoNavigating = false;
     autoNavigationPath = null;
+    executionTracking.isActive = false;
+    hideAutomationStatus();
     updateCompassButtonsState();
     if (data.message) {
         terminal.addMessage(data.message, 'error');
@@ -1524,6 +1769,16 @@ let isPathExecuting = false;
 let isPathPaused = false;
 let pausedPathRoomId = null;
 let pathPreviewData = null;
+
+// Execution tracking state
+let executionTracking = {
+    totalRoomsVisited: 0,
+    currentPathStep: 0,
+    totalPathSteps: 0,
+    isLooping: false,
+    loopCount: 0,
+    isActive: false
+};
 
 // Load all player paths on initialization (after authentication)
 function loadAllPlayerPaths() {
@@ -1591,22 +1846,65 @@ function onPathSelectChange() {
 game.messageBus.on('paths:details', (data) => {
     if (data.path && data.steps) {
         calculatePathPreview(data.path, data.steps);
+        
+        // If execution is active and we don't have step count yet, update it
+        if (executionTracking.isActive && executionTracking.totalPathSteps === 0) {
+            executionTracking.totalPathSteps = data.steps.length;
+            updateAutomationStatus();
+        }
     }
 });
 
 function calculatePathPreview(path, steps) {
-    // Get current room from room position
-    if (!currentRoomPosForAutoPath || !currentMapIdForAutoPath) {
-        console.error('Current room not found for path preview');
+    // Get current room from room position - try multiple sources
+    let roomPos = currentRoomPosForAutoPath;
+    let mapId = currentMapIdForAutoPath;
+    
+    // Fallback to global current room position if auto-path position not set
+    if ((!roomPos || !mapId) && currentRoomPos && currentMapId) {
+        // Use global variables (these are set from room:update and room:moved)
+        roomPos = currentRoomPos;
+        mapId = currentMapId;
+    }
+    
+    // Fallback to mapWidget current room if available
+    if ((!roomPos || !mapId) && mapWidget && mapWidget.currentRoom) {
+        roomPos = { x: mapWidget.currentRoom.x, y: mapWidget.currentRoom.y };
+        mapId = mapWidget.currentRoom.mapId;
+    }
+    
+    if (!roomPos || !mapId) {
+        console.warn('Current room not found for path preview - will show path without algorithm route');
+        // Don't return - continue without preview, execution will still work
+        // Just show the path without algorithm route
+        const playerRooms = steps.map(step => ({
+            roomId: step.roomId,
+            roomName: step.roomName,
+            x: step.x,
+            y: step.y,
+            direction: step.direction,
+            mapId: step.mapId,
+            isAlgorithm: false
+        }));
+        
+        showPathPreview({
+            algorithmRooms: [],
+            playerRooms: playerRooms,
+            path: path
+        });
         return;
     }
+    
+    // Update auto-path position variables for consistency
+    currentRoomPosForAutoPath = roomPos;
+    currentMapIdForAutoPath = mapId;
     
     // Find current room in mapRooms (we need to get this from mapWidget)
     // For now, we'll use the originRoomId check directly
     const currentRoomId = mapWidget.mapRooms.find(r => 
-        r.mapId === currentMapIdForAutoPath && 
-        r.x === currentRoomPosForAutoPath.x && 
-        r.y === currentRoomPosForAutoPath.y
+        r.mapId === mapId && 
+        r.x === roomPos.x && 
+        r.y === roomPos.y
     )?.id;
     
     if (!currentRoomId) {
@@ -1683,6 +1981,14 @@ function showPathPreview(routeData) {
     
     pathPreviewData = routeData;
     
+    // If execution is active and we have playerRooms, update step count
+    if (executionTracking.isActive && routeData.playerRooms && routeData.playerRooms.length > 0) {
+        if (executionTracking.totalPathSteps === 0 || executionTracking.totalPathSteps !== routeData.playerRooms.length) {
+            executionTracking.totalPathSteps = routeData.playerRooms.length;
+            updateAutomationStatus();
+        }
+    }
+    
     let html = '';
     
     // Algorithm route section (if any)
@@ -1727,6 +2033,25 @@ function startPathExecution() {
     // Clear any pause state when starting fresh
     isPathPaused = false;
     pausedPathRoomId = null;
+    
+    // Hide path preview dialog when starting execution
+    const previewDialog = document.getElementById('pathPreviewDialog');
+    if (previewDialog) {
+        previewDialog.style.display = 'none';
+    }
+    
+    // Ensure automation widget is open to show status
+    if (!activeWidgets.includes('scripting')) {
+        console.log('[startPathExecution] Opening automation widget to show status');
+        toggleWidget('scripting');
+    }
+    
+    // Request path details if we don't have preview data yet
+    const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
+    if (selectedPath && (!pathPreviewData || !pathPreviewData.playerRooms)) {
+        console.log('[startPathExecution] Requesting path details for step count');
+        game.send({ type: 'getPathDetails', pathId: selectedPathId });
+    }
     
     game.send({ 
         type: 'startPathExecution', 
@@ -1826,9 +2151,24 @@ function updatePathExecutionUI() {
 
 // Handle path execution messages
 game.messageBus.on('paths:executionStarted', (data) => {
+    console.log('[paths:executionStarted] Event received, data:', data);
+    
     isPathExecuting = true;
     isPathPaused = false;
     pausedPathRoomId = null;
+    
+    // Ensure automation widget is open to show status
+    if (!activeWidgets.includes('scripting')) {
+        console.log('[paths:executionStarted] Opening automation widget to show status');
+        toggleWidget('scripting');
+        // Give widget time to render
+        setTimeout(() => {
+            initializePathExecutionTracking(data);
+        }, 200);
+    } else {
+        initializePathExecutionTracking(data);
+    }
+    
     terminal.addMessage(data.message || 'Path/Loop execution started.', 'success');
     updatePathExecutionUI();
     // Close preview dialog if open
@@ -1838,28 +2178,137 @@ game.messageBus.on('paths:executionStarted', (data) => {
     }
 });
 
+function initializePathExecutionTracking(data) {
+    // Initialize execution tracking for path/loop execution
+    const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
+    
+    // Get total steps from pathPreviewData (playerRooms contains the actual steps)
+    // Or from data.stepCount if server provides it
+    let totalSteps = 0;
+    if (data.stepCount) {
+        // Server provided step count in the event
+        totalSteps = data.stepCount;
+        console.log('[initializePathExecutionTracking] Using step count from server:', totalSteps);
+    } else if (pathPreviewData && pathPreviewData.playerRooms) {
+        totalSteps = pathPreviewData.playerRooms.length;
+        console.log('[initializePathExecutionTracking] Using step count from pathPreviewData:', totalSteps);
+    } else if (selectedPath && selectedPath.steps) {
+        // Try to get from selectedPath if it has steps
+        totalSteps = selectedPath.steps.length;
+        console.log('[initializePathExecutionTracking] Using step count from selectedPath:', totalSteps);
+    } else if (selectedPath) {
+        // If we don't have step count, request path details
+        console.log('[initializePathExecutionTracking] Requesting path details for step count');
+        game.send({ type: 'getPathDetails', pathId: selectedPathId });
+        totalSteps = 0; // Will be updated when details arrive
+    }
+    
+    console.log('[initializePathExecutionTracking] Initializing tracking', {
+        selectedPathId,
+        selectedPath: selectedPath ? { id: selectedPath.id, pathType: selectedPath.pathType } : null,
+        pathPreviewData: pathPreviewData ? { 
+            hasPlayerRooms: !!pathPreviewData.playerRooms,
+            playerRoomsLength: pathPreviewData.playerRooms?.length
+        } : null,
+        totalSteps,
+        serverStepCount: data.stepCount
+    });
+    
+    if (selectedPath) {
+        const isLooping = selectedPath.pathType === 'loop';
+        // RESET tracking for new path/loop (don't continue from previous)
+        executionTracking = {
+            totalRoomsVisited: 0,
+            currentPathStep: 0,
+            totalPathSteps: totalSteps, // Will be 0 initially if no data, updated when details arrive
+            isLooping: isLooping,
+            loopCount: 1, // Start at 1 for first iteration (lap counter)
+            isActive: true
+        };
+        console.log('[initializePathExecutionTracking] Tracking initialized (RESET):', executionTracking);
+        
+        // ALWAYS show status, even if step count is 0 (will update when details arrive)
+        showAutomationStatus();
+        
+        // If we don't have step count yet, update it when path details arrive
+        if (totalSteps === 0) {
+            // Set up a one-time listener to update step count when details arrive
+            const updateStepCount = (detailsData) => {
+                if (detailsData.path && detailsData.steps && detailsData.path.id === selectedPathId) {
+                    console.log('[initializePathExecutionTracking] Updating step count from path details:', detailsData.steps.length);
+                    executionTracking.totalPathSteps = detailsData.steps.length;
+                    updateAutomationStatus();
+                    // Remove this listener after first update
+                    game.messageBus.off('paths:details', updateStepCount);
+                }
+            };
+            game.messageBus.on('paths:details', updateStepCount);
+        }
+    } else {
+        console.warn('[initializePathExecutionTracking] Cannot initialize tracking - no selected path');
+    }
+}
+
 game.messageBus.on('paths:executionResumed', (data) => {
     isPathExecuting = true;
     isPathPaused = false;
     pausedPathRoomId = null;
+    executionTracking.isActive = true;
+    showAutomationStatus();
     terminal.addMessage(data.message || 'Path/Loop execution resumed.', 'success');
     updatePathExecutionUI();
 });
 
 game.messageBus.on('paths:executionComplete', (data) => {
+    console.log('[paths:executionComplete] Path execution completed', {
+        isLooping: executionTracking.isLooping,
+        totalRooms: executionTracking.totalRoomsVisited,
+        loopCount: executionTracking.loopCount
+    });
+    
     isPathExecuting = false;
+    
+    // For loops, execution never truly "completes" - it just wraps
+    // So we keep tracking active for loops and increment loop counter
+    if (executionTracking.isLooping) {
+        // Loop completed one iteration - increment counter and reset position
+        // Note: loopCount represents the current lap/iteration (starts at 1)
+        executionTracking.loopCount++;
+        executionTracking.totalRoomsVisited = 0; // Reset room count for new loop iteration
+        executionTracking.currentPathStep = 0;
+        // Keep tracking active for next loop iteration
+        console.log('[paths:executionComplete] Loop iteration complete, loop count:', executionTracking.loopCount);
+        // Update status to show 0/total (ready for next iteration) and new loop count
+        updateAutomationStatus();
+    } else {
+        // Path (not loop) - show final position (totalPathSteps/totalPathSteps) and stop tracking
+        // Set to final position so it shows correctly
+        executionTracking.totalRoomsVisited = executionTracking.totalPathSteps;
+        updateAutomationStatus();
+        // Stop tracking but keep showing for a bit
+        executionTracking.isActive = false;
+        // Don't hide immediately - show final stats briefly
+        setTimeout(() => {
+            hideAutomationStatus();
+        }, 2000); // Hide after 2 seconds
+    }
+    
     terminal.addMessage(data.message || 'Path execution complete!', 'success');
     updatePathExecutionUI();
 });
 
 game.messageBus.on('paths:executionStopped', (data) => {
     isPathExecuting = false;
+    executionTracking.isActive = false;
+    hideAutomationStatus();
     terminal.addMessage(data.message || 'Path/Loop execution stopped.', 'info');
     updatePathExecutionUI();
 });
 
 game.messageBus.on('paths:executionFailed', (data) => {
     isPathExecuting = false;
+    executionTracking.isActive = false;
+    hideAutomationStatus();
     terminal.addMessage(data.message || 'Path/Loop execution failed.', 'error');
     updatePathExecutionUI();
 });
@@ -1906,6 +2355,172 @@ function initAutomationWidget() {
     }
     
     // Paths will be loaded after authentication (see player:authenticated handler above)
+}
+
+// Functions to manage automation status display
+function showAutomationStatus() {
+    console.log('[showAutomationStatus] Called, executionTracking:', executionTracking);
+    
+    const statusEl = document.getElementById('automationStatus');
+    if (!statusEl) {
+        console.error('[Automation Status] Status element not found! Make sure the automation widget is open.');
+        // Try to find it with a delay in case DOM isn't ready
+        setTimeout(() => {
+            const retryEl = document.getElementById('automationStatus');
+            if (retryEl) {
+                console.log('[Automation Status] Found on retry');
+                showAutomationStatus(); // Recursive call now that element exists
+            }
+        }, 100);
+        return;
+    }
+    
+    // Check if parent widget is visible
+    const widget = statusEl.closest('.scripting-widget');
+    const widgetSlot = statusEl.closest('.scripting-widget-slot');
+    
+    if (widgetSlot && window.getComputedStyle(widgetSlot).display === 'none') {
+        console.warn('[Automation Status] Widget slot is hidden. Status will be shown when widget is opened.');
+        // Don't return - still set up the status so it shows when widget opens
+    }
+    
+    // CRITICAL: Remove the inline style attribute completely and rebuild it without display:none
+    const currentStyle = statusEl.getAttribute('style') || '';
+    // Remove display from the style string
+    const newStyle = currentStyle
+        .split(';')
+        .filter(prop => !prop.trim().startsWith('display'))
+        .join(';')
+        .trim();
+    
+    // Set new style without display:none, then explicitly set display:block
+    if (newStyle && !newStyle.endsWith(';')) {
+        statusEl.setAttribute('style', newStyle + '; display: block;');
+    } else {
+        statusEl.setAttribute('style', (newStyle || '') + ' display: block;');
+    }
+    
+    // Also set via style property to ensure it takes
+    statusEl.style.display = 'block';
+    statusEl.style.visibility = 'visible';
+    statusEl.style.opacity = '1';
+    
+    // Also ensure the status panel class doesn't have hidden
+    statusEl.classList.remove('hidden');
+    
+    updateAutomationStatus();
+}
+
+function hideAutomationStatus() {
+    const statusEl = document.getElementById('automationStatus');
+    if (statusEl) {
+        statusEl.style.display = 'none';
+    }
+    // Reset tracking
+    executionTracking = {
+        totalRoomsVisited: 0,
+        currentPathStep: 0,
+        totalPathSteps: 0,
+        isLooping: false,
+        loopCount: 0,
+        isActive: false
+    };
+}
+
+function updateAutomationStatus() {
+    if (!executionTracking.isActive) {
+        console.log('[updateAutomationStatus] Not active, skipping');
+        return;
+    }
+    
+    console.log('[updateAutomationStatus] Updating with data:', executionTracking);
+    
+    const totalRoomsEl = document.getElementById('totalRoomsVisited');
+    const pathPositionEl = document.getElementById('pathPosition');
+    const loopCounterEl = document.getElementById('loopCounter');
+    const loopCounterContainer = document.getElementById('loopCounterContainer');
+    
+    console.log('[updateAutomationStatus] Elements found:', {
+        totalRooms: !!totalRoomsEl,
+        pathPosition: !!pathPositionEl,
+        loopCounter: !!loopCounterEl,
+        loopContainer: !!loopCounterContainer
+    });
+    
+    if (totalRoomsEl) {
+        totalRoomsEl.textContent = executionTracking.totalRoomsVisited;
+        console.log('[updateAutomationStatus] Set totalRooms to:', executionTracking.totalRoomsVisited);
+    } else {
+        console.error('[updateAutomationStatus] totalRoomsVisited element not found!');
+    }
+    
+    if (pathPositionEl) {
+        // Update current step based on total rooms visited
+        if (executionTracking.totalPathSteps > 0) {
+            if (executionTracking.isLooping) {
+                // For loops, show position within current iteration (1 to totalPathSteps)
+                // When totalRoomsVisited = 0, show 0/total (before first step)
+                // When totalRoomsVisited = 1, show 1/total (first step)
+                // When totalRoomsVisited = totalPathSteps, show totalPathSteps/total (last step of iteration)
+                // When totalRoomsVisited = totalPathSteps + 1, show 1/total (first step of next iteration)
+                let currentStepInLoop;
+                if (executionTracking.totalRoomsVisited === 0) {
+                    currentStepInLoop = 0; // Before starting
+                } else {
+                    // Calculate position within current loop iteration (1-based)
+                    currentStepInLoop = ((executionTracking.totalRoomsVisited - 1) % executionTracking.totalPathSteps) + 1;
+                }
+                pathPositionEl.textContent = `${currentStepInLoop}/${executionTracking.totalPathSteps}`;
+            } else {
+                // For paths, show absolute position (1 to totalPathSteps)
+                // When totalRoomsVisited = 0, show 0/total (before starting)
+                // When totalRoomsVisited = 1, show 1/total (first step)
+                // When totalRoomsVisited = totalPathSteps, show totalPathSteps/total (final step)
+                // Don't go beyond totalPathSteps
+                const currentStep = Math.min(executionTracking.totalRoomsVisited, executionTracking.totalPathSteps);
+                pathPositionEl.textContent = `${currentStep}/${executionTracking.totalPathSteps}`;
+            }
+        } else {
+            pathPositionEl.textContent = '0/0'; // Show 0/0 instead of -/- when steps not loaded yet
+        }
+        console.log('[updateAutomationStatus] Set pathPosition to:', pathPositionEl.textContent);
+    } else {
+        console.error('[updateAutomationStatus] pathPosition element not found!');
+    }
+    
+    if (loopCounterEl && loopCounterContainer) {
+        if (executionTracking.isLooping) {
+            // Always show loop counter for loops
+            loopCounterContainer.style.setProperty('display', 'block', 'important');
+            loopCounterEl.textContent = executionTracking.loopCount;
+            console.log('[updateAutomationStatus] Loop counter set to:', executionTracking.loopCount);
+        } else {
+            loopCounterContainer.style.display = 'none';
+        }
+    } else if (executionTracking.isLooping) {
+        console.error('[updateAutomationStatus] Loop counter elements not found!', {
+            loopCounterEl: !!loopCounterEl,
+            loopCounterContainer: !!loopCounterContainer
+        });
+    }
+}
+
+// Update current step position when path execution progresses
+// We'll track this by listening to room movements and estimating step progress
+// For more accurate tracking, we'd need server to send step updates
+function updatePathStepPosition() {
+    if (!executionTracking.isActive) return;
+    
+    // Increment current step (approximate - each room movement = 1 step)
+    executionTracking.currentPathStep = Math.min(
+        executionTracking.totalRoomsVisited,
+        executionTracking.totalPathSteps
+    );
+    
+    // For loops, the loop count is handled by paths:executionComplete event
+    // when a full loop iteration completes, not here during movement
+    
+    updateAutomationStatus();
 }
 
 // Initialize automation widget on page load

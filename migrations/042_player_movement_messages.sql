@@ -8,3 +8,7 @@ INSERT INTO game_messages (message_key, message_template, category, description,
     ('player_left_to', '<{playerName}> left to the {direction}.', 'player', 'Message when a player leaves a room to a direction', EXTRACT(EPOCH FROM NOW())::BIGINT * 1000, EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
 ON CONFLICT (message_key) DO NOTHING;
 
+
+
+
+

@@ -262,11 +262,27 @@ thegame/
 │   ├── item-editor.html
 │   ├── player-editor.html
 │   ├── style.css
-│   ├── client.js
+│   ├── markup-helper.js       # Markup helper for editors (kept for editor compatibility)
+│   ├── client.js              # Legacy client (kept temporarily for reference)
 │   ├── map-editor.js
 │   ├── npc-editor.js
 │   ├── item-editor.js
-│   └── player-editor.js
+│   ├── player-editor.js
+│   └── js/                    # ES6 module-based component architecture
+│       ├── main.js            # Main entry point
+│       ├── core/
+│       │   ├── Game.js        # Main game controller (WebSocket & state)
+│       │   ├── Component.js   # Base class for UI components
+│       │   └── MessageBus.js  # Event system for decoupled communication
+│       ├── components/
+│       │   ├── Terminal.js    # Terminal display & command input
+│       │   ├── MapWidget.js   # Map rendering
+│       │   ├── StatsWidget.js # Player stats display
+│       │   ├── CompassWidget.js # Compass navigation
+│       │   ├── CommsWidget.js # Communication widget
+│       │   └── Inventory.js   # Inventory display
+│       └── utils/
+│           └── Markup.js      # Markup parsing utility (extracted from markup-helper.js)
 ├── scripts/
 │   ├── migrate.js
 │   └── migrate-data.js
@@ -408,52 +424,46 @@ Each handler module exports functions that receive a context object with:
   - Compact layout with organized sections
 - Responsive design for smaller screens
 
-### 6. Frontend WebSocket Client (`public/client.js`)
-- Connect to WebSocket server
-- Handle player selection: send player name to server
-- Text command system:
-  - Command line input at bottom of terminal
-  - Supports full words: `north`, `south`, `east`, `west`, `northeast`, `northwest`, `southeast`, `southwest`, `up`, `down`
-  - Supports abbreviations: `n`, `s`, `e`, `w`, `ne`, `nw`, `se`, `sw`, `u`, `d`
-  - Command normalization and validation
-- Compass widget interaction:
-  - Clickable direction buttons
-  - Only available directions are enabled
-  - All directions visible but unavailable ones are lowlighted
-- Real-time updates:
-  - Listen for room state updates (who's in the room, room details, available exits)
-  - Update UI instantly when other players join/leave the current room
-  - Update UI instantly when other players move to/from adjacent rooms
-  - Display real-time player list
-- Player list management:
-  - "Also here:" and player names on same line
-  - Multiple players comma-separated
-  - "No one else is here." when room is empty
-  - Automatically removes "No one else is here." when player joins
-  - Automatically restores "No one else is here." when last player leaves
-- Player movement notifications:
-  - When a player enters: "[PlayerName] enters from the [opposite direction]." (e.g., "Fliz enters from the south.")
-  - When a player leaves: "[PlayerName] left to the [direction]." (e.g., "Fliz left to the west.")
-  - For teleports/connections: "[PlayerName] has arrived." / "[PlayerName] has left."
-  - Player names highlighted in cyan, message text in gray italic
-- Terminal display:
-  - Room name, description, and players displayed in terminal
-  - Auto-scroll to bottom on updates
-  - Error messages displayed in terminal
-- Map display:
-  - 25x25 grid view centered on player's current room
-  - Rooms displayed as squares (current room highlighted in green with yellow border)
-  - Connection lines between adjacent rooms in all 8 directions
-  - Automatically re-centers when player moves
-  - Canvas-based rendering with retro terminal aesthetic
-  - Shows all rooms within 25x25 viewport
-- Player stats display:
-  - Receives player stats from server on connection
-  - Displays all 5 attributes (Brute Strength, Life Force, Cunning, Intelligence, Wisdom)
-  - Displays all 5 abilities (Crafting, Lockpicking, Stealth, Dodge, Critical Hit)
-  - Shows Hit Points with current/max and visual bar
-  - Shows Mana with current/max and visual bar (only if maxMana > 0)
-  - Updates automatically when stats change
+### 6. Frontend Client Architecture (`public/js/`)
+
+The frontend uses a modular ES6 component-based architecture:
+
+#### Core Infrastructure (`public/js/core/`)
+- **Game.js**: Main game controller managing WebSocket connection, message routing, and global state
+- **Component.js**: Base class for all UI components with lifecycle methods
+- **MessageBus.js**: Pub/sub event system for decoupled component communication
+
+#### Components (`public/js/components/`)
+- **Terminal.js**: Terminal display and command input
+  - **CRITICAL**: Ensures `Markup.parse()` is ALWAYS used for all message rendering
+  - Handles room updates, player messages, system messages, Lore Keeper messages
+  - Manages idle auto-look timer
+- **StatsWidget.js**: Player stats display with stat point assignment
+- **MapWidget.js**: Map canvas rendering and room visualization
+- **CompassWidget.js**: Compass navigation buttons
+- **CommsWidget.js**: Communication widget (talk/resonate/telepath)
+- **Inventory.js**: Inventory display
+
+#### Utilities (`public/js/utils/`)
+- **Markup.js**: Markup parsing utility (extracted from markup-helper.js)
+  - Parses markup conventions (`<text>`, `[text]`, `!text!`, custom conventions)
+  - Ensures consistent markup rendering across all components
+
+#### Main Entry Point (`public/js/main.js`)
+- Initializes Game controller and all components
+- Sets up command line handler
+- Manages widget toggle system
+- Handles numpad movement
+
+#### Message Flow
+1. Server sends WebSocket message → `Game.js` receives it
+2. `Game.js` parses message and emits to MessageBus (e.g., `MessageBus.emit('room:update', data)`)
+3. Components subscribe to relevant events and update their UI
+4. Terminal component ALWAYS uses `Markup.parse()` for any text rendering
+
+#### Legacy Files
+- `public/client.js`: Legacy monolithic client (kept temporarily for reference, not loaded)
+- `public/markup-helper.js`: Markup helper for editors (kept for editor compatibility)
 
 ### 7. WebSocket Message Protocol
 - Client → Server:
@@ -472,12 +482,18 @@ Each handler module exports functions that receive a context object with:
 ## Key Files
 
 1. **package.json** - Project dependencies and scripts
-2. **database.js** - SQLite initialization and queries (including coordinate-based room queries)
+2. **database.js** - PostgreSQL async database module
 3. **server.js** - Express server + WebSocket server + movement handling
 4. **public/index.html** - Frontend HTML with MajorMUD-style layout
-5. **public/style.css** - Retro terminal styling
-6. **public/client.js** - WebSocket client and UI logic with text commands
-7. **docs/requirements.md** - This documentation file
+5. **public/game.html** - Game view HTML with component-based architecture
+6. **public/style.css** - Retro terminal styling
+7. **public/js/main.js** - Main entry point for ES6 module system
+8. **public/js/core/Game.js** - Main game controller (WebSocket & state management)
+9. **public/js/core/Component.js** - Base class for UI components
+10. **public/js/core/MessageBus.js** - Event system for component communication
+11. **public/js/components/Terminal.js** - Terminal component (ensures Markup.parse() for all messages)
+12. **public/js/utils/Markup.js** - Markup parsing utility
+13. **docs/requirements.md** - This documentation file
 
 ## Technical Decisions
 

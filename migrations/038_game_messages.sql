@@ -21,3 +21,7 @@ INSERT INTO game_messages (message_key, message_template, category, description,
 ON CONFLICT (message_key) DO NOTHING;
 
 
+
+
+
+

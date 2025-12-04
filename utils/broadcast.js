@@ -212,10 +212,10 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       baseCycleTime: baseCycleTime,
       harvestableTime: npc.harvestableTime || 60000,
       cooldownTime: npc.cooldownTime || 120000,
-      statusMessageIdle: npc.statusMessageIdle || '(idle)',
-      statusMessageReady: npc.statusMessageReady || '(ready)',
-      statusMessageHarvesting: npc.statusMessageHarvesting || '(harvesting)',
-      statusMessageCooldown: npc.statusMessageCooldown || '(cooldown)'
+      statusMessageIdle: npc.statusMessageIdle ?? '(idle)',
+      statusMessageReady: npc.statusMessageReady ?? '(ready)',
+      statusMessageHarvesting: npc.statusMessageHarvesting ?? '(harvesting)',
+      statusMessageCooldown: npc.statusMessageCooldown ?? '(cooldown)'
     };
     
     // Calculate harvest/cooldown progress
@@ -442,13 +442,13 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       const cycles = npc.state.cycles || 0;
       let statusMessage = '';
       if (cycles === 0) {
-        statusMessage = npc.statusMessageIdle || '(idle)';
+        statusMessage = npc.statusMessageIdle ?? '(idle)';
       } else if (npc.harvestStatus === 'active') {
-        statusMessage = npc.statusMessageHarvesting || '(harvesting)';
+        statusMessage = npc.statusMessageHarvesting ?? '(harvesting)';
       } else if (npc.harvestStatus === 'cooldown') {
-        statusMessage = npc.statusMessageCooldown || '(cooldown)';
+        statusMessage = npc.statusMessageCooldown ?? '(cooldown)';
       } else {
-        statusMessage = npc.statusMessageReady || '(ready)';
+        statusMessage = npc.statusMessageReady ?? '(ready)';
       }
       if (statusMessage) {
         npcDisplay += ' ' + statusMessage;

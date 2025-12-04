@@ -135,15 +135,192 @@ function isHarvestSafeCommand(cmdType) {
 }
 
 /**
+ * Get all players in a specific room (helper function for message sending)
+ * @param {Map} connectedPlayers - Connected players map
+ * @param {number} roomId - Room ID to check
+ * @returns {Array} Array of {connId, playerData} objects for players in the room
+ */
+function getPlayersInRoom(connectedPlayers, roomId) {
+  const players = [];
+  
+  // Validate inputs - try module-level reference if passed reference is invalid
+  let playersMap = connectedPlayers;
+  if (!playersMap || !(playersMap instanceof Map)) {
+    console.log(`[NPC Cycle] DEBUG: Using module-level connectedPlayers reference`);
+    playersMap = globalConnectedPlayers;
+  }
+  
+  if (!playersMap || !(playersMap instanceof Map)) {
+    console.error(`[NPC Cycle] ERROR: connectedPlayers is null/undefined or not a Map`);
+    return players;
+  }
+  
+  if (!roomId || typeof roomId !== 'number') {
+    console.error(`[NPC Cycle] ERROR: Invalid roomId: ${roomId} (type: ${typeof roomId})`);
+    return players;
+  }
+  
+  // Iterate through connected players with proper error handling
+  try {
+    playersMap.forEach((playerData, connId) => {
+      // Validate playerData structure
+      if (!playerData) {
+        return; // Skip null/undefined entries
+      }
+      
+      // Check if player is in the target room (handle both string and number types)
+      const playerRoomId = typeof playerData.roomId === 'string' ? parseInt(playerData.roomId, 10) : playerData.roomId;
+      const targetRoomId = typeof roomId === 'string' ? parseInt(roomId, 10) : roomId;
+      
+      // Debug logging for roomId comparison (only log mismatches to avoid spam)
+      if (playerData.roomId && playerRoomId !== targetRoomId && Math.abs(playerRoomId - targetRoomId) < 10) {
+        // Only log if roomIds are close (suggests type mismatch)
+        console.log(`[NPC Cycle] DEBUG: RoomId mismatch for ${playerData.playerName}: playerRoomId=${playerRoomId} (${typeof playerData.roomId}), targetRoomId=${targetRoomId} (${typeof roomId})`);
+      }
+      
+      if (playerRoomId === targetRoomId) {
+        // Validate WebSocket connection
+        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+          players.push({ connId, playerData });
+        } else {
+          // Log why player was skipped (for debugging)
+          const wsState = playerData.ws ? playerData.ws.readyState : 'no_ws';
+          console.log(`[NPC Cycle] DEBUG: Skipping player ${playerData.playerName} (connId: ${connId}) - wsState: ${wsState}, expected: ${WebSocket.OPEN}`);
+        }
+      }
+    });
+  } catch (forEachErr) {
+    console.error(`[NPC Cycle] ERROR: Exception in forEach while getting players in room ${roomId}:`, forEachErr);
+  }
+  
+  return players;
+}
+
+/**
+ * Send message to all players in a room (isolated function for stability)
+ * @param {Map} connectedPlayers - Connected players map (passed by reference, always fresh)
+ * @param {number} roomId - Room ID
+ * @param {object} message - Message object to send
+ * @param {string} messageType - Type of message (for logging)
+ * @returns {boolean} True if message was sent to at least one player
+ */
+function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'message') {
+  // CRITICAL: Always use module-level reference to ensure we have the current state
+  // The passed-in reference might be stale if there are multiple instances or closures
+  let playersMap = globalConnectedPlayers;
+  
+  // Fallback to passed reference only if module-level is invalid
+  if (!playersMap || !(playersMap instanceof Map)) {
+    console.log(`[NPC Cycle] WARNING: Module-level connectedPlayers invalid, using passed reference`);
+    playersMap = connectedPlayers;
+  }
+  
+  // Final validation
+  if (!playersMap || !(playersMap instanceof Map)) {
+    console.error(`[NPC Cycle] ERROR: No valid connectedPlayers reference available for ${messageType}`);
+    return false;
+  }
+  
+  // Get fresh list of players in room
+  const players = getPlayersInRoom(playersMap, roomId);
+  
+  if (players.length === 0) {
+    // Enhanced debugging: Show all connected players and their roomIds
+    const debugInfo = [];
+    let mapSize = 0;
+    try {
+      if (playersMap && playersMap instanceof Map) {
+        mapSize = playersMap.size;
+        playersMap.forEach((pd, cid) => {
+          if (pd) {
+            // Normalize roomId types for comparison
+            const pdRoomId = typeof pd.roomId === 'string' ? parseInt(pd.roomId, 10) : pd.roomId;
+            const targetRoomId = typeof roomId === 'string' ? parseInt(roomId, 10) : roomId;
+            const roomMatch = pdRoomId === targetRoomId ? '***MATCH***' : '';
+            const wsState = pd.ws ? pd.ws.readyState : 'no_ws';
+            debugInfo.push(`${roomMatch}connId:${cid}, roomId:${pd.roomId}(${typeof pd.roomId}), target:${roomId}(${typeof roomId}), name:${pd?.playerName || 'unknown'}, wsState:${wsState}`);
+          }
+        });
+      } else {
+        debugInfo.push(`Map is invalid: ${typeof playersMap}`);
+      }
+    } catch (debugErr) {
+      debugInfo.push(`Error getting debug info: ${debugErr.message}`);
+      console.error(`[NPC Cycle] ERROR in debug logging:`, debugErr);
+    }
+    
+    // Always log this - it's critical for debugging
+    console.log(`[NPC Cycle] WARNING: No players in room ${roomId} to receive ${messageType}. Total connected: ${mapSize}, Debug: [${debugInfo.join('; ')}]`);
+    return false;
+  }
+  
+  // Send message to all players found
+  let messageSent = false;
+  players.forEach(({ connId, playerData }) => {
+    try {
+      const messageStr = JSON.stringify(message);
+      playerData.ws.send(messageStr);
+      messageSent = true;
+      console.log(`[NPC Cycle] ${messageType} sent to player ${playerData.playerName} (connId: ${connId}, roomId: ${roomId})`);
+    } catch (sendErr) {
+      console.error(`[NPC Cycle] Error sending ${messageType} to player ${playerData.playerName} (connId: ${connId}):`, sendErr);
+    }
+  });
+  
+  return messageSent;
+}
+
+/**
  * Start the NPC Cycle Engine
  * @param {object} db - Database module
  * @param {object} npcLogic - NPC logic module
  * @param {Map} connectedPlayers - Connected players map
  * @param {Function} sendRoomUpdate - Room update function
  */
+// Store connectedPlayers reference at module level to ensure it's always current
+let globalConnectedPlayers = null;
+
 function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
+  // Store reference at module level so all functions can access the current reference
+  globalConnectedPlayers = connectedPlayers;
+  
+  // Create a function that always returns the most current reference
+  const getConnectedPlayers = () => {
+    // Always return the module-level reference if available, otherwise fall back to closure
+    // Also update module-level if closure reference is newer (shouldn't happen, but safety check)
+    if (globalConnectedPlayers && globalConnectedPlayers === connectedPlayers) {
+      return globalConnectedPlayers;
+    }
+    // Update module-level if it's stale
+    if (connectedPlayers && connectedPlayers instanceof Map) {
+      globalConnectedPlayers = connectedPlayers;
+      return globalConnectedPlayers;
+    }
+    return globalConnectedPlayers || connectedPlayers;
+  };
+  
   setInterval(async () => {
     try {
+      // CRITICAL: Always get the most current reference on each cycle
+      // Update module-level reference to ensure it's current
+      if (connectedPlayers && connectedPlayers instanceof Map) {
+        globalConnectedPlayers = connectedPlayers;
+      }
+      
+      const currentConnectedPlayers = getConnectedPlayers();
+      
+      // Validate we have a valid reference
+      if (!currentConnectedPlayers || !(currentConnectedPlayers instanceof Map)) {
+        console.error(`[NPC Cycle] ERROR: Invalid connectedPlayers reference:`, typeof currentConnectedPlayers, `size:`, currentConnectedPlayers?.size);
+        return;
+      }
+      
+      // Debug: Log reference info on first cycle or if size changes significantly
+      if (!startNPCCycleEngine._lastSize || Math.abs(currentConnectedPlayers.size - startNPCCycleEngine._lastSize) > 0) {
+        console.log(`[NPC Cycle] DEBUG: connectedPlayers reference valid, size: ${currentConnectedPlayers.size}`);
+        startNPCCycleEngine._lastSize = currentConnectedPlayers.size;
+      }
+      
       const activeNPCs = await db.getAllActiveNPCs();
       const now = Date.now();
       
@@ -222,29 +399,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 const missMessage = messageCache.getFormattedMessage('harvest_miss', { npcName: npcName });
                 console.log(`[NPC Cycle] Harvest miss for room_npc ${roomNpc.id}, hitRate=${(hitRate * 100).toFixed(1)}%, message: "${missMessage}"`);
                 
-                // Send miss message to all players in the room (same approach as item production messages)
+                // Send miss message to all players in the room (using isolated helper function)
                 if (roomNpc.roomId) {
-                  let missMessageSent = false;
-                  connectedPlayers.forEach((playerData, connId) => {
-                    if (playerData.roomId === roomNpc.roomId && 
-                        playerData.ws && 
-                        playerData.ws.readyState === WebSocket.OPEN) {
-                      try {
-                        playerData.ws.send(JSON.stringify({ 
-                          type: 'message', 
-                          message: missMessage
-                        }));
-                        missMessageSent = true;
-                        console.log(`[NPC Cycle] Miss message sent to player ${playerData.playerName} (connId: ${connId})`);
-                      } catch (sendErr) {
-                        console.error(`[NPC Cycle] Error sending miss message to player ${playerData.playerName}:`, sendErr);
-                      }
-                    }
-                  });
-                  
-                  if (!missMessageSent) {
-                    console.log(`[NPC Cycle] WARNING: No players in room ${roomNpc.roomId} to receive miss message`);
-                  }
+                  sendMessageToRoom(currentConnectedPlayers, roomNpc.roomId, {
+                    type: 'message',
+                    message: missMessage
+                  }, 'miss message');
                 } else {
                   console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send miss message`);
                 }
@@ -281,37 +441,19 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                     
                     console.log(`[NPC Cycle] Sending harvest item message: "${itemMessage}" for room_npc ${roomNpc.id}, room ${roomNpc.roomId}`);
                     
-                    // Send to all players in the room
-                    let messageSent = false;
-                    connectedPlayers.forEach((playerData, connId) => {
-                      if (playerData.roomId === roomNpc.roomId && 
-                          playerData.ws && 
-                          playerData.ws.readyState === WebSocket.OPEN) {
-                        try {
-                        playerData.ws.send(JSON.stringify({ 
-                          type: 'message', 
-                          message: itemMessage
-                        }));
-                          messageSent = true;
-                          console.log(`[NPC Cycle] Message sent to player ${playerData.playerName} (connId: ${connId})`);
-                        } catch (sendErr) {
-                          console.error(`[NPC Cycle] Error sending message to player ${playerData.playerName}:`, sendErr);
-                        }
-                      }
-                    });
-                    
-                    if (!messageSent) {
-                      console.log(`[NPC Cycle] WARNING: No players in room ${roomNpc.roomId} to receive harvest message`);
-                    }
+                    // Send to all players in the room (using isolated helper function)
+                    sendMessageToRoom(currentConnectedPlayers, roomNpc.roomId, {
+                      type: 'message',
+                      message: itemMessage
+                    }, 'harvest item message');
                   }
                   
                   // Send room update to all players in the room so they see the new items
                   const room = await db.getRoomById(roomNpc.roomId);
                   if (room) {
-                    for (const [connId, playerData] of connectedPlayers) {
-                      if (playerData.roomId === roomNpc.roomId && playerData.ws.readyState === WebSocket.OPEN) {
-                        await sendRoomUpdate(connId, room);
-                      }
+                    const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
+                    for (const { connId } of playersInRoom) {
+                      await sendRoomUpdate(connId, room);
                     }
                   }
                   
@@ -371,32 +513,11 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
                 console.log(`[NPC Cycle] Sending cooldown message: "${cooldownMessage}" for room_npc ${roomNpc.id}, room ${roomId}`);
                 
-                // Send synchronously to all players in the room (no await, immediate send)
-                let cooldownMessageSent = false;
-                try {
-                  connectedPlayers.forEach((playerData, connId) => {
-                    if (playerData.roomId === roomId && 
-                        playerData.ws && 
-                        playerData.ws.readyState === WebSocket.OPEN) {
-                      try {
-                        playerData.ws.send(JSON.stringify({ 
-                          type: 'message', 
-                          message: cooldownMessage
-                        }));
-                        cooldownMessageSent = true;
-                        console.log(`[NPC Cycle] Cooldown message sent to player ${playerData.playerName} (connId: ${connId})`);
-                      } catch (sendErr) {
-                        console.error(`[NPC Cycle] Error sending cooldown message to player ${playerData.playerName}:`, sendErr);
-                      }
-                    }
-                  });
-                } catch (forEachErr) {
-                  console.error(`[NPC Cycle] ERROR: Exception in forEach while sending cooldown message:`, forEachErr);
-                }
-                
-                if (!cooldownMessageSent) {
-                  console.log(`[NPC Cycle] WARNING: No players in room ${roomId} to receive cooldown message`);
-                }
+                // Send synchronously to all players in the room (using isolated helper function)
+                sendMessageToRoom(currentConnectedPlayers, roomId, {
+                  type: 'message',
+                  message: cooldownMessage
+                }, 'cooldown message');
               } else {
                 console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send cooldown message`);
               }
@@ -478,10 +599,9 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               // Send room update to all players in the room so they see the new items
               const room = await db.getRoomById(roomNpc.roomId);
               if (room) {
-                for (const [connId, playerData] of connectedPlayers) {
-                  if (playerData.roomId === roomNpc.roomId && playerData.ws.readyState === WebSocket.OPEN) {
-                    await sendRoomUpdate(connId, room);
-                  }
+                const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
+                for (const { connId } of playersInRoom) {
+                  await sendRoomUpdate(connId, room);
                 }
               }
             }

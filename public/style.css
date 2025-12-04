@@ -3677,6 +3677,7 @@ body {
 }
 
 .jump-widget-content {
+    overflow: hidden;
     flex: 1;
     padding: 15px;
     overflow: auto;
@@ -3687,6 +3688,9 @@ body {
 }
 
 #jumpMapCanvas {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
     background: #050505;
     border: 1px solid #222;
     cursor: crosshair;
@@ -3966,8 +3970,8 @@ body {
     background: rgba(136, 136, 255, 0.2);
     border: 2px solid #8888ff;
     color: #8888ff;
-    padding: 8px 12px;
-    margin-bottom: 8px;
+    padding: 2px 5px;
+    margin: 2px 0;
     border-radius: 4px;
     display: flex;
     justify-content: space-between;

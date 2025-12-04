@@ -25,3 +25,7 @@ ALTER TABLE merchant_items ADD COLUMN IF NOT EXISTS config_json TEXT DEFAULT '{}
 
 
 
+
+
+
+

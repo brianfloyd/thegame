@@ -533,22 +533,24 @@ async function move(ctx, data) {
           // This is the path execution move, allow it to proceed
           console.log(`[Path Execution] Move allowed: ${moveDirection}`);
         } else {
-          // Manual move attempt during path execution - block it
-          console.log(`[Path Execution] Move blocked: direction mismatch or missing data`);
+          // Manual move detected during path execution - stop path execution and allow move
+          console.log(`[Path Execution] Manual move detected - stopping path execution`);
+          clearPathExecution(connectedPlayers, connectionId);
           ws.send(JSON.stringify({ 
-            type: 'error', 
-            message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
+            type: 'paths:executionStopped',
+            message: 'Path/Loop execution stopped by manual movement.' 
           }));
-          return;
+          // Continue with the move command
         }
       } else {
-        // Should not happen, but block manual moves
-        console.log(`[Path Execution] Move blocked: invalid step index`);
+        // Invalid step index - stop path execution and allow move
+        console.log(`[Path Execution] Invalid step index - stopping path execution`);
+        clearPathExecution(connectedPlayers, connectionId);
         ws.send(JSON.stringify({ 
-          type: 'error', 
-          message: 'Path/Loop execution is active. Please wait for it to complete or stop it first.' 
+          type: 'paths:executionStopped',
+          message: 'Path/Loop execution stopped by manual movement.' 
         }));
-        return;
+        // Continue with the move command
       }
     }
   } else if (playerData && playerData.autoNavigation && playerData.autoNavigation.isActive) {
@@ -561,20 +563,30 @@ async function move(ctx, data) {
       if (moveDirection === expectedStep.direction.toUpperCase()) {
         // This is the auto-navigation move, allow it to proceed
       } else {
-        // Manual move attempt during auto-navigation - block it
+        // Manual move detected during auto-navigation - stop auto-navigation and allow move
+        console.log(`[Auto-Navigation] Manual move detected - stopping auto-navigation`);
+        if (playerData.autoNavigation.timeoutId) {
+          clearTimeout(playerData.autoNavigation.timeoutId);
+        }
+        playerData.autoNavigation = null;
         ws.send(JSON.stringify({ 
-          type: 'error', 
-          message: 'Auto-navigation is active. Please wait for it to complete.' 
+          type: 'autopath:stopped',
+          message: 'Auto-navigation stopped by manual movement.' 
         }));
-        return;
+        // Continue with the move command
       }
     } else {
-      // Path complete but auto-navigation still active - block manual moves
+      // Path complete but auto-navigation still active - stop it and allow move
+      console.log(`[Auto-Navigation] Path complete - stopping auto-navigation`);
+      if (playerData.autoNavigation.timeoutId) {
+        clearTimeout(playerData.autoNavigation.timeoutId);
+      }
+      playerData.autoNavigation = null;
       ws.send(JSON.stringify({ 
-        type: 'error', 
-        message: 'Auto-navigation is active. Please wait for it to complete.' 
+        type: 'autopath:stopped',
+        message: 'Auto-navigation stopped by manual movement.' 
       }));
-      return;
+      // Continue with the move command
     }
   }
 
@@ -816,7 +828,11 @@ async function move(ctx, data) {
     name: npc.name,
     description: npc.description,
     state: npc.state,
-    color: npc.color
+    color: npc.color,
+    statusMessageIdle: npc.statusMessageIdle,
+    statusMessageReady: npc.statusMessageReady,
+    statusMessageHarvesting: npc.statusMessageHarvesting,
+    statusMessageCooldown: npc.statusMessageCooldown
   }));
   
   // Get items on the ground in the new room
@@ -863,13 +879,13 @@ async function move(ctx, data) {
       const cycles = npc.state.cycles || 0;
       let statusMessage = '';
       if (cycles === 0) {
-        statusMessage = npc.statusMessageIdle || '(idle)';
+        statusMessage = npc.statusMessageIdle ?? '(idle)';
       } else if (npc.state.harvest_active) {
-        statusMessage = npc.statusMessageHarvesting || '(harvesting)';
+        statusMessage = npc.statusMessageHarvesting ?? '(harvesting)';
       } else if (npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) {
-        statusMessage = npc.statusMessageCooldown || '(cooldown)';
+        statusMessage = npc.statusMessageCooldown ?? '(cooldown)';
       } else {
-        statusMessage = npc.statusMessageReady || '(ready)';
+        statusMessage = npc.statusMessageReady ?? '(ready)';
       }
       if (statusMessage) {
         npcDisplay += ' ' + statusMessage;

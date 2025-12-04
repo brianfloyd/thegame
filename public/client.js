@@ -797,6 +797,12 @@ function handleMessage(data) {
                     type: 'info',
                     html: data.html || null
                 });
+                // Legacy handler for HTML messages (who command, etc.)
+                if (data.html) {
+                    displayHtmlMessage(data.message);
+                } else {
+                    addToTerminal(data.message, 'info');
+                }
             }
             break;
         case 'merchantList':
@@ -1657,9 +1663,9 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
                             } else if (npc.state.harvest_active || npc.harvestStatus === 'active') {
                                 statusMessage = npc.statusMessageHarvesting || '(harvesting)';
                             } else if ((npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) || npc.harvestStatus === 'cooldown') {
-                                statusMessage = npc.statusMessageCooldown || '(cooldown)';
+                                statusMessage = npc.statusMessageCooldown ?? '(cooldown)';
                             } else {
-                                statusMessage = npc.statusMessageReady || '(ready)';
+                                statusMessage = npc.statusMessageReady ?? '(ready)';
                             }
                             if (statusMessage) {
                                 npcDisplay += ' ' + statusMessage;
@@ -1999,6 +2005,18 @@ function displaySystemMessage(message) {
         // Fallback to plain text if parseMarkup not available
         messageDiv.textContent = message;
     }
+    terminalContent.appendChild(messageDiv);
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Display HTML message (for who command, etc.)
+function displayHtmlMessage(htmlContent) {
+    const terminalContent = document.getElementById('terminalContent');
+    if (!terminalContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'info-message';
+    messageDiv.innerHTML = htmlContent;
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
