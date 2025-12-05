@@ -14,6 +14,8 @@ export default class Terminal extends Component {
         this.terminalContent = null;
         this.roomItemsDisplay = null;
         this.commandInput = null;
+        this.scrollLockBtn = null;
+        this.scrollLocked = false;
         this.currentRoomId = null;
         this.lastInteractionTime = Date.now();
         this.IDLE_LOOK_DELAY = 30000; // 30 seconds
@@ -28,10 +30,18 @@ export default class Terminal extends Component {
         this.terminalContent = document.getElementById('terminalContent');
         this.roomItemsDisplay = document.getElementById('roomItemsDisplay');
         this.commandInput = document.getElementById('commandInput');
+        this.scrollLockBtn = document.getElementById('scrollLockBtn');
         
         if (!this.terminalContent) {
             console.error('[Terminal] terminalContent element not found');
             return;
+        }
+        
+        // Setup scroll lock button
+        if (this.scrollLockBtn) {
+            this.scrollLockBtn.addEventListener('click', () => {
+                this.toggleScrollLock();
+            });
         }
         
         // Subscribe to MessageBus events
@@ -83,7 +93,7 @@ export default class Terminal extends Component {
         }
         
         this.terminalContent.appendChild(msgDiv);
-        this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
+        this.scrollToBottom();
         
         // Save to terminal history (use raw message text, not HTML)
         if (saveToHistory) {
@@ -352,7 +362,7 @@ export default class Terminal extends Component {
         }
         
         // Scroll to bottom
-        this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
+        this.scrollToBottom();
         
         // Emit event for other components (compass, map, etc.)
         this.emit('terminal:roomUpdated', { room, players, exits, npcs });
@@ -771,6 +781,38 @@ export default class Terminal extends Component {
             this.idleLookInterval = null;
         }
         super.destroy();
+    }
+    
+    /**
+     * Scroll to bottom of terminal (only if not locked)
+     */
+    scrollToBottom() {
+        if (!this.terminalContent) return;
+        
+        if (!this.scrollLocked) {
+            this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
+        }
+    }
+    
+    /**
+     * Toggle scroll lock state
+     */
+    toggleScrollLock() {
+        this.scrollLocked = !this.scrollLocked;
+        
+        if (this.scrollLockBtn) {
+            if (this.scrollLocked) {
+                this.scrollLockBtn.classList.add('locked');
+                this.scrollLockBtn.title = 'Unlock Scroll (click to unlock and catch up)';
+            } else {
+                this.scrollLockBtn.classList.remove('locked');
+                this.scrollLockBtn.title = 'Lock Scroll (click to lock and read backscroll)';
+                // When unlocking, scroll to bottom to catch up
+                if (this.terminalContent) {
+                    this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
+                }
+            }
+        }
     }
 }
 

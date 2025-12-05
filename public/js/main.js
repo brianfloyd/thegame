@@ -1807,6 +1807,7 @@ let isPathExecuting = false;
 let isPathPaused = false;
 let pausedPathRoomId = null;
 let pathPreviewData = null;
+let autoHarvestEnabled = false; // Auto-harvest toggle state
 
 // Execution tracking state
 let executionTracking = {
@@ -1840,6 +1841,32 @@ game.messageBus.on('paths:all', (data) => {
     populatePathDropdown();
 });
 
+// Handle path saved event - paths are already refreshed via allPlayerPaths
+game.messageBus.on('pathSaved', (data) => {
+    // Paths list is automatically refreshed by server sending allPlayerPaths
+    // Just show success message
+    if (window.terminal) {
+        window.terminal.addMessage(`Path "${data.name}" saved successfully!`, 'info');
+    }
+});
+
+// Handle path deleted event
+game.messageBus.on('pathDeleted', (data) => {
+    // Paths list is automatically refreshed by server sending allPlayerPaths
+    // Clear selection if deleted path was selected
+    if (selectedPathId === data.pathId) {
+        selectedPathId = null;
+        const dropdown = document.getElementById('pathLoopSelect');
+        if (dropdown) {
+            dropdown.value = '';
+        }
+        updateDeletePathButton();
+    }
+    if (window.terminal) {
+        window.terminal.addMessage('Path deleted successfully.', 'info');
+    }
+});
+
 function populatePathDropdown() {
     const dropdown = document.getElementById('pathLoopSelect');
     if (!dropdown) return;
@@ -1855,6 +1882,9 @@ function populatePathDropdown() {
         option.textContent = `${typeLabel} ${path.name} (Map: ${path.map_id})`;
         dropdown.appendChild(option);
     });
+    
+    // Update delete button visibility
+    updateDeletePathButton();
 }
 
 function onPathSelectChange() {
@@ -1868,6 +1898,9 @@ function onPathSelectChange() {
     // Enable/disable start button
     startBtn.disabled = !selectedPathId || isPathExecuting;
     
+    // Update delete button visibility
+    updateDeletePathButton();
+    
     // If path selected, request details for preview
     if (selectedPathId && !isPathExecuting) {
         game.send({ type: 'getPathDetails', pathId: selectedPathId });
@@ -1878,6 +1911,42 @@ function onPathSelectChange() {
             previewDialog.style.display = 'none';
         }
     }
+}
+
+// Update delete path button visibility
+function updateDeletePathButton() {
+    const deleteBtn = document.getElementById('deletePathBtn');
+    if (!deleteBtn) return;
+    
+    deleteBtn.disabled = !selectedPathId || isPathExecuting;
+}
+
+// Delete selected path
+function deleteSelectedPath() {
+    if (!selectedPathId) {
+        console.warn('[deleteSelectedPath] No path selected');
+        return;
+    }
+    
+    const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
+    if (!selectedPath) {
+        console.warn('[deleteSelectedPath] Selected path not found in allPlayerPaths');
+        return;
+    }
+    
+    const pathName = selectedPath.name;
+    const pathType = selectedPath.path_type === 'loop' ? 'Loop' : 'Path';
+    
+    // Show in-game confirmation message
+    if (window.terminal) {
+        window.terminal.addMessage(`${pathType} "${pathName}" deleted.`, 'info');
+    }
+    
+    console.log('[deleteSelectedPath] Sending deletePath request for pathId:', selectedPathId);
+    game.send({
+        type: 'deletePath',
+        pathId: selectedPathId
+    });
 }
 
 // Handle path details from server
@@ -2084,8 +2153,11 @@ function startPathExecution() {
         toggleWidget('scripting');
     }
     
-    // Request path details if we don't have preview data yet
+    // Get selected path to check if it's a loop
     const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
+    const isLoop = selectedPath && selectedPath.path_type === 'loop';
+    
+    // Request path details if we don't have preview data yet
     if (selectedPath && (!pathPreviewData || !pathPreviewData.playerRooms)) {
         console.log('[startPathExecution] Requesting path details for step count');
         game.send({ type: 'getPathDetails', pathId: selectedPathId });
@@ -2093,7 +2165,8 @@ function startPathExecution() {
     
     game.send({ 
         type: 'startPathExecution', 
-        pathId: selectedPathId 
+        pathId: selectedPathId,
+        autoHarvestEnabled: isLoop ? autoHarvestEnabled : false // Only enable for loops
     });
 }
 
@@ -2162,8 +2235,22 @@ function updatePathExecutionUI() {
     const startBtn = document.getElementById('startPathBtn');
     const stopBtn = document.getElementById('stopPathBtn');
     const continueBtn = document.getElementById('continuePathBtn');
+    const autoHarvestToggle = document.getElementById('autoHarvestToggle');
     
     if (!dropdown || !startBtn || !stopBtn || !continueBtn) return;
+    
+    // Check if selected path is a loop
+    const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
+    const isLoop = selectedPath && selectedPath.path_type === 'loop';
+    
+    // Update toggle visibility and state
+    if (autoHarvestToggle) {
+        const toggleContainer = autoHarvestToggle.closest('.auto-harvest-toggle-container');
+        if (toggleContainer) {
+            toggleContainer.style.display = isLoop ? 'flex' : 'none';
+        }
+        autoHarvestToggle.disabled = isPathExecuting || isPathPaused || !isLoop;
+    }
     
     if (isPathExecuting) {
         // Execution active
@@ -2367,6 +2454,12 @@ function initAutomationWidget() {
         pathLoopSelect.addEventListener('change', onPathSelectChange);
     }
     
+    // Setup delete path button
+    const deletePathBtn = document.getElementById('deletePathBtn');
+    if (deletePathBtn) {
+        deletePathBtn.addEventListener('click', deleteSelectedPath);
+    }
+    
     const startPathBtn = document.getElementById('startPathBtn');
     if (startPathBtn) {
         startPathBtn.addEventListener('click', startPathExecution);
@@ -2380,6 +2473,15 @@ function initAutomationWidget() {
     const continuePathBtn = document.getElementById('continuePathBtn');
     if (continuePathBtn) {
         continuePathBtn.addEventListener('click', continuePathExecution);
+    }
+    
+    // Auto-harvest toggle
+    const autoHarvestToggle = document.getElementById('autoHarvestToggle');
+    if (autoHarvestToggle) {
+        autoHarvestToggle.addEventListener('change', (e) => {
+            autoHarvestEnabled = e.target.checked;
+            console.log('[Auto-Harvest] Toggle changed:', autoHarvestEnabled);
+        });
     }
     
     const closePathPreviewBtn = document.getElementById('closePathPreviewBtn');

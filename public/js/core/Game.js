@@ -485,6 +485,20 @@ export default class Game {
                 });
                 break;
                 
+            case 'pathSaved':
+                this.messageBus.emit('pathSaved', {
+                    pathId: data.pathId,
+                    name: data.name,
+                    pathType: data.pathType
+                });
+                break;
+                
+            case 'pathDeleted':
+                this.messageBus.emit('pathDeleted', {
+                    pathId: data.pathId
+                });
+                break;
+                
             case 'pathDetails':
                 this.messageBus.emit('paths:details', {
                     path: data.path,

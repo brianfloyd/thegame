@@ -475,6 +475,40 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               if (updatedNPC) {
                 Object.assign(roomNpc, updatedNPC);
               }
+              
+              // Trigger loop resume for auto-harvest (if applicable)
+              if (harvestingPlayerId && currentConnectedPlayers) {
+                // Find player's connection
+                for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                  if (playerData.playerId === harvestingPlayerId) {
+                    // Check if player has active loop with auto-harvest
+                    if (playerData.pathExecution && 
+                        playerData.pathExecution.isActive &&
+                        playerData.pathExecution.autoHarvestEnabled &&
+                        playerData.pathExecution.autoHarvestState.isHarvesting &&
+                        playerData.pathExecution.autoHarvestState.currentNpcId === roomNpc.id) {
+                      // Trigger resume
+                      try {
+                        const { resumeLoopAfterHarvest } = require('../handlers/game');
+                        // Get factoryWidgetState and warehouseWidgetState from server
+                        // These are module-level in server.js, so we need to access them differently
+                        // For now, pass empty Maps - executeNextPathStep should handle this gracefully
+                        const resumeCtx = {
+                          db: db,
+                          connectedPlayers: currentConnectedPlayers,
+                          factoryWidgetState: new Map(), // Will be updated when move is called
+                          warehouseWidgetState: new Map(), // Will be updated when move is called
+                          sessionId: playerData.sessionId || null
+                        };
+                        await resumeLoopAfterHarvest(resumeCtx, connId, roomNpc.id);
+                      } catch (resumeErr) {
+                        console.error(`[NPC Cycle] Error resuming loop after harvest:`, resumeErr);
+                      }
+                    }
+                    break;
+                  }
+                }
+              }
             }
           }
         }

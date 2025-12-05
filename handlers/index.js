@@ -53,6 +53,7 @@ const handlerMap = {
   startPathingMode: gameHandlers.startPathingMode,
   addPathStep: gameHandlers.addPathStep,
   savePath: gameHandlers.savePath,
+  deletePath: gameHandlers.deletePath,
   cancelPathing: gameHandlers.cancelPathing,
   getPathingRoom: gameHandlers.getPathingRoom,
   getAllPlayerPaths: gameHandlers.getAllPlayerPaths,

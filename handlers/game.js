@@ -1022,8 +1022,18 @@ async function move(ctx, data) {
     playerData.pathExecution.currentStep++;
     playerData.pathExecution.timeoutId = null;
     
-    // Continue to next step
-    executeNextPathStep(ctx, connectionId);
+    // Check for auto-harvest if enabled (only for loops)
+    if (playerData.pathExecution.autoHarvestEnabled && 
+        playerData.pathExecution.isLooping && 
+        !playerData.pathExecution.isPaused) {
+      // Check for harvestable NPCs in the new room
+      await checkAndAutoHarvest(ctx, connectionId, targetRoom.id, playerData.playerId);
+    }
+    
+    // Continue to next step (will be paused if auto-harvest started)
+    if (!playerData.pathExecution.isPaused) {
+      executeNextPathStep(ctx, connectionId);
+    }
   } else if (playerData.autoNavigation && playerData.autoNavigation.isActive) {
     // Auto-navigation move
     playerData.autoNavigation.currentStep++;
@@ -1575,6 +1585,302 @@ async function harvest(ctx, data) {
   // Get formatted message from database
   const beginMessage = messageCache.getFormattedMessage('harvest_begin', { npcName: roomNpc.name });
   ws.send(JSON.stringify({ type: 'message', message: beginMessage }));
+}
+
+/**
+ * Check for harvestable NPCs in a room and start auto-harvest if enabled
+ */
+async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
+  const { db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  // Only check if auto-harvest is enabled and this is a loop
+  if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive) {
+    return;
+  }
+  
+  if (!playerData.pathExecution.autoHarvestEnabled || !playerData.pathExecution.isLooping) {
+    return; // Auto-harvest not enabled or not a loop
+  }
+  
+  // Don't check if already harvesting
+  if (playerData.pathExecution.autoHarvestState.isHarvesting) {
+    return;
+  }
+  
+  try {
+    // Get all NPCs in the room
+    const npcsInRoom = await db.getNPCsInRoom(roomId);
+    if (!npcsInRoom || npcsInRoom.length === 0) {
+      return; // No NPCs in room
+    }
+    
+    const player = await db.getPlayerById(playerId);
+    if (!player) {
+      return;
+    }
+    
+    // Get player items for prerequisite checks
+    const playerItems = await db.getPlayerItems(playerId);
+    
+    // Filter for harvestable NPCs
+    const harvestableNPCs = [];
+    
+    for (const roomNpc of npcsInRoom) {
+      // Get NPC definition
+      const npcDef = await db.getScriptableNPCById(roomNpc.npcId);
+      if (!npcDef || npcDef.npc_type !== 'rhythm') {
+        continue; // Not a harvestable NPC
+      }
+      
+      // Get NPC state
+      let npcState = {};
+      try {
+        npcState = roomNpc.state ? JSON.parse(roomNpc.state) : {};
+      } catch (e) {
+        npcState = {};
+      }
+      
+      // Check if on cooldown
+      const now = Date.now();
+      if (npcState.cooldown_until && now < npcState.cooldown_until) {
+        continue; // Skip NPCs on cooldown
+      }
+      
+      // Check if already being harvested
+      if (npcState.harvest_active) {
+        continue; // Skip NPCs already being harvested
+      }
+      
+      // Check prerequisite item
+      if (npcDef.harvest_prerequisite_item) {
+        const hasPrerequisite = playerItems.some(i => 
+          i.item_name.toLowerCase() === npcDef.harvest_prerequisite_item.toLowerCase()
+        );
+        if (!hasPrerequisite) {
+          // Send skip message
+          const skipMessage = messageCache.getFormattedMessage('auto_harvest_skip_missing_item', {
+            npcName: roomNpc.name,
+            itemName: npcDef.harvest_prerequisite_item
+          });
+          if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+            playerData.ws.send(JSON.stringify({ type: 'message', message: skipMessage }));
+          }
+          continue; // Skip NPCs requiring items player lacks
+        }
+      }
+      
+      // Check input_items requirements
+      let requiredItems = {};
+      try {
+        requiredItems = npcDef.input_items ? JSON.parse(npcDef.input_items) : {};
+      } catch (e) {
+        requiredItems = {};
+      }
+      
+      let hasAllItems = true;
+      for (const [itemName, requiredQty] of Object.entries(requiredItems)) {
+        const playerItem = playerItems.find(i => 
+          i.item_name.toLowerCase() === itemName.toLowerCase()
+        );
+        if (!playerItem || playerItem.quantity < requiredQty) {
+          hasAllItems = false;
+          break;
+        }
+      }
+      
+      if (!hasAllItems) {
+        // Send skip message for missing input items
+        const missingItems = Object.keys(requiredItems).filter(itemName => {
+          const playerItem = playerItems.find(i => 
+            i.item_name.toLowerCase() === itemName.toLowerCase()
+          );
+          return !playerItem || playerItem.quantity < requiredItems[itemName];
+        });
+        const skipMessage = messageCache.getFormattedMessage('auto_harvest_skip_missing_item', {
+          npcName: roomNpc.name,
+          itemName: missingItems[0] || 'required items'
+        });
+        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+          playerData.ws.send(JSON.stringify({ type: 'message', message: skipMessage }));
+        }
+        continue; // Skip NPCs requiring items player lacks
+      }
+      
+      // NPC is harvestable
+      harvestableNPCs.push(roomNpc);
+    }
+    
+    if (harvestableNPCs.length === 0) {
+      return; // No harvestable NPCs
+    }
+    
+    // Store pending NPCs and start harvesting the first one
+    playerData.pathExecution.autoHarvestState.pendingNpcs = harvestableNPCs.map(npc => npc.id);
+    playerData.pathExecution.isPaused = true; // Pause loop execution
+    
+    // Start harvesting the first NPC
+    await autoStartHarvest(ctx, connectionId, harvestableNPCs[0].id, playerId);
+    
+  } catch (error) {
+    console.error('[checkAndAutoHarvest] Error:', error);
+    // Resume loop if error occurs
+    if (playerData && playerData.pathExecution) {
+      playerData.pathExecution.isPaused = false;
+      playerData.pathExecution.autoHarvestState.pendingNpcs = [];
+    }
+  }
+}
+
+/**
+ * Automatically start harvest for an NPC (without user input)
+ */
+async function autoStartHarvest(ctx, connectionId, roomNpcId, playerId) {
+  const { db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.ws) {
+    return;
+  }
+  
+  try {
+    const player = await db.getPlayerById(playerId);
+    if (!player) {
+      return;
+    }
+    
+    // Get room NPC
+    const roomNpcResult = await db.query('SELECT * FROM room_npcs WHERE id = $1', [roomNpcId]);
+    if (!roomNpcResult.rows[0]) {
+      return;
+    }
+    const roomNpc = roomNpcResult.rows[0];
+    
+    // Get NPC definition
+    const npcDef = await db.getScriptableNPCById(roomNpc.npc_id);
+    if (!npcDef || npcDef.npc_type !== 'rhythm') {
+      return;
+    }
+    
+    // Get fresh NPC state
+    let npcState = {};
+    try {
+      npcState = roomNpc.state ? JSON.parse(roomNpc.state) : {};
+    } catch (e) {
+      npcState = {};
+    }
+    
+    // Check if already being harvested or on cooldown
+    const now = Date.now();
+    if (npcState.harvest_active || (npcState.cooldown_until && now < npcState.cooldown_until)) {
+      // Skip this NPC and try next one
+      if (playerData.pathExecution && playerData.pathExecution.autoHarvestState.pendingNpcs.length > 0) {
+        playerData.pathExecution.autoHarvestState.pendingNpcs.shift(); // Remove this NPC
+        if (playerData.pathExecution.autoHarvestState.pendingNpcs.length > 0) {
+          // Try next NPC
+          await autoStartHarvest(ctx, connectionId, playerData.pathExecution.autoHarvestState.pendingNpcs[0], playerId);
+        } else {
+          // No more NPCs, resume loop
+          await resumeLoopAfterHarvest(ctx, connectionId, roomNpcId);
+        }
+      }
+      return;
+    }
+    
+    // Start harvest session (same logic as harvest handler)
+    npcState.harvest_active = true;
+    npcState.harvesting_player_id = player.id;
+    npcState.harvest_start_time = now;
+    npcState.cooldown_until = null;
+    npcState.harvesting_player_resonance = player.stat_resonance || 5;
+    npcState.harvesting_player_fortitude = player.stat_fortitude || 5;
+    
+    // Calculate effective harvestable time
+    const baseHarvestableTime = npcDef.harvestable_time || 60000;
+    let effectiveHarvestableTime = baseHarvestableTime;
+    if (npcDef && npcDef.enable_fortitude_bonuses !== false && npcState.harvesting_player_fortitude) {
+      try {
+        const { calculateEffectiveHarvestableTime } = require('../utils/harvestFormulas');
+        effectiveHarvestableTime = await calculateEffectiveHarvestableTime(baseHarvestableTime, npcState.harvesting_player_fortitude, db);
+      } catch (err) {
+        console.error(`[autoStartHarvest] Error calculating harvestable time:`, err);
+      }
+    }
+    
+    npcState.effective_harvestable_time = effectiveHarvestableTime;
+    
+    // Update NPC state
+    await db.updateNPCState(roomNpcId, npcState, roomNpc.last_cycle_run || now);
+    
+    // Update auto-harvest state
+    playerData.pathExecution.autoHarvestState.isHarvesting = true;
+    playerData.pathExecution.autoHarvestState.currentNpcId = roomNpcId;
+    
+    // Send messages (use npcDef.name since room_npcs doesn't have name field)
+    const npcName = npcDef.name || 'creature';
+    const beginMessage = messageCache.getFormattedMessage('harvest_begin', { npcName: npcName });
+    const autoMessage = `Auto-harvesting ${npcName}...`;
+    
+    if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      playerData.ws.send(JSON.stringify({ type: 'message', message: autoMessage }));
+      playerData.ws.send(JSON.stringify({ type: 'message', message: beginMessage }));
+    }
+    
+    console.log(`[autoStartHarvest] Started auto-harvest for player ${player.name} on ${npcName} (room_npc ${roomNpcId})`);
+    
+  } catch (error) {
+    console.error('[autoStartHarvest] Error:', error);
+    // Resume loop if error occurs
+    if (playerData && playerData.pathExecution) {
+      await resumeLoopAfterHarvest(ctx, connectionId, roomNpcId);
+    }
+  }
+}
+
+/**
+ * Resume loop execution after harvest completes
+ */
+async function resumeLoopAfterHarvest(ctx, connectionId, roomNpcId) {
+  const { connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive) {
+    return;
+  }
+  
+  // Remove current NPC from pending list
+  if (playerData.pathExecution.autoHarvestState.currentNpcId === roomNpcId) {
+    const pendingIndex = playerData.pathExecution.autoHarvestState.pendingNpcs.indexOf(roomNpcId);
+    if (pendingIndex !== -1) {
+      playerData.pathExecution.autoHarvestState.pendingNpcs.splice(pendingIndex, 1);
+    }
+  }
+  
+  // Check if there are more NPCs to harvest
+  if (playerData.pathExecution.autoHarvestState.pendingNpcs.length > 0) {
+    // Start harvesting the next NPC
+    const nextNpcId = playerData.pathExecution.autoHarvestState.pendingNpcs[0];
+    const player = await ctx.db.getPlayerById(playerData.playerId);
+    if (player) {
+      await autoStartHarvest(ctx, connectionId, nextNpcId, playerData.playerId);
+    }
+    return;
+  }
+  
+  // No more NPCs, resume loop execution
+  playerData.pathExecution.autoHarvestState.isHarvesting = false;
+  playerData.pathExecution.autoHarvestState.currentNpcId = null;
+  playerData.pathExecution.isPaused = false;
+  
+  // Send message
+  if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+    playerData.ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: 'Finished harvesting. Continuing loop...' 
+    }));
+  }
+  
+  // Continue loop execution
+  executeNextPathStep(ctx, connectionId);
 }
 
 /**
@@ -3984,6 +4290,7 @@ async function executeNextAutoNavigationStep(ctx, connectionId) {
       playerData.pendingPathExecution = null;
       
       // Start path execution
+      const isLooping = pendingPath.pathType === 'loop';
       playerData.pathExecution = {
         pathId: pendingPath.pathId,
         pathType: pendingPath.pathType,
@@ -3991,7 +4298,14 @@ async function executeNextAutoNavigationStep(ctx, connectionId) {
         currentStep: 0,
         isActive: true,
         timeoutId: null,
-        isLooping: pendingPath.pathType === 'loop'
+        isLooping: isLooping,
+        isPaused: false,
+        autoHarvestEnabled: pendingPath.autoHarvestEnabled || false,
+        autoHarvestState: {
+          isHarvesting: false,
+          currentNpcId: null,
+          pendingNpcs: []
+        }
       };
       
       // Begin first path step
@@ -4233,11 +4547,20 @@ async function savePath(ctx, data) {
   
   try {
     const pathId = await db.createPath(playerData.playerId, mapId, name, originRoomId, pathType, steps);
+    
+    // Send success message
     ws.send(JSON.stringify({
       type: 'pathSaved',
       pathId: pathId,
       name: name,
       pathType: pathType
+    }));
+    
+    // Immediately refresh paths list so new path appears in dropdown
+    const paths = await db.getAllPathsByPlayer(playerData.playerId);
+    ws.send(JSON.stringify({
+      type: 'allPlayerPaths',
+      paths: paths
     }));
   } catch (error) {
     console.error('Error saving path:', error);
@@ -4254,6 +4577,54 @@ async function cancelPathing(ctx, data) {
   }
   
   ws.send(JSON.stringify({ type: 'pathingCancelled' }));
+}
+
+async function deletePath(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const playerData = connectedPlayers.get(ctx.connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { pathId } = data;
+  if (!pathId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Path ID required' }));
+    return;
+  }
+  
+  try {
+    // Verify path belongs to player before deleting
+    const path = await db.getPathById(pathId);
+    if (!path) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Path not found' }));
+      return;
+    }
+    
+    if (path.player_id !== playerData.playerId) {
+      ws.send(JSON.stringify({ type: 'error', message: 'You can only delete your own paths' }));
+      return;
+    }
+    
+    // Delete the path
+    await db.deletePath(pathId);
+    
+    // Send success message
+    ws.send(JSON.stringify({
+      type: 'pathDeleted',
+      pathId: pathId
+    }));
+    
+    // Immediately refresh paths list
+    const paths = await db.getAllPathsByPlayer(playerData.playerId);
+    ws.send(JSON.stringify({
+      type: 'allPlayerPaths',
+      paths: paths
+    }));
+  } catch (error) {
+    console.error('Error deleting path:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to delete path: ' + error.message }));
+  }
 }
 
 /**
@@ -4479,7 +4850,7 @@ async function startPathExecution(ctx, data) {
     return;
   }
 
-  const { pathId } = data;
+  const { pathId, autoHarvestEnabled = false } = data;
   if (!pathId) {
     ws.send(JSON.stringify({ type: 'error', message: 'Path ID required' }));
     return;
@@ -4540,11 +4911,13 @@ async function startPathExecution(ctx, data) {
       }
 
       // Store pending path execution (use filtered valid steps)
+      const isLooping = path.path_type === 'loop';
       playerData.pendingPathExecution = {
         pathId: path.id,
         pathType: path.path_type,
         steps: validSteps.map(s => ({ direction: s.direction, roomId: s.room_id })),
-        originRoomId: path.origin_room_id
+        originRoomId: path.origin_room_id,
+        autoHarvestEnabled: isLooping ? (autoHarvestEnabled === true) : false // Only for loops
       };
 
       // Start auto-navigation to origin
@@ -4565,6 +4938,7 @@ async function startPathExecution(ctx, data) {
       }));
     } else {
       // Already at origin, start path execution immediately (use filtered valid steps)
+      const isLooping = path.path_type === 'loop';
       playerData.pathExecution = {
         pathId: path.id,
         pathType: path.path_type,
@@ -4572,7 +4946,14 @@ async function startPathExecution(ctx, data) {
         currentStep: 0,
         isActive: true,
         timeoutId: null,
-        isLooping: path.path_type === 'loop'
+        isLooping: isLooping,
+        isPaused: false,
+        autoHarvestEnabled: isLooping ? (autoHarvestEnabled === true) : false, // Only for loops
+        autoHarvestState: {
+          isHarvesting: false,
+          currentNpcId: null,
+          pendingNpcs: []
+        }
       };
 
       // Begin first path step
@@ -4803,6 +5184,7 @@ module.exports = {
   startPathingMode,
   addPathStep,
   savePath,
+  deletePath,
   cancelPathing,
   getPathingRoom,
   getMapData,
@@ -4811,6 +5193,7 @@ module.exports = {
   startPathExecution,
   stopPathExecution,
   continuePathExecution,
+  resumeLoopAfterHarvest,
   move,
   look,
   inventory,

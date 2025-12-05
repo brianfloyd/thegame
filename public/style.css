@@ -1718,6 +1718,43 @@ body {
     color: #006600;
 }
 
+/* Scroll Lock Icon */
+.scroll-lock-icon {
+    width: 32px;
+    height: 32px;
+    border: 2px solid #333;
+    border-radius: 6px;
+    background: #0a0a0a;
+    color: #444;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 10px;
+    padding: 0;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.scroll-lock-icon:hover {
+    border-color: #666;
+    color: #888;
+    background: #1a1a1a;
+}
+
+.scroll-lock-icon.locked {
+    border-color: #00ff00;
+    color: #00ff00;
+    background: #0a2a0a;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.scroll-lock-icon svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
 /* God Mode Button Bar */
 .god-mode-bar {
     display: flex;
@@ -2757,6 +2794,66 @@ body {
 }
 
 .scripting-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Auto-Harvest Toggle Switch */
+.auto-harvest-toggle-container {
+    user-select: none;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 2px solid #333;
+    border-radius: 20px;
+    transition: 0.3s;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    bottom: 2px;
+    background-color: #333;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: rgba(0, 255, 0, 0.2);
+    border-color: #00ff00;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+    background-color: #00ff00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.5);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
     opacity: 0.5;
     cursor: not-allowed;
 }

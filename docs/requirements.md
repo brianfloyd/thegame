@@ -559,6 +559,7 @@ The frontend uses a modular ES6 component-based architecture:
 - **Player List**: Inline display with automatic "No one else is here." management
 - **Error Messages**: Descriptive wall collision messages
 - **Real-time Updates**: Instant visibility of players entering/leaving rooms
+- **No System Popups**: **CRITICAL RULE** - Never use browser system popups (alert, confirm, prompt). All user interactions, confirmations, and messages must be displayed in-game through the terminal or UI widgets. This maintains the immersive MUD-style experience and prevents disruptive browser dialogs.
 
 ## Player Character System
 
