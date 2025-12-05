@@ -292,6 +292,19 @@ export default class Game {
                         playerName: this.currentPlayerName
                     });
                 }
+                // Update vitalis counter in command line
+                if (data.stats) {
+                    const vitalisStat = data.stats.vitalis;
+                    const maxVitalisStat = data.stats.maxVitalis;
+                    if (vitalisStat !== undefined && maxVitalisStat !== undefined) {
+                        const vitalisCounter = document.getElementById('vitalisCounter');
+                        if (vitalisCounter) {
+                            const vitalisValue = vitalisStat.value !== undefined ? vitalisStat.value : vitalisStat;
+                            const maxVitalisValue = maxVitalisStat.value !== undefined ? maxVitalisStat.value : maxVitalisStat;
+                            vitalisCounter.textContent = `[${vitalisValue || 0} / ${maxVitalisValue || 100}]`;
+                        }
+                    }
+                }
                 this.messageBus.emit('player:stats', {
                     stats: data.stats
                 });

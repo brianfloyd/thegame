@@ -35,6 +35,9 @@ commsWidget.init();
 inventory.init();
 npcWidget.init();
 
+// Track last command for /r repeat command
+let lastCommand = null;
+
 // Set up command line handler
 const commandInput = document.getElementById('commandInput');
 if (commandInput) {
@@ -62,6 +65,21 @@ function executeCommand(input) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         terminal.addMessage('Not connected to server. Please wait...', 'error');
         return;
+    }
+    
+    // Handle /r repeat command
+    if (input.toLowerCase() === '/r' || input === '/r') {
+        if (!lastCommand) {
+            terminal.addMessage('No previous command to repeat.', 'error');
+            return;
+        }
+        // Repeat the last command
+        input = lastCommand;
+    }
+    
+    // Store the command (but not if it was /r itself)
+    if (input.toLowerCase() !== '/r' && input !== '/r') {
+        lastCommand = input;
     }
     
     // Normalize command
@@ -150,6 +168,28 @@ function normalizeCommand(input) {
         }
     }
     
+    // Special handling for 'a' command - check if it's followed by arguments
+    // If 'a' alone, treat as attune
+    // If 'a' followed by direction keywords, treat as movement
+    if (cmd === 'a') {
+        if (args.length === 0) {
+            // 'a' alone = attune
+            return { type: 'attune' };
+        } else {
+            // Check if first arg is a direction keyword
+            const directionKeywords = ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down', 'n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'u', 'd'];
+            const firstArg = args[0].toLowerCase();
+            if (directionKeywords.includes(firstArg)) {
+                // It's a direction, but 'a' isn't a direction, so treat as attune with invalid args
+                // Just return attune (ignore invalid args)
+                return { type: 'attune' };
+            } else {
+                // It's not a direction, treat as attune (ignore args)
+                return { type: 'attune' };
+            }
+        }
+    }
+    
     // Command abbreviations
     const commandMap = {
         'n': 'move', 'north': 'move',
@@ -169,6 +209,7 @@ function normalizeCommand(input) {
         'harvest': 'harvest', 'h': 'harvest',
         'collect': 'harvest', 'c': 'harvest',
         'gather': 'harvest', 'g': 'harvest',
+        'attune': 'attune',
         'talk': 'talk', 'say': 'talk',
         'resonate': 'resonate', 'res': 'resonate', 'r': 'resonate',
         'telepath': 'telepath', 'tele': 'telepath', 'tell': 'telepath', 'whisper': 'telepath',

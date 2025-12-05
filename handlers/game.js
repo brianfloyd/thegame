@@ -1562,6 +1562,11 @@ async function harvest(ctx, data) {
   // Store effective harvestable time in state for use by cycle engine
   npcState.effective_harvestable_time = effectiveHarvestableTime;
   
+  // Initialize last_harvest_item_production to 0 to ensure first cycle triggers immediately
+  // The cycle engine checks: timeSinceLastProduction >= effectiveCycleTime
+  // By setting this to 0, timeSinceLastProduction will be ~current timestamp (huge), guaranteeing first cycle fires
+  npcState.last_harvest_item_production = 0;
+  
   console.log(`[Harvest] Starting harvest for player ${player.name} on ${roomNpc.name} (room_npc ${roomNpc.id}), harvestableTime=${effectiveHarvestableTime}ms, resonance=${npcState.harvesting_player_resonance}, fortitude=${npcState.harvesting_player_fortitude}`);
   
   // Update NPC state in database
@@ -1584,7 +1589,16 @@ async function harvest(ctx, data) {
   
   // Get formatted message from database
   const beginMessage = messageCache.getFormattedMessage('harvest_begin', { npcName: roomNpc.name });
-  ws.send(JSON.stringify({ type: 'message', message: beginMessage }));
+  // Format message using markup service for consistency
+  const { formatMessageForTerminal } = require('../utils/markupService');
+  const html = formatMessageForTerminal(beginMessage, 'info', '#00ffff');
+  // Send message with correct format (matching message router format)
+  ws.send(JSON.stringify({
+    type: 'terminal:message',
+    message: beginMessage,
+    html: html,
+    messageType: 'info'
+  }));
 }
 
 /**
@@ -1881,6 +1895,90 @@ async function resumeLoopAfterHarvest(ctx, connectionId, roomNpcId) {
   
   // Continue loop execution
   executeNextPathStep(ctx, connectionId);
+}
+
+/**
+ * Handle attune command - restore Vitalis
+ */
+async function attune(ctx, data) {
+  const { ws, db, playerName } = ctx;
+  
+  try {
+    const player = await db.getPlayerByName(playerName);
+    if (!player) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+      return;
+    }
+    
+    const now = Date.now();
+    
+    // Check cooldown
+    if (player.last_attune_time && (now - player.last_attune_time) < 5000) {
+      const cooldownMessage = messageCache.getFormattedMessage('attune_cooldown', {});
+      if (!cooldownMessage || cooldownMessage === 'attune_cooldown') {
+        // Fallback if message not in cache
+        ws.send(JSON.stringify({
+          type: 'terminal:message',
+          message: 'Your connection is still stabilizing. You need a moment before you can attune again.',
+          messageType: 'info'
+        }));
+      } else {
+        ws.send(JSON.stringify({
+          type: 'terminal:message',
+          message: cooldownMessage,
+          messageType: 'info'
+        }));
+      }
+      return;
+    }
+    
+    // Calculate restore
+    const resonance = player.stat_resonance || 5;
+    const restore = 10 + Math.floor(resonance * 0.2);
+    const currentVitalis = player.resource_vitalis || 0;
+    const maxVitalis = player.resource_max_vitalis || 100;
+    const newVitalis = Math.min(currentVitalis + restore, maxVitalis);
+    
+    // Update player
+    await db.updatePlayer({
+      id: player.id,
+      resource_vitalis: newVitalis,
+      last_attune_time: now
+    });
+    
+    // Send success message
+    const successMessage = messageCache.getFormattedMessage('attune_success', {
+      vitalis: newVitalis,
+      maxVitalis: maxVitalis
+    });
+    
+    if (!successMessage || successMessage === 'attune_success') {
+      // Fallback if message not in cache
+      ws.send(JSON.stringify({
+        type: 'terminal:message',
+        message: `You kneel and attune to the pulse beneath your feet. Your Vitalis surges. (${newVitalis} / ${maxVitalis})`,
+        messageType: 'info'
+      }));
+    } else {
+      ws.send(JSON.stringify({
+        type: 'terminal:message',
+        message: successMessage,
+        messageType: 'info'
+      }));
+    }
+    
+    // Update player stats widget
+    if (ctx.connectionId && ctx.connectedPlayers) {
+      const { sendPlayerStats } = require('../utils/broadcast');
+      await sendPlayerStats(ctx.connectedPlayers, db, ctx.connectionId);
+    }
+  } catch (error) {
+    console.error('[attune] Error:', error);
+    ws.send(JSON.stringify({ 
+      type: 'error', 
+      message: 'An error occurred while attuning. Please try again.' 
+    }));
+  }
 }
 
 /**
@@ -4004,7 +4102,7 @@ async function who(ctx, data) {
     html += '<tbody>';
     
     if (playersList.length === 0) {
-      html += '<tr><td colspan="3" style="text-align: center; color: #888;">No other players are currently in the world.</td></tr>';
+      html += '<tr><td colspan="3" style="text-align: center; color: #888;">No players are currently in the world.</td></tr>';
     } else {
       playersList.forEach(player => {
         html += '<tr>';
@@ -4018,10 +4116,12 @@ async function who(ctx, data) {
     html += '</tbody></table>';
     html += '</div>';
     
+    // Send message with HTML content in the html field
     ws.send(JSON.stringify({ 
       type: 'message', 
-      message: html,
-      html: true
+      message: 'Players in the world:',
+      html: html,
+      messageType: 'info'
     }));
   } catch (err) {
     console.error('Who command error:', err);
@@ -5201,6 +5301,7 @@ module.exports = {
   drop,
   factoryWidgetAddItem,
   harvest,
+  attune,
   resonate,
   talk,
   ask,

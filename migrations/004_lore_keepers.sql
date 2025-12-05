@@ -54,3 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_lore_keepers_npc_id ON lore_keepers(npc_id);
 
 
 
+
+
+
+
+

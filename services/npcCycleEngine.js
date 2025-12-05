@@ -9,10 +9,15 @@ const WebSocket = require('ws');
 const { 
   calculateCycleTimeMultiplier, 
   checkHarvestHit, 
-  getHarvestFormulaConfig 
+  getHarvestFormulaConfig,
+  applyVitalisDrainReduction
 } = require('../utils/harvestFormulas');
 const messageCache = require('../utils/messageCache');
-const { sendMessage } = require('../utils/messageRouter');
+const { 
+  applyVitalisDrain, 
+  checkVitalisDepletion 
+} = require('../utils/vitalisHelpers');
+const { sendPlayerStats } = require('../utils/broadcast');
 
 // NPC Cycle Engine Configuration
 const NPC_TICK_INTERVAL = 1000; // milliseconds (configurable)
@@ -24,17 +29,74 @@ const HARVEST_SAFE_COMMANDS = [
   'n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'u', 'd', 'up', 'down',
   'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest',
   'move', // movement command type
-  'saveterminalmessage' // client auto-sends this when displaying messages, should not interrupt harvest
+  'saveterminalmessage', // client auto-sends this when displaying messages, should not interrupt harvest
+  'getallplayerpaths', // client auto-sends this for UI updates, should not interrupt harvest
+  'getplayerstats', // client auto-sends this for stats widget updates, should not interrupt harvest
+  'heartbeat' // client auto-sends this for connection keepalive, should not interrupt harvest
 ];
+
+/**
+ * Send a message to the harvesting player only
+ * @param {Map} connectedPlayers - Connected players map
+ * @param {number} harvestingPlayerId - Player ID of the harvesting player
+ * @param {string} message - Message text
+ * @param {string} messageType - Message type ('info', 'warning', 'error')
+ * @param {object} db - Database module (optional, for name-based fallback)
+ * @returns {boolean} True if message was sent successfully
+ */
+async function sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, message, messageType = 'info', db = null) {
+  if (!harvestingPlayerId || !connectedPlayers) {
+    console.log(`[sendToHarvestingPlayer] Missing data: harvestingPlayerId=${harvestingPlayerId}, connectedPlayers=${!!connectedPlayers}`);
+    return false;
+  }
+  
+  // Try to find player by playerId - check both exact match and type-coerced match
+  for (const [connId, playerData] of connectedPlayers.entries()) {
+    // Use == for type coercion (in case one is string and other is number)
+    const playerIdMatch = playerData.playerId == harvestingPlayerId;
+    if (playerIdMatch && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+      playerData.ws.send(JSON.stringify({
+        type: 'terminal:message',
+        message: message,
+        messageType: messageType
+      }));
+      return true;
+    }
+  }
+  
+  // Fallback: If not found by playerId and db is provided, try to find by player name
+  if (db) {
+    try {
+      const player = await db.getPlayerById(harvestingPlayerId);
+      if (player) {
+        for (const [connId, playerData] of connectedPlayers.entries()) {
+          if (playerData.playerName === player.name && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+            playerData.ws.send(JSON.stringify({
+              type: 'terminal:message',
+              message: message,
+              messageType: messageType
+            }));
+            return true;
+          }
+        }
+      }
+    } catch (err) {
+      // Silently fail - don't log errors for message sending
+    }
+  }
+  
+  return false;
+}
 
 /**
  * End a harvest session on an NPC
  * @param {object} db - Database module
  * @param {number} roomNpcId - Room NPC placement ID
  * @param {boolean} startCooldown - Whether to start cooldown timer
- * @returns {object} Updated NPC state
+ * @param {string} reason - Reason for ending harvest ('time_expired', 'vitalis_depleted', etc.)
+ * @returns {object} Updated NPC state with reason stored
  */
-async function endHarvestSession(db, roomNpcId, startCooldown = true) {
+async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = 'time_expired') {
   const roomNpcResult = await db.query('SELECT * FROM room_npcs WHERE id = $1', [roomNpcId]);
   const roomNpc = roomNpcResult.rows[0];
   if (!roomNpc) return;
@@ -88,6 +150,7 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true) {
   state.harvesting_player_id = null;
   state.harvest_start_time = null;
   state.last_harvest_item_production = null; // Clear harvest item production tracking
+  state.harvest_end_reason = reason; // Store reason for auto-harvest decision
   if (startCooldown) {
     state.cooldown_until = Date.now() + effectiveCooldownTime;
   }
@@ -133,6 +196,155 @@ async function findPlayerHarvestSession(db, playerId) {
  */
 function isHarvestSafeCommand(cmdType) {
   return HARVEST_SAFE_COMMANDS.includes(cmdType.toLowerCase());
+}
+
+/**
+ * Apply Vitalis drain on harvest hit/miss and handle depletion
+ * @param {object} db - Database module
+ * @param {Map} connectedPlayers - Connected players map
+ * @param {object} roomNpc - Room NPC object
+ * @param {number} baseDrain - Base drain amount (from NPC hit_vitalis or miss_vitalis)
+ * @param {string} messageKey - Message key ('vitalis_drain_hit' or 'vitalis_drain_miss')
+ * @returns {Promise<boolean>} True if harvest should continue, false if depleted
+ */
+async function applyVitalisDrainOnHarvest(db, connectedPlayers, roomNpc, baseDrain, messageKey) {
+  const harvestingPlayerId = roomNpc.state.harvesting_player_id;
+  if (!harvestingPlayerId) {
+    return true; // No player harvesting, continue
+  }
+  
+  // Find connectionId and playerData for stats update
+  let connectionId = null;
+  let playerData = null;
+  for (const [connId, pData] of connectedPlayers.entries()) {
+    if (pData.playerId === harvestingPlayerId) {
+      connectionId = connId;
+      playerData = pData;
+      break;
+    }
+  }
+  
+  // If no drain configured, just update stats and continue
+  if (baseDrain <= 0) {
+    if (connectionId) {
+      await sendPlayerStats(connectedPlayers, db, connectionId);
+    }
+    return true; // No drain needed, continue harvest
+  }
+  
+  try {
+    // Get player fortitude and resonance from harvest state
+    const playerFortitude = roomNpc.state.harvesting_player_fortitude || 5;
+    const playerResonance = roomNpc.state.harvesting_player_resonance || 5;
+    
+    // Calculate reduced drain
+    const drainAmount = await applyVitalisDrainReduction(baseDrain, playerFortitude, playerResonance, db);
+    
+    // Apply drain
+    const newVitalis = await applyVitalisDrain(db, harvestingPlayerId, drainAmount);
+    
+    // Get player info for message
+    const player = await db.getPlayerById(harvestingPlayerId);
+    const maxVitalis = player?.resource_max_vitalis || 100;
+    
+    // Send drain message
+    const drainMessage = messageCache.getFormattedMessage(messageKey, {
+      drainAmount: drainAmount,
+      vitalis: newVitalis,
+      maxVitalis: maxVitalis
+    });
+    const drainSent = await sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, drainMessage, 'info', db);
+    if (!drainSent) {
+      console.log(`[NPC Cycle] WARNING: Failed to send ${messageKey} message to player ${harvestingPlayerId}`);
+    } else {
+      console.log(`[NPC Cycle] Sent ${messageKey} message: ${drainMessage.substring(0, 50)}...`);
+    }
+    
+    // Update player stats widget immediately
+    if (connectionId) {
+      await sendPlayerStats(connectedPlayers, db, connectionId);
+    }
+    
+    // Check for depletion - only end harvest if vitalis is actually 0 or below
+    // CRITICAL: Double-check that vitalis is actually 0 or negative before ending harvest
+    const isDepleted = checkVitalisDepletion(newVitalis);
+    console.log(`[NPC Cycle] Vitalis drain applied: ${drainAmount} drained, new vitalis: ${newVitalis}/${maxVitalis}, depleted: ${isDepleted}`);
+    
+    // Only end harvest if vitalis is actually 0 or negative
+    // CRITICAL: Never end harvest if vitalis > 0 - this is a safety check
+    if (newVitalis > 0) {
+      console.log(`[NPC Cycle] Vitalis is ${newVitalis}, harvest should continue (not depleted)`);
+      return true; // Continue harvest - vitalis is still above 0
+    }
+    
+    // Only reach here if vitalis is <= 0
+    if (isDepleted && newVitalis <= 0) {
+      // Vitalis depleted - end harvest immediately
+      // Double-check: only end if vitalis is actually 0 or negative
+      console.log(`[NPC Cycle] Vitalis depleted for player ${harvestingPlayerId} (vitalis: ${newVitalis}), ending harvest for room_npc ${roomNpc.id}`);
+      
+      // Get player info before ending session
+      let playerName = playerData?.playerName || 'Someone';
+      
+      // If not found by playerId, try to get from DB
+      if (!playerData) {
+        try {
+          const playerFromDb = await db.getPlayerById(harvestingPlayerId);
+          if (playerFromDb) {
+            playerName = playerFromDb.name;
+          }
+        } catch (dbErr) {
+          console.error(`[NPC Cycle] Error looking up player ${harvestingPlayerId} for vitalis depletion message:`, dbErr);
+        }
+      }
+      
+      // End harvest session without cooldown (vitalis depletion)
+      await endHarvestSession(db, roomNpc.id, false, 'vitalis_depleted');
+      
+      // Send vitalis depletion message to player only
+      const depletionMessage = messageCache.getFormattedMessage('vitalis_depleted', {});
+      await sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, depletionMessage, 'warning', db);
+      
+      // Do NOT resume auto-harvest - set pause state
+      const finalPlayerData = Array.from(connectedPlayers.values()).find(p => 
+        p.playerId === harvestingPlayerId || p.playerName === playerName
+      );
+      if (finalPlayerData && finalPlayerData.pathExecution && finalPlayerData.pathExecution.isActive && finalPlayerData.pathExecution.autoHarvestEnabled) {
+        finalPlayerData.pathExecution.isPaused = true;
+        finalPlayerData.pathExecution.pauseReason = 'vitalis_depleted';
+        
+        const pauseMessage = messageCache.getFormattedMessage('loop_paused_vitalis', {});
+        if (finalPlayerData.ws && finalPlayerData.ws.readyState === WebSocket.OPEN) {
+          finalPlayerData.ws.send(JSON.stringify({
+            type: 'terminal:message',
+            message: pauseMessage,
+            messageType: 'warning'
+          }));
+        }
+      }
+      
+      // Reload NPC state after ending session (only if we actually ended it)
+      // Note: We don't need to reload here since we're returning false anyway
+      // The next cycle will get fresh state from getAllActiveNPCs
+      
+      return false; // Harvest should stop
+    }
+    
+    return true; // Continue harvest
+  } catch (vitalisErr) {
+    console.error(`[NPC Cycle] Error applying Vitalis drain:`, vitalisErr);
+    console.error(`[NPC Cycle] Error stack:`, vitalisErr.stack);
+    // Continue harvest even if vitalis drain fails (non-fatal)
+    // Still update stats widget if we have connectionId
+    if (connectionId) {
+      try {
+        await sendPlayerStats(connectedPlayers, db, connectionId);
+      } catch (statsErr) {
+        console.error(`[NPC Cycle] Error updating player stats after drain error:`, statsErr);
+      }
+    }
+    return true;
+  }
 }
 
 /**
@@ -305,9 +517,36 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
           let lastHarvestItemProduction = roomNpc.state.last_harvest_item_production || harvestStartTime;
           const timeSinceLastProduction = now - lastHarvestItemProduction;
           
+          // DEBUG: Log cycle timing every cycle to trace issues
+          console.log(`[NPC Cycle] room_npc ${roomNpc.id}: lastProd=${lastHarvestItemProduction}, timeSince=${timeSinceLastProduction}ms, effectiveCycle=${effectiveCycleTime}ms, shouldFire=${timeSinceLastProduction >= effectiveCycleTime}`);
+          
           // Produce items if enough time has passed since last production (using effective cycle time)
           if (timeSinceLastProduction >= effectiveCycleTime) {
             try {
+              // Get harvesting player ID for fallback messaging
+              const harvestingPlayerId = roomNpc.state.harvesting_player_id;
+              
+              // Verify harvest is still active before processing
+              if (!harvestingPlayerId || !roomNpc.state.harvest_active) {
+                console.log(`[NPC Cycle] Skipping harvest cycle - no active harvest for room_npc ${roomNpc.id}`);
+                continue;
+              }
+              
+              // CRITICAL: Check if the harvesting player is connected to THIS server process
+              // In multi-process setups (like dev:both), only the process with the player should handle the harvest
+              let playerConnectedToThisProcess = false;
+              for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                if (playerData.playerId == harvestingPlayerId) {
+                  playerConnectedToThisProcess = true;
+                  break;
+                }
+              }
+              
+              if (!playerConnectedToThisProcess) {
+                // Player is not connected to this process, skip - another process will handle it
+                continue;
+              }
+              
               // Check hit rate based on resonance (if resonance bonuses enabled)
               let harvestHit = true;
               let hitRate = 1.0;
@@ -327,21 +566,43 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               const npcName = npcDef ? npcDef.name : 'creature';
               
               if (!harvestHit) {
-                // Miss - send miss message to all players in the room (for consistency with other harvest messages)
-                // Get formatted message from database with markup support
+                // Miss - send miss message to harvesting player only
                 const missMessage = messageCache.getFormattedMessage('harvest_miss', { npcName: npcName });
+                const missSent = await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, missMessage, 'info', db);
+                if (!missSent) {
+                  console.log(`[NPC Cycle] WARNING: Failed to send harvest_miss message to player ${harvestingPlayerId}`);
+                }
                 
-                // Send miss message to all players in the room (using universal message router)
-                if (roomNpc.roomId) {
-                  sendMessage({
-                    connectedPlayers: currentConnectedPlayers,
-                    to: 'room',
-                    target: roomNpc.roomId,
-                    message: missMessage,
-                    type: 'info'
-                  });
-                } else {
-                  console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send miss message`);
+                // Apply Vitalis drain on miss
+                // Use npcDef from database (has hit_vitalis/miss_vitalis) or fallback to roomNpc
+                const missVitalis = (npcDef?.miss_vitalis ?? roomNpc.missVitalis) || 0;
+                console.log(`[NPC Cycle] Miss - NPC ${roomNpc.npcId} miss_vitalis: ${missVitalis}, player: ${harvestingPlayerId}`);
+                const shouldContinue = await applyVitalisDrainOnHarvest(db, currentConnectedPlayers, roomNpc, missVitalis, 'vitalis_drain_miss');
+                if (!shouldContinue) {
+                  // Vitalis depleted, harvest ended - skip to next NPC
+                  console.log(`[NPC Cycle] Harvest ended due to vitalis depletion for player ${harvestingPlayerId}`);
+                  continue;
+                }
+                
+                // Verify harvest is still active after drain (defensive check)
+                // Reload state from DB to ensure we have the latest state
+                const freshNPC = await db.getAllActiveNPCs();
+                const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
+                if (freshRoomNpc && freshRoomNpc.state) {
+                  const freshState = typeof freshRoomNpc.state === 'string' 
+                    ? JSON.parse(freshRoomNpc.state) 
+                    : freshRoomNpc.state;
+                  if (!freshState.harvest_active) {
+                    console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
+                    // Update local state reference
+                    Object.assign(roomNpc, freshRoomNpc);
+                    continue;
+                  }
+                  // Update local state reference to keep it in sync
+                  roomNpc.state = freshState;
+                } else if (!roomNpc.state.harvest_active) {
+                  console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (local state check)`);
+                  continue;
                 }
                 
                 // Update last_harvest_item_production even on miss (to maintain timing)
@@ -361,36 +622,151 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                   }
                 }
                 
-                // Add produced items to the room
+                // Distribute produced items based on output_distribution setting
                 if (producedItems.length > 0) {
+                  const outputDistribution = roomNpc.outputDistribution || 'ground';
+                  
                   for (const item of producedItems) {
-                    await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
-                    
-                    // Send message to all players in the room about item production
-                    // Get formatted message from database with markup support
-                    const itemMessage = messageCache.getFormattedMessage('harvest_item_produced', { 
-                      npcName: npcName, 
-                      quantity: item.quantity, 
-                      itemName: item.itemName 
-                    });
-                    
-                    // Send to all players in the room (using universal message router)
-                    sendMessage({
-                      connectedPlayers: currentConnectedPlayers,
-                      to: 'room',
-                      target: roomNpc.roomId,
-                      message: itemMessage,
-                      type: 'info'
-                    });
+                    if (outputDistribution === 'ground') {
+                      // Default: drop items to the ground
+                      await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
+                      
+                      // Send message to harvesting player only
+                      const itemMessage = messageCache.getFormattedMessage('harvest_item_produced', { 
+                        npcName: npcName, 
+                        quantity: item.quantity, 
+                        itemName: item.itemName 
+                      });
+                      const itemSent = await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, itemMessage, 'info', db);
+                      if (!itemSent) {
+                        console.log(`[NPC Cycle] WARNING: Failed to send harvest_item_produced message to player ${harvestingPlayerId}`);
+                      }
+                      
+                      // Send room update to all players in the room so they see the new items
+                      const room = await db.getRoomById(roomNpc.roomId);
+                      if (room) {
+                        const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
+                        for (const { connId } of playersInRoom) {
+                          await sendRoomUpdate(connId, room);
+                        }
+                      }
+                    } else if (outputDistribution === 'player') {
+                      // Give items to the interacting player
+                      const harvestingPlayerId = roomNpc.state.harvesting_player_id;
+                      if (harvestingPlayerId) {
+                        // Check encumbrance before awarding
+                        const currentEncumbrance = await db.getPlayerCurrentEncumbrance(harvestingPlayerId);
+                        const player = await db.getPlayerById(harvestingPlayerId);
+                        const maxEncumbrance = player?.resource_max_encumbrance || 100;
+                        const itemEncumbrance = await db.getItemEncumbrance(item.itemName);
+                        const totalEncumbrance = currentEncumbrance + (itemEncumbrance * item.quantity);
+                        
+                        if (totalEncumbrance <= maxEncumbrance) {
+                          await db.addPlayerItem(harvestingPlayerId, item.itemName, item.quantity);
+                          
+                          // Send message to the harvesting player
+                          const itemMessage = messageCache.getFormattedMessage('harvest_item_produced', { 
+                            npcName: npcName, 
+                            quantity: item.quantity, 
+                            itemName: item.itemName 
+                          });
+                          const itemSent2 = await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, itemMessage, 'info', db);
+                          if (!itemSent2) {
+                            console.log(`[NPC Cycle] WARNING: Failed to send harvest_item_produced (player) message to player ${harvestingPlayerId}`);
+                          }
+                        } else {
+                          // Player is too encumbered, drop to ground instead
+                          await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
+                          
+                          // Send message to the harvesting player about encumbrance
+                          const encumbranceMessage = `You are too encumbered to receive ${item.itemName}. It drops to the ground.`;
+                          for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                            if (playerData.playerId === harvestingPlayerId && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                              playerData.ws.send(JSON.stringify({ 
+                                type: 'terminal:message', 
+                                message: encumbranceMessage 
+                              }));
+                              break;
+                            }
+                          }
+                          
+                          // Also send room update so players see the dropped item
+                          const room = await db.getRoomById(roomNpc.roomId);
+                          if (room) {
+                            const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
+                            for (const { connId } of playersInRoom) {
+                              await sendRoomUpdate(connId, room);
+                            }
+                          }
+                        }
+                      }
+                    } else if (outputDistribution === 'all_players') {
+                      // Give items to all players in the room
+                      const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
+                      
+                      for (const { connId, playerId } of playersInRoom) {
+                        if (!playerId) continue;
+                        
+                        // Check encumbrance before awarding
+                        const currentEncumbrance = await db.getPlayerCurrentEncumbrance(playerId);
+                        const player = await db.getPlayerById(playerId);
+                        const maxEncumbrance = player?.resource_max_encumbrance || 100;
+                        const itemEncumbrance = await db.getItemEncumbrance(item.itemName);
+                        const totalEncumbrance = currentEncumbrance + (itemEncumbrance * item.quantity);
+                        
+                        if (totalEncumbrance <= maxEncumbrance) {
+                          await db.addPlayerItem(playerId, item.itemName, item.quantity);
+                          
+                          // Send message to the player
+                          const itemMessage = messageCache.getFormattedMessage('harvest_item_produced', { 
+                            npcName: npcName, 
+                            quantity: item.quantity, 
+                            itemName: item.itemName 
+                          });
+                          
+                          const playerData = currentConnectedPlayers.get(connId);
+                          if (playerData && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                            playerData.ws.send(JSON.stringify({ 
+                              type: 'terminal:message', 
+                              message: itemMessage 
+                            }));
+                          }
+                        }
+                        // If player is too encumbered, silently skip (no message)
+                      }
+                    }
                   }
                   
-                  // Send room update to all players in the room so they see the new items
-                  const room = await db.getRoomById(roomNpc.roomId);
-                  if (room) {
-                    const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
-                    for (const { connId } of playersInRoom) {
-                      await sendRoomUpdate(connId, room);
+                  // Apply Vitalis drain after successful item production (HIT)
+                  // Use npcDef from database (has hit_vitalis/miss_vitalis) or fallback to roomNpc
+                  const hitVitalis = (npcDef?.hit_vitalis ?? roomNpc.hitVitalis) || 0;
+                  console.log(`[NPC Cycle] Hit - NPC ${roomNpc.npcId} hit_vitalis: ${hitVitalis}, player: ${harvestingPlayerId}`);
+                  const shouldContinue = await applyVitalisDrainOnHarvest(db, currentConnectedPlayers, roomNpc, hitVitalis, 'vitalis_drain_hit');
+                  if (!shouldContinue) {
+                    // Vitalis depleted, harvest ended - skip to next NPC
+                    console.log(`[NPC Cycle] Harvest ended due to vitalis depletion for player ${harvestingPlayerId}`);
+                    continue;
+                  }
+                  
+                  // Verify harvest is still active after drain (defensive check)
+                  // Reload state from DB to ensure we have the latest state
+                  const freshNPC = await db.getAllActiveNPCs();
+                  const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
+                  if (freshRoomNpc && freshRoomNpc.state) {
+                    const freshState = typeof freshRoomNpc.state === 'string' 
+                      ? JSON.parse(freshRoomNpc.state) 
+                      : freshRoomNpc.state;
+                    if (!freshState.harvest_active) {
+                      console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
+                      // Update local state reference
+                      Object.assign(roomNpc, freshRoomNpc);
+                      continue;
                     }
+                    // Update local state reference to keep it in sync
+                    roomNpc.state = freshState;
+                  } else if (!roomNpc.state.harvest_active) {
+                    console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (local state check)`);
+                    continue;
                   }
                   
                   // Update last_harvest_item_production in state (this is the only state field we modify during harvest)
@@ -444,26 +820,13 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               
               // CRITICAL: Send cooldown message IMMEDIATELY, before ending harvest session
               // This ensures the message is sent even if the player disconnects during endHarvestSession
-              // Send to all players in room (like harvest item production messages)
-              // Get formatted message from database with markup support
-              if (roomId) {
-                const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
-                
-                // Send synchronously to all players in the room (using universal message router)
-                sendMessage({
-                  connectedPlayers: currentConnectedPlayers,
-                  to: 'room',
-                  target: roomId,
-                  message: cooldownMessage,
-                  type: 'info'
-                });
-              } else {
-                console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send cooldown message`);
-              }
+              // Send to harvesting player only
+              const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
+              await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, cooldownMessage, 'info', db);
               
               // NOW end the harvest session (after message is sent)
               try {
-                await endHarvestSession(db, roomNpc.id, true);
+                await endHarvestSession(db, roomNpc.id, true, 'time_expired');
               } catch (endErr) {
                 console.error(`[NPC Cycle] Error ending harvest session:`, endErr);
                 // Message was already sent, so continue
@@ -477,6 +840,7 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               }
               
               // Trigger loop resume for auto-harvest (if applicable)
+              // Only resume if harvest ended due to time expiration, not vitalis depletion
               if (harvestingPlayerId && currentConnectedPlayers) {
                 // Find player's connection
                 for (const [connId, playerData] of currentConnectedPlayers.entries()) {
@@ -487,22 +851,39 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                         playerData.pathExecution.autoHarvestEnabled &&
                         playerData.pathExecution.autoHarvestState.isHarvesting &&
                         playerData.pathExecution.autoHarvestState.currentNpcId === roomNpc.id) {
-                      // Trigger resume
-                      try {
-                        const { resumeLoopAfterHarvest } = require('../handlers/game');
-                        // Get factoryWidgetState and warehouseWidgetState from server
-                        // These are module-level in server.js, so we need to access them differently
-                        // For now, pass empty Maps - executeNextPathStep should handle this gracefully
-                        const resumeCtx = {
-                          db: db,
-                          connectedPlayers: currentConnectedPlayers,
-                          factoryWidgetState: new Map(), // Will be updated when move is called
-                          warehouseWidgetState: new Map(), // Will be updated when move is called
-                          sessionId: playerData.sessionId || null
-                        };
-                        await resumeLoopAfterHarvest(resumeCtx, connId, roomNpc.id);
-                      } catch (resumeErr) {
-                        console.error(`[NPC Cycle] Error resuming loop after harvest:`, resumeErr);
+                      // Check harvest end reason - only resume if not vitalis_depleted
+                      const harvestEndReason = updatedNPC?.state?.harvest_end_reason || 'time_expired';
+                      if (harvestEndReason === 'vitalis_depleted') {
+                        // Do NOT resume - pause loop instead
+                        playerData.pathExecution.isPaused = true;
+                        playerData.pathExecution.pauseReason = 'vitalis_depleted';
+                        
+                        const pauseMessage = messageCache.getFormattedMessage('loop_paused_vitalis', {});
+                        if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                          playerData.ws.send(JSON.stringify({
+                            type: 'terminal:message',
+                            message: pauseMessage,
+                            messageType: 'warning'
+                          }));
+                        }
+                      } else {
+                        // Normal expiration - trigger resume
+                        try {
+                          const { resumeLoopAfterHarvest } = require('../handlers/game');
+                          // Get factoryWidgetState and warehouseWidgetState from server
+                          // These are module-level in server.js, so we need to access them differently
+                          // For now, pass empty Maps - executeNextPathStep should handle this gracefully
+                          const resumeCtx = {
+                            db: db,
+                            connectedPlayers: currentConnectedPlayers,
+                            factoryWidgetState: new Map(), // Will be updated when move is called
+                            warehouseWidgetState: new Map(), // Will be updated when move is called
+                            sessionId: playerData.sessionId || null
+                          };
+                          await resumeLoopAfterHarvest(resumeCtx, connId, roomNpc.id);
+                        } catch (resumeErr) {
+                          console.error(`[NPC Cycle] Error resuming loop after harvest:`, resumeErr);
+                        }
                       }
                     }
                     break;

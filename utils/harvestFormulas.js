@@ -250,6 +250,53 @@ async function calculateEffectiveHarvestableTime(baseHarvestableTime, fortitude,
 }
 
 /**
+ * Calculate Vitalis drain reduction based on average of fortitude and resonance stats
+ * Uses exponential curve formula similar to cycle_time_reduction
+ * 
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {number} resonance - Player's resonance stat value
+ * @param {object} config - Vitalis drain reduction config from database
+ * @returns {number} Reduction multiplier (0 to 1, where 1 = 100% reduction)
+ */
+function calculateVitalisDrainReduction(fortitude, resonance, config) {
+  // Calculate average of fortitude and resonance
+  const averageStat = (fortitude + resonance) / 2;
+  
+  // Use exponential curve with the average stat value
+  const reduction = calculateExponentialCurve(averageStat, config);
+  
+  // Return reduction multiplier (0 to 1)
+  return Math.max(0, Math.min(1, reduction));
+}
+
+/**
+ * Apply Vitalis drain reduction to a base drain amount
+ * Gets config from database and calculates reduced drain
+ * 
+ * @param {number} baseDrain - Base Vitalis drain amount (from NPC hit_vitalis or miss_vitalis)
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {number} resonance - Player's resonance stat value
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Final drain amount after reduction (minimum 1)
+ */
+async function applyVitalisDrainReduction(baseDrain, fortitude, resonance, db) {
+  // Get vitalis_drain_reduction config from database
+  const config = await getHarvestFormulaConfig(db, 'vitalis_drain_reduction');
+  
+  if (!config) {
+    // No config found, return base drain (no reduction)
+    return Math.max(1, baseDrain);
+  }
+  
+  // Calculate reduction using the new function
+  const reduction = calculateVitalisDrainReduction(fortitude, resonance, config);
+  
+  // Apply reduction: finalDrain = baseDrain * (1 - reduction)
+  // Minimum drain is always 1
+  return Math.max(1, Math.floor(baseDrain * (1 - reduction)));
+}
+
+/**
  * Get a human-readable summary of the formula effects at different resonance levels
  * Useful for displaying in UI
  * 
@@ -281,6 +328,8 @@ module.exports = {
   calculateEffectiveCycleTime,
   calculateEffectiveHarvestableTime,
   checkHarvestHit,
+  calculateVitalisDrainReduction,
+  applyVitalisDrainReduction,
   getFormulaSummary
 };
 

@@ -365,8 +365,9 @@ async function createPlayer(name, accountId) {
       name, current_room_id,
       stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen,
       ability_crafting, ability_attunement, ability_endurance, ability_commerce,
-      assignable_points, flag_god_mode, flag_always_first_time, auto_navigation_time_ms
-    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0, 1000)
+      assignable_points, flag_god_mode, flag_always_first_time, auto_navigation_time_ms,
+      resource_vitalis, resource_max_vitalis
+    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0, 1000, 50, 100)
     RETURNING id, name, current_room_id`,
     [name, townSquare.id]
   );
@@ -398,7 +399,7 @@ async function updatePlayer(player) {
     'stat_ingenuity', 'stat_resonance', 'stat_fortitude', 'stat_acumen',
     'ability_crafting', 'ability_attunement', 'ability_endurance', 'ability_commerce',
     'resource_max_encumbrance', 'assignable_points', 'flag_god_mode', 'current_room_id',
-    'auto_navigation_time_ms'
+    'auto_navigation_time_ms', 'loop_delay_ms', 'resource_vitalis', 'resource_max_vitalis', 'last_attune_time'
   ];
   
   const updates = [];
@@ -422,6 +423,20 @@ async function updatePlayer(player) {
   await query(sql, values);
   
   return getPlayerById(player.id);
+}
+
+/**
+ * Update player Vitalis (atomic operation)
+ * @param {number} playerId - Player ID
+ * @param {number} newVitalis - New vitalis value
+ * @returns {Promise<object>} Updated player object
+ */
+async function updatePlayerVitalis(playerId, newVitalis) {
+  await query(
+    'UPDATE players SET resource_vitalis = $1 WHERE id = $2',
+    [newVitalis, playerId]
+  );
+  return getPlayerById(playerId);
 }
 
 // ============================================================
@@ -523,10 +538,17 @@ function getPlayerStats(player) {
       .join(' ');
   };
 
-  // Add assignable_points if it exists
-  if (player.assignable_points !== undefined) {
+  // Add assignable_points if it exists (handle null as 0)
+  if (player.assignable_points !== undefined && player.assignable_points !== null) {
     stats.assignablePoints = {
-      value: player.assignable_points,
+      value: Number(player.assignable_points) || 0,
+      displayName: 'Assignable Points',
+      category: 'special'
+    };
+  } else {
+    // Default to 0 if not set
+    stats.assignablePoints = {
+      value: 0,
       displayName: 'Assignable Points',
       category: 'special'
     };
@@ -620,7 +642,9 @@ async function createScriptableNPC(npc) {
     harvest_prerequisite_item = null,
     harvest_prerequisite_message = null,
     enable_resonance_bonuses = true,
-    enable_fortitude_bonuses = true
+    enable_fortitude_bonuses = true,
+    hit_vitalis = 0,
+    miss_vitalis = 0
   } = npc;
 
   const status_message_idle = npc.status_message_idle || '(idle)';
@@ -629,9 +653,9 @@ async function createScriptableNPC(npc) {
   const status_message_cooldown = npc.status_message_cooldown || '(cooldown)';
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis]
   );
 
   return result.rows[0].id;
@@ -651,6 +675,7 @@ async function updateScriptableNPC(npc) {
     required_buffs = null,
     input_items = null,
     output_items = null,
+    output_distribution = 'ground',
     failure_states = null,
     display_color = '#00ff00',
     active = true,
@@ -673,24 +698,27 @@ async function updateScriptableNPC(npc) {
     status_message_idle = '(idle)',
     status_message_ready = '(ready)',
     status_message_harvesting = '(harvesting)',
-    status_message_cooldown = '(cooldown)'
+    status_message_cooldown = '(cooldown)',
+    hit_vitalis = 0,
+    miss_vitalis = 0
   } = npc;
 
   await query(
     `UPDATE scriptable_npcs SET
       name = $1, description = $2, npc_type = $3, base_cycle_time = $4, difficulty = $5, harvestable_time = $6, cooldown_time = $7,
-      required_stats = $8, required_buffs = $9, input_items = $10, output_items = $11,
-      failure_states = $12, display_color = $13, active = $14,
-      puzzle_type = $15, puzzle_glow_clues = $16, puzzle_extraction_pattern = $17,
-      puzzle_solution_word = $18, puzzle_success_response = $19, puzzle_failure_response = $20,
-      puzzle_reward_item = $21, puzzle_hint_responses = $22, puzzle_followup_responses = $23,
-      puzzle_incorrect_attempt_responses = $24, puzzle_award_once_only = $25, puzzle_award_after_delay = $26,
-      puzzle_award_delay_seconds = $27, puzzle_award_delay_response = $28,
-      harvest_prerequisite_item = $29, harvest_prerequisite_message = $30,
-      enable_resonance_bonuses = $31, enable_fortitude_bonuses = $32,
-      status_message_idle = $33, status_message_ready = $34, status_message_harvesting = $35, status_message_cooldown = $36
-     WHERE id = $37`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, id]
+      required_stats = $8, required_buffs = $9, input_items = $10, output_items = $11, output_distribution = $12,
+      failure_states = $13, display_color = $14, active = $15,
+      puzzle_type = $16, puzzle_glow_clues = $17, puzzle_extraction_pattern = $18,
+      puzzle_solution_word = $19, puzzle_success_response = $20, puzzle_failure_response = $21,
+      puzzle_reward_item = $22, puzzle_hint_responses = $23, puzzle_followup_responses = $24,
+      puzzle_incorrect_attempt_responses = $25, puzzle_award_once_only = $26, puzzle_award_after_delay = $27,
+      puzzle_award_delay_seconds = $28, puzzle_award_delay_response = $29,
+      harvest_prerequisite_item = $30, harvest_prerequisite_message = $31,
+      enable_resonance_bonuses = $32, enable_fortitude_bonuses = $33,
+      status_message_idle = $34, status_message_ready = $35, status_message_harvesting = $36, status_message_cooldown = $37,
+      hit_vitalis = $38, miss_vitalis = $39
+     WHERE id = $40`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, id]
   );
 }
 
@@ -704,7 +732,8 @@ async function getNPCsInRoom(roomId) {
             sn.puzzle_reward_item, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
             sn.puzzle_incorrect_attempt_responses, sn.puzzle_award_once_only, sn.puzzle_award_after_delay,
             sn.puzzle_award_delay_seconds, sn.puzzle_award_delay_response,
-            sn.status_message_idle, sn.status_message_ready, sn.status_message_harvesting, sn.status_message_cooldown
+            sn.status_message_idle, sn.status_message_ready, sn.status_message_harvesting, sn.status_message_cooldown,
+            sn.output_distribution
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.room_id = $1 AND rn.active = TRUE
@@ -742,7 +771,8 @@ async function getNPCsInRoom(roomId) {
     statusMessageIdle: row.status_message_idle ?? '(idle)',
     statusMessageReady: row.status_message_ready ?? '(ready)',
     statusMessageHarvesting: row.status_message_harvesting ?? '(harvesting)',
-    statusMessageCooldown: row.status_message_cooldown ?? '(cooldown)'
+    statusMessageCooldown: row.status_message_cooldown ?? '(cooldown)',
+    outputDistribution: row.output_distribution || 'ground'
   }));
 }
 
@@ -765,9 +795,10 @@ async function getAllActiveNPCs() {
   const rows = await getAll(
     `SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
             sn.npc_type, sn.base_cycle_time, sn.required_stats, 
-            sn.required_buffs, sn.input_items, sn.output_items, sn.failure_states,
+            sn.required_buffs, sn.input_items, sn.output_items, sn.output_distribution, sn.failure_states,
             sn.display_color, sn.harvestable_time, sn.cooldown_time, 
-            sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses
+            sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses,
+            sn.hit_vitalis, sn.miss_vitalis
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.active = TRUE AND sn.active = TRUE`
@@ -787,12 +818,15 @@ async function getAllActiveNPCs() {
         requiredBuffs: safeJsonParse(row.required_buffs, [], `required_buffs (NPC ${row.npc_id})`),
         inputItems: safeJsonParse(row.input_items, {}, `input_items (NPC ${row.npc_id})`),
         outputItems: safeJsonParse(row.output_items, {}, `output_items (NPC ${row.npc_id})`),
+        outputDistribution: row.output_distribution || 'ground',
         failureStates: safeJsonParse(row.failure_states, [], `failure_states (NPC ${row.npc_id})`),
         color: row.display_color || '#00ffff',
         harvestableTime: row.harvestable_time || 60000,
         cooldownTime: row.cooldown_time || 120000,
         enableResonanceBonuses: row.enable_resonance_bonuses !== false, // Default to true
-        enableFortitudeBonuses: row.enable_fortitude_bonuses !== false // Default to true
+        enableFortitudeBonuses: row.enable_fortitude_bonuses !== false, // Default to true
+        hitVitalis: row.hit_vitalis || 0,
+        missVitalis: row.miss_vitalis || 0
       };
     } catch (error) {
       console.error(`Error processing NPC row (ID: ${row.id}, NPC: ${row.npc_id}, Room: ${row.room_id}):`, error);
@@ -809,6 +843,7 @@ async function getAllActiveNPCs() {
         requiredBuffs: [],
         inputItems: {},
         outputItems: {},
+        outputDistribution: row.output_distribution || 'ground',
         failureStates: [],
         color: row.display_color || '#00ffff',
         harvestableTime: row.harvestable_time || 60000,
@@ -2394,6 +2429,7 @@ module.exports = {
   getPlayersInRoom,
   updatePlayerRoom,
   updatePlayer,
+  updatePlayerVitalis,
   getPlayerStats,
   detectPlayerAttributes,
   

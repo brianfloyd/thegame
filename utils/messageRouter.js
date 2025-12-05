@@ -133,6 +133,7 @@ function sendToRoom(connectedPlayers, roomId, message, type = 'info', keywordCol
     const players = getPlayersInRoom(connectedPlayers, roomId);
     
     if (players.length === 0) {
+        console.warn(`[MessageRouter] No players found in room ${roomId} to send message: ${message.substring(0, 50)}...`);
         return false;
     }
     
@@ -154,11 +155,13 @@ function sendToRoom(connectedPlayers, roomId, message, type = 'info', keywordCol
             };
             
             if (!playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
+                console.warn(`[MessageRouter] Player ${playerData.playerName} (connId: ${connId}) WebSocket not open, skipping message`);
                 return;
             }
             
             playerData.ws.send(JSON.stringify(messagePayload));
             messageSent = true;
+            console.log(`[MessageRouter] Sent message to player ${playerData.playerName} (connId: ${connId}) in room ${roomId}: ${message.substring(0, 50)}...`);
         } catch (err) {
             console.error(`[MessageRouter] ERROR sending message to player ${playerData.playerName} (connId: ${connId}):`, err);
         }

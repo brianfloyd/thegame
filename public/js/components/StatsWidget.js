@@ -34,7 +34,7 @@ export default class StatsWidget extends Component {
         this.statsContent.innerHTML = '';
         
         // Get assignable points first
-        const assignablePoints = stats.assignablePoints?.value || 0;
+        const assignablePoints = stats.assignablePoints?.value ?? 0;
         
         // Group stats by category
         const statsByCategory = {
@@ -76,8 +76,11 @@ export default class StatsWidget extends Component {
         }
         
         // Render Attributes (stats) - with controls if assignable points > 0
+        // Only show controls for top 4 attributes (the rest are abilities)
         if (statsByCategory.stats.length > 0) {
-            const statsSection = this.createStatSection('Attributes', statsByCategory.stats, assignablePoints > 0, assignablePoints);
+            // Limit to first 4 attributes for controls
+            const top4Attributes = statsByCategory.stats.slice(0, 4);
+            const statsSection = this.createStatSection('Attributes', top4Attributes, assignablePoints > 0, assignablePoints);
             this.statsContent.appendChild(statsSection);
         }
         
@@ -208,8 +211,8 @@ export default class StatsWidget extends Component {
         
         const dbColumnName = `stat_${statKey}`;
         this.game.send({
-            type: 'assignStatPoint',
-            statColumn: dbColumnName,
+            type: 'assignAttributePoint',
+            statKey: dbColumnName,
             action: action
         });
     }

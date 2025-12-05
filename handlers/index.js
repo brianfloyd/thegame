@@ -23,6 +23,7 @@ const handlerMap = {
   drop: gameHandlers.drop,
   factoryWidgetAddItem: gameHandlers.factoryWidgetAddItem,
   harvest: gameHandlers.harvest,
+  attune: gameHandlers.attune,
   resonate: gameHandlers.resonate,
   talk: gameHandlers.talk,
   ask: gameHandlers.ask,
@@ -158,6 +159,7 @@ async function dispatch(ctx, data) {
     
     // Only interrupt harvest for commands that are not safe and not the harvest command
     if (!isSafeCommand && !isHarvestCmd) {
+      console.log(`[Harvest Interrupt] Non-safe command received: ${cmdType} from player ${playerData.playerId}`);
       const activeSession = await findPlayerHarvestSession(ctx.db, playerData.playerId);
       if (activeSession) {
         // Check if harvest just started (less than 2 seconds ago) - if so, don't interrupt

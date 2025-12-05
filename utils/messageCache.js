@@ -115,6 +115,12 @@ function getFormattedMessage(messageKey, placeholders = {}) {
     if (messageKey === 'harvest_cooldown') {
       return `${placeholders.npcName || 'creature'} has been harvested and must cooldown before continue harvest.`;
     }
+    if (messageKey === 'vitalis_drain_hit') {
+      return `[Hit] ${placeholders.drainAmount || 0} Vitalis has been drained. (${placeholders.vitalis || 0} / ${placeholders.maxVitalis || 100})`;
+    }
+    if (messageKey === 'vitalis_drain_miss') {
+      return `[Miss] ${placeholders.drainAmount || 0} Vitalis has been drained. (${placeholders.vitalis || 0} / ${placeholders.maxVitalis || 100})`;
+    }
     return messageKey; // Fallback to key itself
   }
   

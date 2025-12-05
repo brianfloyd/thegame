@@ -200,24 +200,20 @@ function showPlayerForm(player) {
                     <div class="player-section-label">Attributes</div>
                     <div class="player-row">
                         <div class="player-field">
-                            <label>Brute</label>
-                            <input type="number" id="stat_brute_strength" value="${player.stat_brute_strength || 10}" min="0">
+                            <label>Ingenuity</label>
+                            <input type="number" id="stat_ingenuity" value="${player.stat_ingenuity || 5}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Life</label>
-                            <input type="number" id="stat_life_force" value="${player.stat_life_force || 10}" min="0">
+                            <label>Resonance</label>
+                            <input type="number" id="stat_resonance" value="${player.stat_resonance || 5}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Cunning</label>
-                            <input type="number" id="stat_cunning" value="${player.stat_cunning || 10}" min="0">
+                            <label>Fortitude</label>
+                            <input type="number" id="stat_fortitude" value="${player.stat_fortitude || 5}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Intel</label>
-                            <input type="number" id="stat_intelligence" value="${player.stat_intelligence || 10}" min="0">
-                        </div>
-                        <div class="player-field">
-                            <label>Wisdom</label>
-                            <input type="number" id="stat_wisdom" value="${player.stat_wisdom || 10}" min="0">
+                            <label>Acumen</label>
+                            <input type="number" id="stat_acumen" value="${player.stat_acumen || 5}" min="0">
                         </div>
                     </div>
                     
@@ -225,46 +221,26 @@ function showPlayerForm(player) {
                     <div class="player-section-label">Abilities</div>
                     <div class="player-row">
                         <div class="player-field">
-                            <label>Craft</label>
+                            <label>Crafting</label>
                             <input type="number" id="ability_crafting" value="${player.ability_crafting || 0}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Lock</label>
-                            <input type="number" id="ability_lockpicking" value="${player.ability_lockpicking || 0}" min="0">
+                            <label>Attunement</label>
+                            <input type="number" id="ability_attunement" value="${player.ability_attunement || 0}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Stealth</label>
-                            <input type="number" id="ability_stealth" value="${player.ability_stealth || 0}" min="0">
+                            <label>Endurance</label>
+                            <input type="number" id="ability_endurance" value="${player.ability_endurance || 0}" min="0">
                         </div>
                         <div class="player-field">
-                            <label>Dodge</label>
-                            <input type="number" id="ability_dodge" value="${player.ability_dodge || 0}" min="0">
-                        </div>
-                        <div class="player-field">
-                            <label>Crit</label>
-                            <input type="number" id="ability_critical_hit" value="${player.ability_critical_hit || 0}" min="0">
+                            <label>Commerce</label>
+                            <input type="number" id="ability_commerce" value="${player.ability_commerce || 0}" min="0">
                         </div>
                     </div>
                     
                     <!-- Resources Row -->
                     <div class="player-section-label">Resources</div>
                     <div class="player-row">
-                        <div class="player-field">
-                            <label>HP</label>
-                            <input type="number" id="resource_hit_points" value="${player.resource_hit_points || 50}" min="0">
-                        </div>
-                        <div class="player-field">
-                            <label>Max HP</label>
-                            <input type="number" id="resource_max_hit_points" value="${player.resource_max_hit_points || 50}" min="1">
-                        </div>
-                        <div class="player-field">
-                            <label>Mana</label>
-                            <input type="number" id="resource_mana" value="${player.resource_mana || 0}" min="0">
-                        </div>
-                        <div class="player-field">
-                            <label>Max Mana</label>
-                            <input type="number" id="resource_max_mana" value="${player.resource_max_mana || 0}" min="0">
-                        </div>
                         <div class="player-field">
                             <label>Cur Enc</label>
                             <input type="number" id="current_encumbrance" value="${currentEncumbrance}" readonly class="readonly-field">
@@ -273,23 +249,34 @@ function showPlayerForm(player) {
                             <label>Max Enc</label>
                             <input type="number" id="resource_max_encumbrance" value="${maxEnc}" min="1">
                         </div>
+                        <div class="player-field">
+                            <label>Assignable Points</label>
+                            <input type="number" id="assignable_points" value="${player.assignable_points || 5}" min="0">
+                        </div>
                     </div>
                     
                     <!-- Auto-Path Settings Row -->
                     <div class="player-section-label">Auto-Path Settings</div>
                     <div class="player-row">
                         <div class="player-field">
-                            <label>Nav Delay (ms)</label>
+                            <label>Path Delay (ms)</label>
                             <input type="number" id="auto_navigation_time_ms" value="${player.auto_navigation_time_ms || 1000}" min="100" max="10000" title="Delay between movements during auto-navigation (milliseconds)">
+                        </div>
+                        <div class="player-field">
+                            <label>Loop Delay (ms)</label>
+                            <input type="number" id="loop_delay_ms" value="${player.loop_delay_ms || 1000}" min="100" max="10000" title="Delay between movements during loop execution (milliseconds)">
                         </div>
                     </div>
                     
                     <!-- Flags Row -->
                     <div class="player-row player-flags-row">
-                        <label class="player-checkbox">
-                            <input type="checkbox" id="flag_god_mode" ${player.flag_god_mode ? 'checked' : ''}>
-                            <span>God Mode</span>
-                        </label>
+                        <div class="player-field" style="display: flex; align-items: center; gap: 10px;">
+                            <label style="color: #00ff00; font-size: 12px; user-select: none;">God Mode:</label>
+                            <label class="toggle-switch-small">
+                                <input type="checkbox" id="flag_god_mode" ${player.flag_god_mode ? 'checked' : ''}>
+                                <span class="toggle-slider-small"></span>
+                            </label>
+                        </div>
                         <button id="savePlayerBtn" class="editor-btn player-save-btn">Save Player</button>
                     </div>
                 </div>
@@ -350,7 +337,9 @@ function savePlayer(playerId) {
         ability_endurance: parseInt(document.getElementById('ability_endurance')?.value) || 0,
         ability_commerce: parseInt(document.getElementById('ability_commerce')?.value) || 0,
         resource_max_encumbrance: parseInt(document.getElementById('resource_max_encumbrance')?.value) || 100,
+        assignable_points: parseInt(document.getElementById('assignable_points')?.value) || 5,
         auto_navigation_time_ms: parseInt(document.getElementById('auto_navigation_time_ms')?.value) || 1000,
+        loop_delay_ms: parseInt(document.getElementById('loop_delay_ms')?.value) || 1000,
         flag_god_mode: document.getElementById('flag_god_mode')?.checked ? 1 : 0
     };
     

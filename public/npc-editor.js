@@ -420,6 +420,58 @@ function populateRewardItemDropdowns() {
     
     // Populate Output Items list
     populateOutputItemsList();
+    
+    // Populate Output Distribution toggles
+    populateOutputDistribution();
+}
+
+// Populate Output Distribution toggles
+function populateOutputDistribution() {
+    const outputDistribution = selectedNpc?.output_distribution || 'ground';
+    
+    // Set the correct toggle based on saved value
+    const groundToggle = document.getElementById('npcOutputDistributionGround');
+    const playerToggle = document.getElementById('npcOutputDistributionPlayer');
+    const allPlayersToggle = document.getElementById('npcOutputDistributionAllPlayers');
+    
+    if (groundToggle) groundToggle.checked = (outputDistribution === 'ground');
+    if (playerToggle) playerToggle.checked = (outputDistribution === 'player');
+    if (allPlayersToggle) allPlayersToggle.checked = (outputDistribution === 'all_players');
+    
+    // Make toggles mutually exclusive (radio button behavior)
+    // Since the form is regenerated each time, we can safely add listeners
+    if (groundToggle) {
+        groundToggle.addEventListener('change', function() {
+            if (this.checked) {
+                const playerToggle = document.getElementById('npcOutputDistributionPlayer');
+                const allPlayersToggle = document.getElementById('npcOutputDistributionAllPlayers');
+                if (playerToggle) playerToggle.checked = false;
+                if (allPlayersToggle) allPlayersToggle.checked = false;
+            }
+        });
+    }
+    
+    if (playerToggle) {
+        playerToggle.addEventListener('change', function() {
+            if (this.checked) {
+                const groundToggle = document.getElementById('npcOutputDistributionGround');
+                const allPlayersToggle = document.getElementById('npcOutputDistributionAllPlayers');
+                if (groundToggle) groundToggle.checked = false;
+                if (allPlayersToggle) allPlayersToggle.checked = false;
+            }
+        });
+    }
+    
+    if (allPlayersToggle) {
+        allPlayersToggle.addEventListener('change', function() {
+            if (this.checked) {
+                const groundToggle = document.getElementById('npcOutputDistributionGround');
+                const playerToggle = document.getElementById('npcOutputDistributionPlayer');
+                if (groundToggle) groundToggle.checked = false;
+                if (playerToggle) playerToggle.checked = false;
+            }
+        });
+    }
 }
 
 // Parse output_items JSON and populate the output items list
@@ -584,8 +636,8 @@ function renderNpcForm() {
                         <input type="number" id="npcBaseCycle" value="${selectedNpc.base_cycle_time || 0}">
                     </div>
                     <div class="npc-field-group npc-field-sixth">
-                        <label>Diff</label>
-                        <input type="number" id="npcDifficulty" value="${selectedNpc.difficulty || 1}">
+                        <label title="Difficulty/Tier affects Vitalis drain during harvest">Diff</label>
+                        <input type="number" id="npcDifficulty" value="${selectedNpc.difficulty || 1}" title="Difficulty/Tier affects Vitalis drain during harvest">
                     </div>
                     <div class="npc-field-group npc-field-sixth">
                         <label>Harvestable (ms)</label>
@@ -601,6 +653,17 @@ function renderNpcForm() {
                             <option value="1" ${selectedNpc.active ? 'selected' : ''}>Yes</option>
                             <option value="0" ${!selectedNpc.active ? 'selected' : ''}>No</option>
                         </select>
+                    </div>
+                </div>
+                <!-- Row 2.25: Hit Vitalis (50%) + Miss Vitalis (50%) -->
+                <div class="npc-row">
+                    <div class="npc-field-group npc-field-half">
+                        <label>Hit Vitalis</label>
+                        <input type="number" id="npcHitVitalis" value="${selectedNpc.hit_vitalis || 0}" min="0">
+                    </div>
+                    <div class="npc-field-group npc-field-half">
+                        <label>Miss Vitalis</label>
+                        <input type="number" id="npcMissVitalis" value="${selectedNpc.miss_vitalis || 0}" min="0">
                     </div>
                 </div>
                 <!-- Row 2.5: Harvest Prerequisite Item (50%) + Harvest Prerequisite Message (50%) -->
@@ -638,6 +701,33 @@ function renderNpcForm() {
                         <div id="npcOutputItemsContainer" class="npc-output-items-container">
                             <div id="npcOutputItemsList" class="npc-output-items-list"></div>
                             <button type="button" id="addOutputItemBtn" class="npc-small-btn" style="margin-top: 8px;">+ Add Item</button>
+                        </div>
+                        <!-- Output Distribution Toggles -->
+                        <div class="output-distribution-container" style="margin-top: 10px; padding: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid #333; border-radius: 4px;">
+                            <label style="display: block; margin-bottom: 8px; color: #00ff00; font-size: 11px;">Output Distribution:</label>
+                            <div style="display: flex; flex-direction: column; gap: 6px;">
+                                <label class="output-distribution-toggle-label" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
+                                    <span style="color: #00ff00; font-size: 11px;">Drop to Ground:</span>
+                                    <label class="toggle-switch-small">
+                                        <input type="checkbox" id="npcOutputDistributionGround" checked />
+                                        <span class="toggle-slider-small"></span>
+                                    </label>
+                                </label>
+                                <label class="output-distribution-toggle-label" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
+                                    <span style="color: #00ff00; font-size: 11px;">Give to Interacting Player:</span>
+                                    <label class="toggle-switch-small">
+                                        <input type="checkbox" id="npcOutputDistributionPlayer" />
+                                        <span class="toggle-slider-small"></span>
+                                    </label>
+                                </label>
+                                <label class="output-distribution-toggle-label" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
+                                    <span style="color: #00ff00; font-size: 11px;">Give to All Players in Room:</span>
+                                    <label class="toggle-switch-small">
+                                        <input type="checkbox" id="npcOutputDistributionAllPlayers" />
+                                        <span class="toggle-slider-small"></span>
+                                    </label>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1250,6 +1340,8 @@ function saveNpc() {
     const difficulty = parseInt(document.getElementById('npcDifficulty').value, 10) || 1;
     const harvestable_time = parseInt(document.getElementById('npcHarvestable')?.value, 10) || 60000;
     const cooldown_time = parseInt(document.getElementById('npcCooldown')?.value, 10) || 120000;
+    const hit_vitalis = parseInt(document.getElementById('npcHitVitalis')?.value, 10) || 0;
+    const miss_vitalis = parseInt(document.getElementById('npcMissVitalis')?.value, 10) || 0;
     const harvest_prerequisite_item = document.getElementById('npcHarvestPrerequisiteItem')?.value.trim() || null;
     const harvest_prerequisite_message = document.getElementById('npcHarvestPrerequisiteMessage')?.value.trim() || null;
     const required_stats = document.getElementById('npcRequiredStats').value.trim();
@@ -1272,6 +1364,14 @@ function saveNpc() {
                 }
             }
         });
+    }
+    
+    // Get output distribution setting
+    let output_distribution = 'ground'; // default
+    if (document.getElementById('npcOutputDistributionPlayer')?.checked) {
+        output_distribution = 'player';
+    } else if (document.getElementById('npcOutputDistributionAllPlayers')?.checked) {
+        output_distribution = 'all_players';
     }
     
     const failure_states = document.getElementById('npcFailureStates').value.trim();
@@ -1318,12 +1418,15 @@ function saveNpc() {
         difficulty,
         harvestable_time,
         cooldown_time,
+        hit_vitalis,
+        miss_vitalis,
         harvest_prerequisite_item: harvest_prerequisite_item || null,
         harvest_prerequisite_message: harvest_prerequisite_message || null,
         required_stats: required_stats || null,
         required_buffs: required_buffs || null,
         input_items: input_items || null,
         output_items: Object.keys(output_items).length > 0 ? JSON.stringify(output_items) : null,
+        output_distribution: output_distribution,
         failure_states: failure_states || null,
         display_color,
         active,
@@ -1538,6 +1641,7 @@ function showFormulaConfigModal(configs) {
     const hitConfig = configs.find(c => c.config_key === 'hit_rate') || {};
     const cooldownConfig = configs.find(c => c.config_key === 'cooldown_time_reduction') || {};
     const harvestableConfig = configs.find(c => c.config_key === 'harvestable_time_increase') || {};
+    const vitalisDrainConfig = configs.find(c => c.config_key === 'vitalis_drain_reduction') || {};
     
     modal.innerHTML = `
         <div class="formula-config-content" style="
@@ -1672,6 +1776,42 @@ function showFormulaConfigModal(configs) {
                 <div id="harvestablePreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
             </div>
             
+            <div class="formula-section" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <h3 style="margin-top: 0; color: #ff6666;">Vitalis Drain Reduction</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 15px;">
+                    <strong>Formula:</strong> Calculates average of (Fortitude + Resonance) / 2, then applies exponential curve to determine reduction percentage.<br>
+                    <strong>Result:</strong> Final drain = Base Drain × (1 - Reduction %). Minimum drain is always 1.
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Avg (Fort+Res)/2</label>
+                        <input type="number" id="vitalisDrainMinResonance" value="${vitalisDrainConfig.min_resonance || 5}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                        <span style="font-size: 9px; color: #666;">Min avg stat value</span>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Min Reduction (%)</label>
+                        <input type="number" id="vitalisDrainMinValue" value="${((vitalisDrainConfig.min_value || 0.05) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                        <span style="font-size: 9px; color: #666;">Reduction at min avg</span>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Curve Exponent</label>
+                        <input type="number" id="vitalisDrainCurveExponent" value="${vitalisDrainConfig.curve_exponent || 2}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                        <span style="font-size: 9px; color: #666;">Curve shape (2=quadratic)</span>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Avg (Fort+Res)/2</label>
+                        <input type="number" id="vitalisDrainMaxResonance" value="${vitalisDrainConfig.max_resonance || 100}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                        <span style="font-size: 9px; color: #666;">Max avg stat value</span>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 11px; margin-bottom: 4px;">Max Reduction (%)</label>
+                        <input type="number" id="vitalisDrainMaxValue" value="${((vitalisDrainConfig.max_value || 0.75) * 100).toFixed(1)}" step="0.1" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px;">
+                        <span style="font-size: 9px; color: #666;">Reduction at max avg</span>
+                    </div>
+                </div>
+                <div id="vitalisDrainPreview" style="margin-top: 10px; font-size: 11px; color: #888;"></div>
+            </div>
+            
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
                 <button id="formulaConfigPreviewBtn" style="background: #003300; border: 1px solid #00ff00; color: #00ff00; padding: 8px 16px; cursor: pointer;">Preview</button>
                 <button id="formulaConfigSaveBtn" style="background: #004400; border: 1px solid #00ff00; color: #00ff00; padding: 8px 16px; cursor: pointer;">Save</button>
@@ -1772,6 +1912,27 @@ function updateFormulaPreview() {
         });
         harvestablePreview.textContent = harvestableResults.join(' | ');
     }
+    
+    // Vitalis drain reduction preview
+    const vitalisDrainMinRes = parseInt(document.getElementById('vitalisDrainMinResonance')?.value) || 5;
+    const vitalisDrainMinVal = (parseFloat(document.getElementById('vitalisDrainMinValue')?.value) || 5) / 100;
+    const vitalisDrainMaxRes = parseInt(document.getElementById('vitalisDrainMaxResonance')?.value) || 100;
+    const vitalisDrainMaxVal = (parseFloat(document.getElementById('vitalisDrainMaxValue')?.value) || 75) / 100;
+    const vitalisDrainExp = parseFloat(document.getElementById('vitalisDrainCurveExponent')?.value) || 2;
+    
+    const vitalisDrainPreview = document.getElementById('vitalisDrainPreview');
+    if (vitalisDrainPreview) {
+        const samples = [5, 25, 50, 75, 100];
+        const vitalisDrainResults = samples.map(avgStat => {
+            const norm = Math.max(0, Math.min(1, (avgStat - vitalisDrainMinRes) / (vitalisDrainMaxRes - vitalisDrainMinRes)));
+            const reduction = vitalisDrainMinVal + (vitalisDrainMaxVal - vitalisDrainMinVal) * Math.pow(norm, vitalisDrainExp);
+            // Show example: if base drain is 10, show what the final drain would be
+            const exampleBaseDrain = 10;
+            const finalDrain = Math.max(1, Math.floor(exampleBaseDrain * (1 - reduction)));
+            return `Avg ${avgStat}: ${(reduction * 100).toFixed(1)}% reduction (10→${finalDrain})`;
+        });
+        vitalisDrainPreview.textContent = vitalisDrainResults.join(' | ');
+    }
 }
 
 function saveFormulaConfigs() {
@@ -1820,6 +1981,16 @@ function saveFormulaConfigs() {
         curve_exponent: parseFloat(document.getElementById('harvestableCurveExponent')?.value) || 2
     };
     
+    // Vitalis drain reduction config
+    const vitalisDrainConfig = {
+        config_key: 'vitalis_drain_reduction',
+        min_resonance: parseInt(document.getElementById('vitalisDrainMinResonance')?.value) || 5,
+        min_value: (parseFloat(document.getElementById('vitalisDrainMinValue')?.value) || 5) / 100,
+        max_resonance: parseInt(document.getElementById('vitalisDrainMaxResonance')?.value) || 100,
+        max_value: (parseFloat(document.getElementById('vitalisDrainMaxValue')?.value) || 75) / 100,
+        curve_exponent: parseFloat(document.getElementById('vitalisDrainCurveExponent')?.value) || 2
+    };
+    
     ws.send(JSON.stringify({
         type: 'updateHarvestFormulaConfig',
         config: cycleConfig
@@ -1838,6 +2009,11 @@ function saveFormulaConfigs() {
     ws.send(JSON.stringify({
         type: 'updateHarvestFormulaConfig',
         config: harvestableConfig
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'updateHarvestFormulaConfig',
+        config: vitalisDrainConfig
     }));
     
     showEditorNotification('Formula configurations saved!');
