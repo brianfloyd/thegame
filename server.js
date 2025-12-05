@@ -371,10 +371,19 @@ async function startServer() {
       console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
       
       // Start NPC cycle engine after server starts
+      // CRITICAL: Pass connectedPlayers reference - the engine will store it internally
       startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdateWrapper);
       
       // Start room update timer for progress bars
       startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdateWrapper);
+      
+      // CRITICAL: Set up a periodic refresh of the connectedPlayers reference in the NPC engine
+      // This ensures the engine always has the current reference, even if the Map object is recreated
+      // (though it shouldn't be, since it's a const - this is just a safety measure)
+      setInterval(() => {
+        const { setConnectedPlayersReference } = require('./services/npcCycleEngine');
+        setConnectedPlayersReference(connectedPlayers);
+      }, 5000); // Refresh every 5 seconds as a safety measure
     });
   } catch (err) {
     console.error('FATAL: Server startup failed:', err.message);

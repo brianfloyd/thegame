@@ -143,14 +143,12 @@ function isHarvestSafeCommand(cmdType) {
 function getPlayersInRoom(connectedPlayers, roomId) {
   const players = [];
   
-  // Validate inputs - try module-level reference if passed reference is invalid
-  let playersMap = connectedPlayers;
-  if (!playersMap || !(playersMap instanceof Map)) {
-    playersMap = globalConnectedPlayers;
-  }
+  // CRITICAL: Always use module-level reference as single source of truth
+  // The passed-in reference might be stale, so we always use the module-level one
+  const playersMap = getConnectedPlayersReference();
   
-  if (!playersMap || !(playersMap instanceof Map)) {
-    console.error(`[NPC Cycle] ERROR: connectedPlayers is null/undefined or not a Map`);
+  if (!playersMap) {
+    // Error already logged in getConnectedPlayersReference
     return players;
   }
   
@@ -194,18 +192,13 @@ function getPlayersInRoom(connectedPlayers, roomId) {
  * @returns {boolean} True if message was sent to at least one player
  */
 function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'message') {
-  // CRITICAL: Always use module-level reference to ensure we have the current state
-  // The passed-in reference might be stale if there are multiple instances or closures
-  let playersMap = globalConnectedPlayers;
+  // CRITICAL: Always use module-level reference as single source of truth
+  // Ignore the passed-in reference - it might be stale
+  const playersMap = getConnectedPlayersReference();
   
-  // Fallback to passed reference only if module-level is invalid
-  if (!playersMap || !(playersMap instanceof Map)) {
-    playersMap = connectedPlayers;
-  }
-  
-  // Final validation
-  if (!playersMap || !(playersMap instanceof Map)) {
-    console.error(`[NPC Cycle] ERROR: No valid connectedPlayers reference available for ${messageType}`);
+  if (!playersMap) {
+    // Error already logged in getConnectedPlayersReference
+    console.error(`[NPC Cycle] ERROR: Cannot send ${messageType} - no valid connectedPlayers reference`);
     return false;
   }
   
@@ -244,40 +237,51 @@ function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'mes
  * @param {Function} sendRoomUpdate - Room update function
  */
 // Store connectedPlayers reference at module level to ensure it's always current
+// CRITICAL: This is the SINGLE SOURCE OF TRUTH for connectedPlayers in this module
 let globalConnectedPlayers = null;
 
+// Setter function to update the reference (called from server.js)
+function setConnectedPlayersReference(connectedPlayers) {
+  if (connectedPlayers && connectedPlayers instanceof Map) {
+    globalConnectedPlayers = connectedPlayers;
+    return true;
+  }
+  console.error(`[NPC Cycle] ERROR: Invalid connectedPlayers passed to setConnectedPlayersReference`);
+  return false;
+}
+
+// Getter function that always returns the current reference
+function getConnectedPlayersReference() {
+  if (!globalConnectedPlayers || !(globalConnectedPlayers instanceof Map)) {
+    console.error(`[NPC Cycle] ERROR: globalConnectedPlayers is invalid:`, typeof globalConnectedPlayers);
+    return null;
+  }
+  return globalConnectedPlayers;
+}
+
 function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
-  // Store reference at module level so all functions can access the current reference
-  globalConnectedPlayers = connectedPlayers;
+  // CRITICAL: Store reference at module level immediately
+  if (!setConnectedPlayersReference(connectedPlayers)) {
+    console.error(`[NPC Cycle] FATAL: Could not set connectedPlayers reference on startup`);
+    return;
+  }
   
-  // Create a function that always returns the most current reference
-  const getConnectedPlayers = () => {
-    // Always return the module-level reference if available, otherwise fall back to closure
-    // Also update module-level if closure reference is newer (shouldn't happen, but safety check)
-    if (globalConnectedPlayers && globalConnectedPlayers === connectedPlayers) {
-      return globalConnectedPlayers;
-    }
-    // Update module-level if it's stale
-    if (connectedPlayers && connectedPlayers instanceof Map) {
-      globalConnectedPlayers = connectedPlayers;
-      return globalConnectedPlayers;
-    }
-    return globalConnectedPlayers || connectedPlayers;
-  };
+  console.log(`[NPC Cycle] Engine initialized with connectedPlayers reference (size: ${globalConnectedPlayers.size})`);
   
   setInterval(async () => {
     try {
-      // CRITICAL: Always get the most current reference on each cycle
-      // Update module-level reference to ensure it's current
+      // CRITICAL: Always refresh the reference at the start of each cycle
+      // This ensures we always have the most current reference, even if server.js updates it
       if (connectedPlayers && connectedPlayers instanceof Map) {
         globalConnectedPlayers = connectedPlayers;
       }
       
-      const currentConnectedPlayers = getConnectedPlayers();
+      // Get the current reference (with validation)
+      const currentConnectedPlayers = getConnectedPlayersReference();
       
       // Validate we have a valid reference
-      if (!currentConnectedPlayers || !(currentConnectedPlayers instanceof Map)) {
-        console.error(`[NPC Cycle] ERROR: Invalid connectedPlayers reference:`, typeof currentConnectedPlayers, `size:`, currentConnectedPlayers?.size);
+      if (!currentConnectedPlayers) {
+        console.error(`[NPC Cycle] ERROR: Invalid connectedPlayers reference, skipping cycle`);
         return;
       }
       
@@ -617,7 +621,9 @@ module.exports = {
   findPlayerHarvestSession,
   isHarvestSafeCommand,
   startNPCCycleEngine,
-  startRoomUpdateTimer
+  startRoomUpdateTimer,
+  setConnectedPlayersReference, // Export for server.js to update reference if needed
+  getConnectedPlayersReference // Export for debugging/validation
 };
 
 

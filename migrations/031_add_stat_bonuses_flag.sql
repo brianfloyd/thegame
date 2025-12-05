@@ -17,3 +17,4 @@ WHERE enable_stat_bonuses IS NULL;
 
 
 
+

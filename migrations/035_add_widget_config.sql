@@ -10,3 +10,4 @@ UPDATE players SET widget_config = '{"activeWidgets":[],"scriptingWidgetPosition
 
 
 
+

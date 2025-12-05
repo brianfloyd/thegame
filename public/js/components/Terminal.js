@@ -18,6 +18,8 @@ export default class Terminal extends Component {
         this.lastInteractionTime = Date.now();
         this.IDLE_LOOK_DELAY = 30000; // 30 seconds
         this.idleLookInterval = null;
+        // Track NPC elements in current room for in-place status updates
+        this.currentRoomNPCs = new Map(); // npcId -> { element, nameSpan, statusSpan, lastStatus }
     }
     
     init() {
@@ -139,11 +141,20 @@ export default class Terminal extends Component {
         if (!room) return;
         
         const isNewRoom = room.id !== this.currentRoomId;
+        
+        // Clear NPC tracking map when room changes
+        if (isNewRoom) {
+            this.currentRoomNPCs.clear();
+        }
+        
         this.currentRoomId = room.id;
         
         // Only display full room info when entering a new room or forced (look command)
         if (isNewRoom || showFullInfo) {
             this.updateRoomView(room, players, exits, npcs, roomItems, showFullInfo, messages);
+        } else {
+            // Same room - check for NPC status updates
+            this.updateNPCStatusesInPlace(npcs);
         }
         
         // Always update room items display (dynamic, doesn't scroll)
@@ -156,6 +167,26 @@ export default class Terminal extends Component {
     handleRoomMoved(data) {
         // Same as room update
         this.handleRoomUpdate(data);
+    }
+    
+    /**
+     * Get NPC status message based on state
+     */
+    getNPCStatusMessage(npc) {
+        if (!npc.state || typeof npc.state !== 'object') {
+            return '';
+        }
+        
+        const cycles = npc.state.cycles || 0;
+        if (cycles === 0) {
+            return npc.statusMessageIdle ?? '(idle)';
+        } else if (npc.state.harvest_active || npc.harvestStatus === 'active') {
+            return npc.statusMessageHarvesting ?? '(harvesting)';
+        } else if ((npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) || npc.harvestStatus === 'cooldown') {
+            return npc.statusMessageCooldown ?? '(cooldown)';
+        } else {
+            return npc.statusMessageReady ?? '(ready)';
+        }
     }
     
     /**
@@ -193,69 +224,112 @@ export default class Terminal extends Component {
             this.saveTerminalMessage(room.description, 'info');
         }
         
-        // Display players and NPCs (using formatted message from server)
-        if (messages && messages.alsoHere) {
-            const alsoHereDiv = document.createElement('div');
-            alsoHereDiv.className = 'players-section';
-            const alsoHereLine = document.createElement('span');
-            alsoHereLine.className = 'players-line';
-            
-            // CRITICAL: Parse markup
-            alsoHereLine.innerHTML = parseMarkup(messages.alsoHere, '#00ffff');
-            
-            // Add click handlers for player names
+        // Display players and NPCs
+        // Always create trackable NPC elements for in-place status updates
+        {
             const currentPlayerName = this.game.getPlayerName();
             const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
-            this.addPlayerClickHandlers(alsoHereLine, otherPlayers);
-            
-            alsoHereDiv.appendChild(alsoHereLine);
-            this.terminalContent.appendChild(alsoHereDiv);
-            this.saveTerminalMessage(messages.alsoHere, 'info');
-        } else {
-            // Fallback formatting
-            const currentPlayerName = this.game.getPlayerName();
-            const otherPlayers = players ? players.filter(p => p !== currentPlayerName) : [];
-            const combinedEntities = [...otherPlayers];
-            
-            if (npcs && npcs.length > 0) {
-                npcs.forEach(npc => {
-                    let npcDisplay = npc.name;
-                    if (npc.state && typeof npc.state === 'object') {
-                        const cycles = npc.state.cycles || 0;
-                        let statusMessage = '';
-                        if (cycles === 0) {
-                            statusMessage = npc.statusMessageIdle || '(idle)';
-                        } else if (npc.state.harvest_active || npc.harvestStatus === 'active') {
-                            statusMessage = npc.statusMessageHarvesting || '(harvesting)';
-                        } else if ((npc.state.cooldown_until && Date.now() < npc.state.cooldown_until) || npc.harvestStatus === 'cooldown') {
-                            statusMessage = npc.statusMessageCooldown ?? '(cooldown)';
-                        } else {
-                            statusMessage = npc.statusMessageReady ?? '(ready)';
-                        }
-                        if (statusMessage) {
-                            npcDisplay += ' ' + statusMessage;
-                        }
-                    }
-                    combinedEntities.push(npcDisplay);
-                });
-            }
             
             const playersDiv = document.createElement('div');
             playersDiv.className = 'players-section';
             const playersLine = document.createElement('span');
             playersLine.className = 'players-line';
             
-            if (combinedEntities.length > 0) {
-                const formattedList = combinedEntities.join(', ');
-                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> ${parseMarkup(formattedList, '#00ffff')}`;
-                this.saveTerminalMessage('Also here: ' + formattedList, 'info');
-            } else {
-                playersLine.innerHTML = `<span class="players-section-title">Also here:</span> <span class="player-item">No one else is here.</span>`;
-                this.saveTerminalMessage('Also here: No one else is here.', 'info');
+            // Create title
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'players-section-title';
+            titleSpan.textContent = 'Also here:';
+            playersLine.appendChild(titleSpan);
+            
+            // Add players
+            if (otherPlayers.length > 0) {
+                playersLine.appendChild(document.createTextNode(' '));
+                otherPlayers.forEach((playerName, index) => {
+                    if (index > 0) {
+                        playersLine.appendChild(document.createTextNode(', '));
+                    }
+                    const playerSpan = document.createElement('span');
+                    playerSpan.className = 'player-item';
+                    playerSpan.setAttribute('data-player', playerName);
+                    // CRITICAL: Use parseMarkup to support markup in player names
+                    playerSpan.innerHTML = parseMarkup(playerName, '#00ffff');
+                    playersLine.appendChild(playerSpan);
+                });
+            }
+            
+            // Add NPCs with trackable elements
+            if (npcs && npcs.length > 0) {
+                if (otherPlayers.length > 0) {
+                    playersLine.appendChild(document.createTextNode(', '));
+                } else {
+                    playersLine.appendChild(document.createTextNode(' '));
+                }
+                
+                npcs.forEach((npc, index) => {
+                    if (index > 0) {
+                        playersLine.appendChild(document.createTextNode(', '));
+                    }
+                    
+                    const npcItem = document.createElement('span');
+                    npcItem.className = 'npc-item';
+                    npcItem.setAttribute('data-npc-id', npc.id);
+                    
+                    const npcName = document.createElement('span');
+                    npcName.className = 'npc-name';
+                    npcName.textContent = npc.name;
+                    npcItem.appendChild(npcName);
+                    
+                    const statusMessage = this.getNPCStatusMessage(npc);
+                    let npcStatus = null; // Declare outside the if block
+                    if (statusMessage) {
+                        npcItem.appendChild(document.createTextNode(' '));
+                        npcStatus = document.createElement('span');
+                        npcStatus.className = 'npc-status';
+                        npcStatus.setAttribute('data-npc-status', npc.id);
+                        // CRITICAL: Use parseMarkup to support markup in status messages
+                        npcStatus.innerHTML = parseMarkup(statusMessage, '#00ffff');
+                        npcItem.appendChild(npcStatus);
+                    }
+                    
+                    playersLine.appendChild(npcItem);
+                    
+                    // Track this NPC element
+                    this.currentRoomNPCs.set(npc.id, {
+                        element: npcItem,
+                        nameSpan: npcName,
+                        statusSpan: npcStatus, // Now always defined (null if no status)
+                        lastStatus: statusMessage
+                    });
+                });
+            }
+            
+            if (otherPlayers.length === 0 && (!npcs || npcs.length === 0)) {
+                playersLine.appendChild(document.createTextNode(' '));
+                const emptySpan = document.createElement('span');
+                emptySpan.className = 'player-item';
+                emptySpan.textContent = 'No one else is here.';
+                playersLine.appendChild(emptySpan);
             }
             
             playersDiv.appendChild(playersLine);
             this.terminalContent.appendChild(playersDiv);
+            
+            // Save to history - use messages.alsoHere if available, otherwise build it
+            if (messages && messages.alsoHere) {
+                this.saveTerminalMessage(messages.alsoHere, 'info');
+            } else {
+                const combinedEntities = [...otherPlayers];
+                if (npcs && npcs.length > 0) {
+                    npcs.forEach(npc => {
+                        const statusMessage = this.getNPCStatusMessage(npc);
+                        combinedEntities.push(npc.name + (statusMessage ? ' ' + statusMessage : ''));
+                    });
+                }
+                const historyText = combinedEntities.length > 0 
+                    ? 'Also here: ' + combinedEntities.join(', ')
+                    : 'Also here: No one else is here.';
+                this.saveTerminalMessage(historyText, 'info');
+            }
         }
         
         // Display exits (CRITICAL: uses parseMarkup)
@@ -279,6 +353,86 @@ export default class Terminal extends Component {
         
         // Emit event for other components (compass, map, etc.)
         this.emit('terminal:roomUpdated', { room, players, exits, npcs });
+    }
+    
+    /**
+     * Update NPC status in place (without re-rendering)
+     */
+    updateNPCStatus(npcId, statusMessage) {
+        const npcData = this.currentRoomNPCs.get(npcId);
+        if (!npcData) {
+            // NPC element not found (might have left room or not yet tracked)
+            return false;
+        }
+        
+        const { statusSpan, element } = npcData;
+        
+        if (!statusSpan) {
+            // No status span exists - need to create it
+            if (statusMessage) {
+                element.appendChild(document.createTextNode(' '));
+                const newStatusSpan = document.createElement('span');
+                newStatusSpan.className = 'npc-status';
+                newStatusSpan.setAttribute('data-npc-status', npcId);
+                // CRITICAL: Use parseMarkup to support markup in status messages
+                newStatusSpan.innerHTML = parseMarkup(statusMessage, '#00ffff');
+                element.appendChild(newStatusSpan);
+                
+                // Update tracking
+                npcData.statusSpan = newStatusSpan;
+                npcData.lastStatus = statusMessage;
+            }
+        } else {
+            // Update existing status span
+            // CRITICAL: Use parseMarkup to support markup in status messages
+            statusSpan.innerHTML = statusMessage ? parseMarkup(statusMessage, '#00ffff') : '';
+            npcData.lastStatus = statusMessage;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Update NPC statuses in place when room updates (same room)
+     */
+    updateNPCStatusesInPlace(npcs) {
+        if (!npcs || npcs.length === 0) {
+            // No NPCs in room - remove any tracked NPCs that are no longer present
+            this.currentRoomNPCs.forEach((npcData, npcId) => {
+                // Check if element still exists in DOM
+                if (!npcData.element || !npcData.element.parentNode) {
+                    this.currentRoomNPCs.delete(npcId);
+                }
+            });
+            return;
+        }
+        
+        // Track which NPCs are currently in the room
+        const currentNPCIds = new Set(npcs.map(npc => npc.id));
+        
+        // Remove NPCs that are no longer in the room
+        this.currentRoomNPCs.forEach((npcData, npcId) => {
+            if (!currentNPCIds.has(npcId)) {
+                // NPC left room - remove from tracking
+                this.currentRoomNPCs.delete(npcId);
+            }
+        });
+        
+        // Update status for each NPC
+        npcs.forEach(npc => {
+            const statusMessage = this.getNPCStatusMessage(npc);
+            const npcData = this.currentRoomNPCs.get(npc.id);
+            
+            if (npcData) {
+                // NPC is tracked - check if status changed
+                if (npcData.lastStatus !== statusMessage) {
+                    this.updateNPCStatus(npc.id, statusMessage);
+                }
+            } else {
+                // NPC is new (entered room) - will be tracked on next full room render
+                // For now, we can't update it in place since it's not in the current room view
+            }
+        });
     }
     
     /**

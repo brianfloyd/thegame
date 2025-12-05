@@ -24,3 +24,4 @@ DELETE FROM room_type_colors WHERE room_type = 'shop';
 
 
 
+
