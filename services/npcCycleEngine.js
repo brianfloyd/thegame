@@ -12,6 +12,7 @@ const {
   getHarvestFormulaConfig 
 } = require('../utils/harvestFormulas');
 const messageCache = require('../utils/messageCache');
+const { sendMessage } = require('../utils/messageRouter');
 
 // NPC Cycle Engine Configuration
 const NPC_TICK_INTERVAL = 1000; // milliseconds (configurable)
@@ -183,51 +184,8 @@ function getPlayersInRoom(connectedPlayers, roomId) {
   return players;
 }
 
-/**
- * Send message to all players in a room (isolated function for stability)
- * @param {Map} connectedPlayers - Connected players map (passed by reference, always fresh)
- * @param {number} roomId - Room ID
- * @param {object} message - Message object to send
- * @param {string} messageType - Type of message (for logging)
- * @returns {boolean} True if message was sent to at least one player
- */
-function sendMessageToRoom(connectedPlayers, roomId, message, messageType = 'message') {
-  // CRITICAL: Always use module-level reference as single source of truth
-  // Ignore the passed-in reference - it might be stale
-  const playersMap = getConnectedPlayersReference();
-  
-  if (!playersMap) {
-    // Error already logged in getConnectedPlayersReference
-    console.error(`[NPC Cycle] ERROR: Cannot send ${messageType} - no valid connectedPlayers reference`);
-    return false;
-  }
-  
-  // Get fresh list of players in room
-  const players = getPlayersInRoom(playersMap, roomId);
-  
-  if (players.length === 0) {
-    // Log warning if there are connected players but none in this room
-    const mapSize = playersMap && playersMap instanceof Map ? playersMap.size : 0;
-    if (mapSize > 0) {
-      console.log(`[NPC Cycle] WARNING: No players in room ${roomId} to receive ${messageType} (${mapSize} total connected)`);
-    }
-    return false;
-  }
-  
-  // Send message to all players found
-  let messageSent = false;
-  players.forEach(({ connId, playerData }) => {
-    try {
-      const messageStr = JSON.stringify(message);
-      playerData.ws.send(messageStr);
-      messageSent = true;
-    } catch (sendErr) {
-      console.error(`[NPC Cycle] Error sending ${messageType} to player ${playerData.playerName} (connId: ${connId}):`, sendErr);
-    }
-  });
-  
-  return messageSent;
-}
+// NOTE: sendMessageToRoom has been replaced by the universal message router
+// All message sending now goes through utils/messageRouter.js
 
 /**
  * Start the NPC Cycle Engine
@@ -266,7 +224,6 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
     return;
   }
   
-  console.log(`[NPC Cycle] Engine initialized with connectedPlayers reference (size: ${globalConnectedPlayers.size})`);
   
   setInterval(async () => {
     try {
@@ -274,6 +231,15 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
       // This ensures we always have the most current reference, even if server.js updates it
       if (connectedPlayers && connectedPlayers instanceof Map) {
         globalConnectedPlayers = connectedPlayers;
+        
+        // Also refresh the message router reference to keep it in sync
+        try {
+          const { setConnectedPlayersReference: setMessageRouterReference } = require('../utils/messageRouter');
+          setMessageRouterReference(connectedPlayers);
+        } catch (routerErr) {
+          // Non-fatal: message router might not be initialized yet
+          console.warn('[NPC Cycle] Could not update message router reference:', routerErr.message);
+        }
       }
       
       // Get the current reference (with validation)
@@ -364,14 +330,16 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 // Miss - send miss message to all players in the room (for consistency with other harvest messages)
                 // Get formatted message from database with markup support
                 const missMessage = messageCache.getFormattedMessage('harvest_miss', { npcName: npcName });
-                console.log(`[NPC Cycle] Harvest miss for room_npc ${roomNpc.id}, hitRate=${(hitRate * 100).toFixed(1)}%, message: "${missMessage}"`);
                 
-                // Send miss message to all players in the room (using isolated helper function)
+                // Send miss message to all players in the room (using universal message router)
                 if (roomNpc.roomId) {
-                  sendMessageToRoom(currentConnectedPlayers, roomNpc.roomId, {
-                    type: 'message',
-                    message: missMessage
-                  }, 'miss message');
+                  sendMessage({
+                    connectedPlayers: currentConnectedPlayers,
+                    to: 'room',
+                    target: roomNpc.roomId,
+                    message: missMessage,
+                    type: 'info'
+                  });
                 } else {
                   console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send miss message`);
                 }
@@ -406,13 +374,14 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       itemName: item.itemName 
                     });
                     
-                    console.log(`[NPC Cycle] Sending harvest item message: "${itemMessage}" for room_npc ${roomNpc.id}, room ${roomNpc.roomId}`);
-                    
-                    // Send to all players in the room (using isolated helper function)
-                    sendMessageToRoom(currentConnectedPlayers, roomNpc.roomId, {
-                      type: 'message',
-                      message: itemMessage
-                    }, 'harvest item message');
+                    // Send to all players in the room (using universal message router)
+                    sendMessage({
+                      connectedPlayers: currentConnectedPlayers,
+                      to: 'room',
+                      target: roomNpc.roomId,
+                      message: itemMessage,
+                      type: 'info'
+                    });
                   }
                   
                   // Send room update to all players in the room so they see the new items
@@ -453,11 +422,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
           // If harvest just started (less than 1 second ago), don't check expiration yet
           // This prevents race conditions where the cycle engine runs immediately after harvest starts
           const MIN_HARVEST_DURATION = 1000; // 1 second minimum
-          if (harvestElapsed >= MIN_HARVEST_DURATION) {
-            // Debug logging
-            if (harvestElapsed < 5000) { // Only log for first 5 seconds to avoid spam
-              console.log(`[NPC Cycle] Harvest active: elapsed=${harvestElapsed}ms, harvestableTime=${effectiveHarvestableTime}ms, remaining=${effectiveHarvestableTime - harvestElapsed}ms`);
-            }
+          if (harvestElapsed < MIN_HARVEST_DURATION) {
+            // Harvest just started, don't check expiration yet
+            return; // Skip expiration check for now
+          }
+          
+          if (harvestElapsed >= effectiveHarvestableTime) {
             
             // Only end harvest if the full effective harvestableTime has elapsed
             // Use strict >= check (no buffer) to ensure full duration
@@ -478,13 +448,15 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               // Get formatted message from database with markup support
               if (roomId) {
                 const cooldownMessage = messageCache.getFormattedMessage('harvest_cooldown', { npcName: npcName });
-                console.log(`[NPC Cycle] Sending cooldown message: "${cooldownMessage}" for room_npc ${roomNpc.id}, room ${roomId}`);
                 
-                // Send synchronously to all players in the room (using isolated helper function)
-                sendMessageToRoom(currentConnectedPlayers, roomId, {
-                  type: 'message',
-                  message: cooldownMessage
-                }, 'cooldown message');
+                // Send synchronously to all players in the room (using universal message router)
+                sendMessage({
+                  connectedPlayers: currentConnectedPlayers,
+                  to: 'room',
+                  target: roomId,
+                  message: cooldownMessage,
+                  type: 'info'
+                });
               } else {
                 console.error(`[NPC Cycle] ERROR: roomNpc.roomId is undefined for room_npc ${roomNpc.id}, cannot send cooldown message`);
               }

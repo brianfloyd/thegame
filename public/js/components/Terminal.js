@@ -55,8 +55,9 @@ export default class Terminal extends Component {
     }
     
     /**
-     * Add message to terminal with consistent markup parsing
-     * CRITICAL: Always uses Markup.parse() for text rendering
+     * Add message to terminal
+     * CRITICAL: Messages from server come pre-processed with HTML.
+     * Only parse markup for client-generated messages (user input, etc.)
      */
     addMessage(message, type = 'info', saveToHistory = true, html = null) {
         if (!this.terminalContent || !message) return;
@@ -64,26 +65,27 @@ export default class Terminal extends Component {
         const msgDiv = document.createElement('div');
         msgDiv.className = type === 'error' ? 'error-message' : 'info-message';
         
-        // CRITICAL: Always use parseMarkup for text rendering
         if (html) {
-            // Pre-rendered HTML (for tables, etc.) - but still check if it needs markup parsing
+            // Pre-processed HTML from server (already has markup parsed)
+            // Check if it's a table or special HTML structure
             const isHtmlTable = html.includes('<table') || html.includes('<div class="who-list">');
             if (isHtmlTable) {
                 // Direct HTML insertion for tables
                 msgDiv.innerHTML = html;
             } else {
-                // Even HTML might contain markup, parse it
-                msgDiv.innerHTML = parseMarkup(html, '#00ffff');
+                // Pre-processed HTML from server - use directly
+                msgDiv.innerHTML = html;
             }
         } else {
-            // Regular message - ALWAYS parse markup
+            // Client-generated message (e.g., user input, local notifications)
+            // Parse markup client-side for these cases
             msgDiv.innerHTML = parseMarkup(message, '#00ffff');
         }
         
         this.terminalContent.appendChild(msgDiv);
         this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
         
-        // Save to terminal history
+        // Save to terminal history (use raw message text, not HTML)
         if (saveToHistory) {
             this.saveTerminalMessage(message, type, msgDiv.innerHTML);
         }
@@ -107,20 +109,21 @@ export default class Terminal extends Component {
     
     /**
      * Handle terminal message event
+     * CRITICAL: Server sends pre-processed HTML. Use it directly.
      */
     handleTerminalMessage(data) {
-        const { message, type = 'info', html = null } = data;
+        const { message, type = 'info', html = null, messageType = 'info' } = data;
         if (!message) return;
         
-        // Check if message contains HTML table (like who command) - don't parse markup for those
-        const isHtmlTable = message.includes('<table') || message.includes('<div class="who-list">');
-        
-        if (html || isHtmlTable) {
-            // Direct HTML insertion for tables
-            this.addMessage(message, type, true, html || message);
+        // Server sends pre-processed HTML - use it directly
+        // If html is provided, it's already been processed by the server's markup service
+        // If not provided, fall back to client-side parsing (for backwards compatibility)
+        const finalType = messageType || type;
+        if (html) {
+            this.addMessage(message, finalType, true, html);
         } else {
-            // Regular message with markup parsing
-            this.addMessage(message, type, true, null);
+            // Fallback: parse client-side (shouldn't happen with new system, but for safety)
+            this.addMessage(message, finalType, true, null);
         }
     }
     

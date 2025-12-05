@@ -21,7 +21,7 @@ class MessageBus {
         }
         
         // Call all listeners for this event
-        this.listeners[event].forEach(callback => {
+        this.listeners[event].forEach((callback) => {
             try {
                 callback(data);
             } catch (error) {

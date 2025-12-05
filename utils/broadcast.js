@@ -6,6 +6,7 @@
  */
 
 const WebSocket = require('ws');
+const { parseMarkupServer } = require('./markupService');
 
 /**
  * Get connected players in a specific room
@@ -465,7 +466,7 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     ? roomItems.map(item => (item.name || item.item_name) + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
     : 'Nothing';
   
-  // Get formatted messages from cache
+  // Get formatted messages from cache (raw text with markup)
   let alsoHereMessage = '';
   if (combinedEntities.length > 0) {
     alsoHereMessage = messageCache.getFormattedMessage('room_also_here', {
@@ -484,13 +485,17 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   const onGroundMessage = messageCache.getFormattedMessage('room_on_ground', {
     '[items array]': itemsString
   });
+  
+  // Process markup for room description (server-side)
+  const processedDescription = room.description ? parseMarkupServer(room.description, '#00ffff') : '';
 
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
     room: {
       id: room.id,
       name: room.name,
-      description: room.description,
+      description: room.description, // Raw text (client will process if needed)
+      descriptionHtml: processedDescription, // Pre-processed HTML with markup
       x: room.x,
       y: room.y,
       mapName: mapName,
@@ -504,7 +509,7 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     factoryWidgetState: factoryState,
     warehouseWidgetState: warehouseState,
     hasWarehouseDeed: hasWarehouseDeed,
-    // Send formatted messages
+    // Send formatted messages (raw text with markup - client will process)
     messages: {
       alsoHere: alsoHereMessage,
       obviousExits: obviousExitsMessage,

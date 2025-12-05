@@ -156,8 +156,12 @@ export default class Game {
         };
         
         this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data);
+            try {
+                const data = JSON.parse(event.data);
+                this.handleMessage(data);
+            } catch (err) {
+                console.error('[Game] Error parsing WebSocket message:', err, event.data);
+            }
         };
         
         this.ws.onerror = (error) => {
@@ -317,9 +321,11 @@ export default class Game {
                 break;
                 
             case 'message':
+            case 'terminal:message':
+                // Handle both 'message' (legacy) and 'terminal:message' (new universal router)
                 this.messageBus.emit('terminal:message', {
                     message: data.message,
-                    type: 'info',
+                    type: data.messageType || data.type || 'info',
                     html: data.html || null
                 });
                 break;

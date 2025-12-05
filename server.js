@@ -366,6 +366,10 @@ async function startServer() {
     // Load message cache at startup
     await messageCache.loadMessageCache();
     
+    // Initialize markup service (load custom conventions if any)
+    const { initializeMarkupService } = require('./utils/markupService');
+    await initializeMarkupService(db);
+    
     // Start HTTP server
     server.listen(PORT, HOST, () => {
       console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
@@ -377,12 +381,17 @@ async function startServer() {
       // Start room update timer for progress bars
       startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdateWrapper);
       
-      // CRITICAL: Set up a periodic refresh of the connectedPlayers reference in the NPC engine
-      // This ensures the engine always has the current reference, even if the Map object is recreated
+      // CRITICAL: Initialize message router with connectedPlayers reference
+      const { setConnectedPlayersReference: setMessageRouterReference } = require('./utils/messageRouter');
+      setMessageRouterReference(connectedPlayers);
+      
+      // CRITICAL: Set up a periodic refresh of the connectedPlayers reference in both NPC engine and message router
+      // This ensures both always have the current reference, even if the Map object is recreated
       // (though it shouldn't be, since it's a const - this is just a safety measure)
       setInterval(() => {
         const { setConnectedPlayersReference } = require('./services/npcCycleEngine');
         setConnectedPlayersReference(connectedPlayers);
+        setMessageRouterReference(connectedPlayers);
       }, 5000); // Refresh every 5 seconds as a safety measure
     });
   } catch (err) {
