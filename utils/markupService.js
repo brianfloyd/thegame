@@ -39,6 +39,10 @@ const MARKUP_CONVENTIONS = {
     }
 };
 
+// Typewriter effect regex pattern: {{typewriter:delay}}text{{/typewriter}}
+// Default delay is 100ms if not specified
+const TYPEWRITER_PATTERN = /\{\{typewriter(?::(\d+))?\}\}([\s\S]*?)\{\{\/typewriter\}\}/gi;
+
 // Custom markup conventions cache (loaded from database)
 let customMarkupConventions = {};
 let customConventionsLoaded = false;
@@ -109,6 +113,25 @@ function generateMarkupCSS(effects, color) {
 }
 
 /**
+ * Parse typewriter markup and wrap content in a span with data attributes
+ * Syntax: {{typewriter:100}}text with other markup{{/typewriter}}
+ * The delay is in milliseconds (default 100ms)
+ * 
+ * @param {string} text - Text potentially containing typewriter markup
+ * @returns {string} Text with typewriter spans (data-typewriter, data-typewriter-delay)
+ */
+function parseTypewriterMarkup(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    return text.replace(TYPEWRITER_PATTERN, (match, delay, content) => {
+        const delayMs = delay ? parseInt(delay, 10) : 100;
+        // Wrap in span with data attributes for client-side processing
+        // The content inside will be parsed for other markup separately
+        return `<span class="typewriter-effect" data-typewriter="true" data-typewriter-delay="${delayMs}">${content}</span>`;
+    });
+}
+
+/**
  * Parse markup in text and convert to HTML spans (server-side)
  * @param {string} text - Text with markup
  * @param {string} keywordColor - Color for <text> markup (default: '#ff00ff')
@@ -118,6 +141,21 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
     if (!text || typeof text !== 'string') return '';
     
     const glowColor = keywordColor || '#ff00ff';
+    
+    // First, process typewriter markup (preserve inner content for further processing)
+    // We'll handle typewriter specially to preserve nested markup
+    let result = text;
+    const typewriterBlocks = [];
+    let typewriterIndex = 0;
+    
+    // Extract typewriter blocks and replace with placeholders
+    result = result.replace(TYPEWRITER_PATTERN, (match, delay, content) => {
+        const delayMs = delay ? parseInt(delay, 10) : 100;
+        const placeholder = `__TYPEWRITER_${typewriterIndex}__`;
+        typewriterBlocks[typewriterIndex] = { delay: delayMs, content };
+        typewriterIndex++;
+        return placeholder;
+    });
     
     // Combine built-in and custom conventions
     const allConventions = { ...MARKUP_CONVENTIONS, ...customMarkupConventions };
@@ -130,7 +168,6 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
     // Use a placeholder system to avoid double-escaping
     const placeholders = [];
     let placeholderIndex = 0;
-    let result = text;
     
     // Process each convention BEFORE escaping HTML
     for (const [key, convention] of sortedConventions) {
@@ -178,6 +215,14 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
         result = result.replace(`__MARKUP_${index}__`, span);
     });
     
+    // Now process typewriter blocks - parse their content and wrap in typewriter span
+    typewriterBlocks.forEach((block, index) => {
+        // Recursively parse the content inside typewriter block (for nested markup)
+        const parsedContent = parseMarkupServer(block.content, keywordColor);
+        const typewriterHtml = `<span class="typewriter-effect" data-typewriter="true" data-typewriter-delay="${block.delay}">${parsedContent}</span>`;
+        result = result.replace(`__TYPEWRITER_${index}__`, typewriterHtml);
+    });
+    
     return result;
 }
 
@@ -223,6 +268,7 @@ async function initializeMarkupService(db) {
 
 module.exports = {
     parseMarkupServer,
+    parseTypewriterMarkup,
     formatMessageForTerminal,
     initializeMarkupService,
     loadCustomConventions,

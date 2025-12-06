@@ -50,3 +50,4 @@ COMMENT ON TABLE user_characters IS 'Links accounts to player characters. One ac
 
 
 
+

@@ -113,3 +113,4 @@ WHERE message_key IN ('vitalis_drain_hit', 'vitalis_drain_miss');
 SELECT 'All migrations applied successfully!' as status;
 
 
+

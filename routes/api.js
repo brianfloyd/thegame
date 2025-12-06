@@ -532,6 +532,107 @@ function setupRoutes(app, options) {
   app.get('/reset-password', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'public', 'reset-password.html'));
   });
+  
+  // DEV BACKDOOR: Quick login for development (only works in dev mode)
+  // Usage: 
+  //   /dev-login - logs in and selects first character
+  //   /dev-login/bobby - logs in and selects Bobby character
+  //   /dev-login/fliz - logs in and selects Fliz character
+  //   /dev-login/noob - logs in and selects Noob character
+  app.get('/dev-login/:character?', optionalSession, async (req, res) => {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).send('Dev backdoor disabled in production');
+    }
+    
+    try {
+      const db = options.db;
+      const activeAccountSessions = options.activeAccountSessions;
+      const { sessionStore } = require('../middleware/session');
+      
+      // Get brian's account
+      const account = await db.getAccountByEmail('brian@brianfloyd.me');
+      if (!account) {
+        return res.status(404).send('Dev account (brian@brianfloyd.me) not found. Run migration 023_seed_brian_account.sql');
+      }
+      
+      // Get tab ID from header
+      const tabId = req.headers['x-tab-id'] || `dev-${Date.now()}`;
+      
+      // Invalidate old session if exists (allows switching between characters)
+      if (activeAccountSessions && activeAccountSessions.has(account.id)) {
+        activeAccountSessions.delete(account.id);
+      }
+      
+      // Get user's characters
+      const characters = await db.getUserCharacters(account.id);
+      if (!characters || characters.length === 0) {
+        return res.status(404).send('No characters found for dev account. Run migration 023_seed_brian_account.sql');
+      }
+      
+      // Determine which character to use
+      let targetCharacter = null;
+      const characterName = req.params.character ? req.params.character.toLowerCase() : null;
+      
+      if (characterName) {
+        // Find specific character by name (case-insensitive, strip @ markup)
+        // Character names may have @ markup (e.g., @Fliz@), so we strip @ for comparison
+        targetCharacter = characters.find(char => {
+          const cleanName = char.name.replace(/@/g, '').toLowerCase();
+          return cleanName === characterName;
+        });
+        if (!targetCharacter) {
+          return res.status(404).send(`Character "${req.params.character}" not found. Available characters: ${characters.map(c => c.name).join(', ')}`);
+        }
+      } else {
+        // Use first character if no specific character requested
+        targetCharacter = characters[0];
+      }
+      
+      const player = await db.getPlayerByName(targetCharacter.name);
+      if (!player) {
+        return res.status(404).send(`Character ${targetCharacter.name} not found`);
+      }
+      
+      // Create account session
+      req.session.accountId = account.id;
+      req.session.accountEmail = account.email;
+      req.session.emailVerified = account.email_verified;
+      req.session.tabId = tabId;
+      
+      // Track active session
+      if (activeAccountSessions) {
+        activeAccountSessions.set(account.id, { sessionId: req.sessionID, tabId: tabId });
+      }
+      
+      // Create player session
+      const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+      sessionStore.set(req.sessionID, {
+        accountId: account.id,
+        playerName: player.name,
+        playerId: player.id,
+        createdAt: Date.now(),
+        expiresAt: expiresAt
+      });
+      
+      req.session.playerName = player.name;
+      req.session.playerId = player.id;
+      
+      // Save session and redirect
+      req.session.save((err) => {
+        if (err) {
+          console.error('Dev login session save error:', err);
+          return res.status(500).send('Failed to create session');
+        }
+        
+        console.log(`[DEV BACKDOOR] Auto-logged in as ${account.email} with character ${player.name}`);
+        res.redirect('/game');
+      });
+    } catch (err) {
+      console.error('Dev login error:', err);
+      res.status(500).send(`Dev login failed: ${err.message}`);
+    }
+  });
 }
 
 module.exports = {

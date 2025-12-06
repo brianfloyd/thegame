@@ -114,6 +114,15 @@ export default class StatsWidget extends Component {
             });
         }
         
+        // Add Pulse Echo Progression display
+        if (stats.pulseEchoes !== undefined || stats.pulseEchoTier !== undefined) {
+            const progressionSection = this.createProgressionSection(
+                stats.pulseEchoes?.value || 0,
+                stats.pulseEchoTier?.value || 1
+            );
+            this.statsContent.appendChild(progressionSection);
+        }
+        
         // Add Encumbrance display
         if (stats.currentEncumbrance !== undefined) {
             const maxEncumbrance = stats.maxEncumbrance?.value || 100;
@@ -285,6 +294,55 @@ export default class StatsWidget extends Component {
         statItem.appendChild(label);
         statItem.appendChild(barContainer);
         section.appendChild(statItem);
+        
+        return section;
+    }
+    
+    /**
+     * Create pulse echo progression section
+     */
+    createProgressionSection(pulseEchoes, pulseEchoTier) {
+        const section = document.createElement('div');
+        section.className = 'stats-section';
+        
+        const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'stats-section-title';
+        sectionTitle.textContent = 'Progression';
+        section.appendChild(sectionTitle);
+        
+        // Pulse Echoes
+        const echoItem = document.createElement('div');
+        echoItem.className = 'stat-item';
+        
+        const echoLabel = document.createElement('span');
+        echoLabel.className = 'stat-label';
+        echoLabel.textContent = 'Pulse Echoes:';
+        
+        const echoValue = document.createElement('span');
+        echoValue.className = 'stat-value';
+        echoValue.style.color = '#00ffff';
+        echoValue.textContent = pulseEchoes.toLocaleString();
+        
+        echoItem.appendChild(echoLabel);
+        echoItem.appendChild(echoValue);
+        section.appendChild(echoItem);
+        
+        // Pulse Echo Tier
+        const tierItem = document.createElement('div');
+        tierItem.className = 'stat-item';
+        
+        const tierLabel = document.createElement('span');
+        tierLabel.className = 'stat-label';
+        tierLabel.textContent = 'Echo Tier:';
+        
+        const tierValue = document.createElement('span');
+        tierValue.className = 'stat-value';
+        tierValue.style.color = '#ff00ff';
+        tierValue.textContent = pulseEchoTier;
+        
+        tierItem.appendChild(tierLabel);
+        tierItem.appendChild(tierValue);
+        section.appendChild(tierItem);
         
         return section;
     }

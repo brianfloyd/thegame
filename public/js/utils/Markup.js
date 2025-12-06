@@ -58,6 +58,9 @@ export const MARKUP_CONVENTIONS = {
 // Custom markup conventions (loaded from localStorage)
 let customMarkupConventions = {};
 
+// Active typewriter animations (for cleanup)
+const activeTypewriters = new Map();
+
 // Load custom conventions from localStorage
 function loadCustomConventions() {
     try {
@@ -69,6 +72,133 @@ function loadCustomConventions() {
         console.error('Failed to load custom markup conventions:', e);
         customMarkupConventions = {};
     }
+}
+
+/**
+ * Initialize typewriter effects on elements with data-typewriter attribute
+ * This is called after HTML is inserted into the DOM
+ * @param {HTMLElement} container - Container element to search for typewriter elements
+ */
+export function initializeTypewriterEffects(container) {
+    if (!container) return;
+    
+    const typewriterElements = container.querySelectorAll('[data-typewriter="true"]');
+    
+    typewriterElements.forEach((element, index) => {
+        const delay = parseInt(element.getAttribute('data-typewriter-delay') || '100', 10);
+        const fullContent = element.innerHTML;
+        
+        // Store original content and clear element
+        element.setAttribute('data-typewriter-content', fullContent);
+        element.innerHTML = '';
+        element.style.visibility = 'visible';
+        
+        // Create a unique ID for this typewriter instance
+        const typewriterId = `typewriter_${Date.now()}_${index}`;
+        element.setAttribute('data-typewriter-id', typewriterId);
+        
+        // Start typewriter animation
+        animateTypewriter(element, fullContent, delay, typewriterId);
+    });
+}
+
+/**
+ * Animate typewriter effect character by character
+ * Handles HTML tags properly (doesn't split them)
+ * @param {HTMLElement} element - Element to animate
+ * @param {string} htmlContent - Full HTML content to type
+ * @param {number} delay - Delay between characters in ms
+ * @param {string} typewriterId - Unique ID for this animation
+ */
+function animateTypewriter(element, htmlContent, delay, typewriterId) {
+    // Parse HTML to extract characters and tags
+    const segments = parseHtmlForTypewriter(htmlContent);
+    let currentIndex = 0;
+    let currentHtml = '';
+    
+    function typeNextSegment() {
+        if (currentIndex >= segments.length) {
+            // Animation complete
+            activeTypewriters.delete(typewriterId);
+            element.removeAttribute('data-typewriter-animating');
+            return;
+        }
+        
+        const segment = segments[currentIndex];
+        currentHtml += segment.content;
+        element.innerHTML = currentHtml;
+        currentIndex++;
+        
+        // If it's a tag, don't delay (type next immediately)
+        // If it's a character, delay before next
+        const nextDelay = segment.isTag ? 0 : delay;
+        
+        const timeoutId = setTimeout(typeNextSegment, nextDelay);
+        activeTypewriters.set(typewriterId, timeoutId);
+    }
+    
+    element.setAttribute('data-typewriter-animating', 'true');
+    typeNextSegment();
+}
+
+/**
+ * Parse HTML content into segments of characters and tags
+ * Tags are kept whole, characters are individual
+ * @param {string} html - HTML content
+ * @returns {Array<{content: string, isTag: boolean}>} Array of segments
+ */
+function parseHtmlForTypewriter(html) {
+    const segments = [];
+    let i = 0;
+    
+    while (i < html.length) {
+        if (html[i] === '<') {
+            // Find end of tag
+            const tagEnd = html.indexOf('>', i);
+            if (tagEnd !== -1) {
+                // Include the entire tag as one segment
+                segments.push({
+                    content: html.substring(i, tagEnd + 1),
+                    isTag: true
+                });
+                i = tagEnd + 1;
+            } else {
+                // Malformed HTML, treat < as character
+                segments.push({ content: html[i], isTag: false });
+                i++;
+            }
+        } else if (html[i] === '&') {
+            // Handle HTML entities (e.g., &amp;, &lt;, etc.)
+            const entityEnd = html.indexOf(';', i);
+            if (entityEnd !== -1 && entityEnd - i < 10) {
+                // Include entire entity as one segment
+                segments.push({
+                    content: html.substring(i, entityEnd + 1),
+                    isTag: false // Entities show as characters
+                });
+                i = entityEnd + 1;
+            } else {
+                segments.push({ content: html[i], isTag: false });
+                i++;
+            }
+        } else {
+            // Regular character
+            segments.push({ content: html[i], isTag: false });
+            i++;
+        }
+    }
+    
+    return segments;
+}
+
+/**
+ * Stop all active typewriter animations
+ */
+export function stopAllTypewriters() {
+    activeTypewriters.forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+    });
+    activeTypewriters.clear();
 }
 
 // Generate CSS for markup effects
@@ -182,6 +312,7 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
     
     return result;
 }
+
 
 
 

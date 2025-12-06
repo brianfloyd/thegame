@@ -40,6 +40,10 @@ let roomTypeColors = { // Default colors
 };
 let allRoomTypes = []; // All available room types from database
 let mapEditorTooltip = null; // Tooltip element for room hover info in editor
+let allNPCsData = []; // All scriptable NPCs for placement
+let massAddNPCMode = false; // Mass add NPC mode toggle
+let massAddNPCId = null; // Selected NPC ID for mass add mode
+let massAddNPCQuantity = 1; // Quantity to add per room in mass add mode
 
 // Non-blocking notification for editor errors
 function showEditorNotification(message, type = 'info') {
@@ -191,6 +195,26 @@ function handleMessage(data) {
                 }
             }
             break;
+        case 'npcList':
+            allNPCsData = data.npcs || [];
+            // Update side panel if it's showing NPC controls
+            if (selectedRoom && !selectedRoom.isNew) {
+                updateSidePanel();
+            }
+            break;
+        case 'npcPlacementAdded':
+            const npcName = allNPCsData.find(npc => npc.id === data.placement?.npc_id)?.name || 'NPC';
+            showEditorNotification(`${npcName} added to room successfully`, 'info');
+            // Refresh side panel to show updated NPC list
+            if (selectedRoom && selectedRoom.id) {
+                updateSidePanel();
+            }
+            break;
+        case 'error':
+            if (data.message) {
+                showEditorNotification(data.message, 'error');
+            }
+            break;
         case 'mapCreated':
             const mapSelector2 = document.getElementById('mapSelector');
             if (mapSelector2) {
@@ -314,9 +338,9 @@ function closeMapEditor() {
 // Load map for editor
 function loadMapForEditor(mapId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    
+
     currentEditorMapId = mapId;
-    
+
     // If this is the player's current map and we know their room, zoom and center on it
     if (mapId === currentMapId && playerCurrentRoom) {
         // Set zoom to show roughly 20x20 area
@@ -331,12 +355,53 @@ function loadMapForEditor(mapId) {
         editorPanX = 0;
         editorPanY = 0;
     }
-    
+
     ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
     // Also request room types if we don't have them yet
     if (allRoomTypes.length === 0) {
         ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
     }
+}
+
+// Load NPC list from server
+function loadNPCs() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'getAllNPCs' }));
+}
+
+// Add NPC to selected room (supports quantity)
+function addNPCToSelectedRoom(npcId, quantity = 1) {
+    if (!selectedRoom || !selectedRoom.id) {
+        showEditorNotification('No room selected', 'error');
+        return;
+    }
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        showEditorNotification('Not connected to server', 'error');
+        return;
+    }
+    
+    // Add NPCs one at a time (placeNPCInRoom doesn't support quantity directly)
+    // Each NPC will trigger a separate npcPlacementAdded response
+    let addedCount = 0;
+    const addNextNPC = () => {
+        if (addedCount < quantity) {
+            ws.send(JSON.stringify({
+                type: 'addNpcToRoom',
+                npcId: npcId,
+                roomId: selectedRoom.id,
+                slot: addedCount // Use quantity index as slot to allow multiple
+            }));
+            addedCount++;
+            
+            // If there are more to add, wait a bit before next request to avoid overwhelming the server
+            if (addedCount < quantity) {
+                setTimeout(addNextNPC, 100);
+            }
+        }
+    };
+    
+    addNextNPC();
 }
 
 // Show create map dialog
@@ -511,18 +576,92 @@ function createNewMap() {
 
 // Toggle connect mode
 function toggleConnectMode() {
+    const connectMapsBtn = document.getElementById('connectMapsBtn');
+    const massAddNPCBtn = document.getElementById('massAddNPCBtn');
+    
     if (editorMode === 'connect') {
         editorMode = 'edit';
         connectionSourceRoom = null;
+        if (connectMapsBtn) {
+            connectMapsBtn.textContent = 'Connect Maps';
+            connectMapsBtn.style.background = '';
+            connectMapsBtn.style.borderColor = '';
+        }
         updateSidePanel();
     } else {
         editorMode = 'connect';
+        massAddNPCMode = false; // Disable mass-add mode when entering connect mode
         if (selectedRoom && selectedRoom.id) {
             connectionSourceRoom = selectedRoom;
         } else {
             connectionSourceRoom = null;
         }
+        // Update button to show active state
+        if (connectMapsBtn) {
+            connectMapsBtn.textContent = 'Connect Maps (ACTIVE)';
+            connectMapsBtn.style.background = '#003300';
+            connectMapsBtn.style.borderColor = '#00ff00';
+        }
+        // Also update mass-add button to show it's inactive
+        if (massAddNPCBtn) {
+            massAddNPCBtn.textContent = 'Mass Add NPC';
+            massAddNPCBtn.style.background = '';
+            massAddNPCBtn.style.borderColor = '';
+        }
         updateSidePanel();
+        renderMapEditor();
+    }
+}
+
+// Toggle mass add NPC mode
+function toggleMassAddNPCMode() {
+    const massAddNPCBtn = document.getElementById('massAddNPCBtn');
+    
+    if (massAddNPCMode) {
+        // Turn off mass-add mode
+        massAddNPCMode = false;
+        massAddNPCId = null;
+        massAddNPCQuantity = 1;
+        if (massAddNPCBtn) {
+            massAddNPCBtn.textContent = 'Mass Add NPC';
+            massAddNPCBtn.style.background = '';
+            massAddNPCBtn.style.borderColor = '';
+        }
+        updateSidePanel();
+        renderMapEditor();
+    } else {
+        // Turn on mass-add mode
+        if (allNPCsData.length === 0) {
+            showEditorNotification('No NPCs available. Please wait for NPC list to load.', 'error');
+            return;
+        }
+        massAddNPCMode = true;
+        editorMode = 'edit'; // Exit connect mode if active
+        connectionSourceRoom = null;
+        // If an NPC is already selected in the dropdown, use it
+        const npcSelect = document.getElementById('npcToAdd');
+        const quantityInput = document.getElementById('npcQuantity');
+        if (npcSelect && npcSelect.value) {
+            massAddNPCId = parseInt(npcSelect.value);
+        }
+        if (quantityInput) {
+            massAddNPCQuantity = parseInt(quantityInput.value) || 1;
+        }
+        // Update button to show active state
+        if (massAddNPCBtn) {
+            massAddNPCBtn.textContent = 'Mass Add NPC (ACTIVE)';
+            massAddNPCBtn.style.background = '#440044';
+            massAddNPCBtn.style.borderColor = '#ff00ff';
+        }
+        // Also update connect button to show it's inactive
+        const connectMapsBtn = document.getElementById('connectMapsBtn');
+        if (connectMapsBtn) {
+            connectMapsBtn.textContent = 'Connect Maps';
+            connectMapsBtn.style.background = '';
+            connectMapsBtn.style.borderColor = '';
+        }
+        updateSidePanel();
+        renderMapEditor();
     }
 }
 
@@ -589,6 +728,15 @@ function handleSpeedModeNavigation(key) {
         selectedRoom = existingRoom;
         selectedRooms = [existingRoom];
         speedModeActive = true;
+        
+        // If mass-add NPC mode is active, automatically add NPC to this room
+        if (massAddNPCMode && massAddNPCId && existingRoom.id) {
+            addNPCToSelectedRoom(massAddNPCId, massAddNPCQuantity);
+        } else if (massAddNPCMode && !massAddNPCId) {
+            // Show reminder if NPC not selected in mass-add mode
+            showEditorNotification('Please select an NPC in Mass Add Mode panel', 'error');
+        }
+        
         updateSidePanel();
         renderMapEditor();
     } else {
@@ -1205,6 +1353,65 @@ function updateSidePanel() {
     const sidePanel = document.getElementById('sidePanelContent');
     if (!sidePanel) return;
     
+    // Mass Add NPC Mode takes priority
+    if (massAddNPCMode) {
+        const selectedNPC = allNPCsData.find(npc => npc.id === massAddNPCId);
+        const npcName = selectedNPC ? selectedNPC.name : 'None selected';
+        
+        sidePanel.innerHTML = `
+            <h3 style="font-size: 0.9em; margin-bottom: 8px; color: #ff00ff;">Mass Add NPC Mode</h3>
+            <p style="font-size: 0.85em; margin-bottom: 8px; color: #ff00ff; font-weight: bold;">ACTIVE - Navigate rooms to add NPC</p>
+            <p style="font-size: 0.75em; color: #888; margin-bottom: 15px;">
+                Use keypad (1-9) to navigate through rooms. The selected NPC will be automatically added to each room you visit.
+            </p>
+            <div style="background: #330033; border: 2px solid #ff00ff; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                <div style="margin-bottom: 8px;">
+                    <label style="display: block; font-size: 0.75em; color: #aaa; margin-bottom: 4px;">NPC:</label>
+                    <select id="massAddNPCSelect" style="width: 100%; font-size: 0.8em; background: #1a001a; border: 1px solid #ff00ff; color: #ff00ff; padding: 4px;">
+                        <option value="">Select NPC...</option>
+                        ${allNPCsData.map(npc => `<option value="${npc.id}" ${npc.id === massAddNPCId ? 'selected' : ''}>${npc.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="margin-bottom: 8px;">
+                    <label style="display: block; font-size: 0.75em; color: #aaa; margin-bottom: 4px;">Quantity per room:</label>
+                    <input type="number" id="massAddNPCQuantityInput" value="${massAddNPCQuantity}" min="1" max="10" style="width: 100%; font-size: 0.8em; background: #1a001a; border: 1px solid #ff00ff; color: #ff00ff; padding: 4px;">
+                </div>
+                <div style="font-size: 0.75em; color: #ff00ff; margin-top: 8px;">
+                    <strong>Current:</strong> ${npcName} (x${massAddNPCQuantity})
+                </div>
+            </div>
+            <button id="massAddNPCCancel" style="width: 100%; padding: 8px 12px; background: #330000; border: 2px solid #ff0000; color: #ff6666; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px;">Exit Mass Add Mode</button>
+        `;
+        
+        // Event handlers for mass-add mode
+        const npcSelect = document.getElementById('massAddNPCSelect');
+        if (npcSelect) {
+            npcSelect.addEventListener('change', () => {
+                const npcId = parseInt(npcSelect.value);
+                if (npcId) {
+                    massAddNPCId = npcId;
+                    updateSidePanel(); // Refresh to show updated NPC name
+                }
+            });
+        }
+        
+        const quantityInput = document.getElementById('massAddNPCQuantityInput');
+        if (quantityInput) {
+            quantityInput.addEventListener('change', () => {
+                massAddNPCQuantity = parseInt(quantityInput.value) || 1;
+            });
+        }
+        
+        const cancelBtn = document.getElementById('massAddNPCCancel');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                toggleMassAddNPCMode();
+            });
+        }
+        
+        return;
+    }
+    
     if (editorMode === 'connect') {
         if (connectionSourceRoom) {
             sidePanel.innerHTML = `
@@ -1446,6 +1653,25 @@ function updateSidePanel() {
             </div>
             ` : ''}
             
+            <!-- NPC Placement Section -->
+            <div style="border-top: 1px solid #ff00ff; margin-top: 12px; padding-top: 8px; background: #330033; padding: 8px; border-radius: 4px;">
+                <h4 style="font-size: 0.85em; margin-bottom: 4px; color: #ff00ff;">👤 NPC Placement</h4>
+                <p style="font-size: 0.65em; color: #888; margin-bottom: 8px; font-style: italic;">Add scriptable NPCs to this room</p>
+                <div style="display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch;">
+                    <select id="npcToAdd" style="flex: 1; font-size: 0.8em; min-width: 0;">
+                        <option value="">Select NPC...</option>
+                        ${allNPCsData.map(npc => `<option value="${npc.id}">${npc.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 6px; align-items: center;">
+                    <label style="font-size: 0.75em; color: #aaa; min-width: 60px;">Quantity:</label>
+                    <input type="number" id="npcQuantity" value="1" min="1" max="10" style="flex: 1; font-size: 0.8em; background: #1a001a; border: 1px solid #ff00ff; color: #ff00ff; padding: 4px;">
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 4px;">
+                    <button id="addNPCToRoomBtn" style="flex: 1; padding: 6px 12px; font-size: 0.8em; white-space: nowrap; background: #440044; border: 1px solid #ff00ff; color: #ff00ff; cursor: pointer;">Add NPC</button>
+                </div>
+            </div>
+            
             <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button id="updateRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #0a0a0a; border: 2px solid #00ff00; color: #00ff00; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Update Room</button>
                 <button id="deleteRoomConfirm" style="flex: 1; padding: 8px 12px; min-width: 0; background: #cc0000; border: 2px solid #ff0000; color: #fff; font-family: 'Courier New', monospace; cursor: pointer; font-size: 12px; white-space: nowrap;">Delete Room</button>
@@ -1481,6 +1707,51 @@ function updateSidePanel() {
                 }
             }
         });
+        
+        // Add NPC button handler
+        const addNPCBtn = document.getElementById('addNPCToRoomBtn');
+        if (addNPCBtn) {
+            addNPCBtn.addEventListener('click', () => {
+                const npcSelect = document.getElementById('npcToAdd');
+                const quantityInput = document.getElementById('npcQuantity');
+                const npcId = parseInt(npcSelect.value);
+                const quantity = parseInt(quantityInput.value) || 1;
+                
+                if (npcId && selectedRoom.id) {
+                    addNPCToSelectedRoom(npcId, quantity);
+                } else {
+                    showEditorNotification('Please select an NPC', 'error');
+                }
+            });
+        }
+        
+        // Sync NPC dropdown changes with mass-add mode if active
+        const npcSelect = document.getElementById('npcToAdd');
+        if (npcSelect && massAddNPCMode) {
+            npcSelect.addEventListener('change', () => {
+                const npcId = parseInt(npcSelect.value);
+                if (npcId) {
+                    massAddNPCId = npcId;
+                    // Update side panel if mass-add mode is showing
+                    if (massAddNPCMode) {
+                        updateSidePanel();
+                    }
+                }
+            });
+        }
+        
+        // Sync quantity input changes with mass-add mode if active
+        const npcQuantityInput = document.getElementById('npcQuantity');
+        if (npcQuantityInput && massAddNPCMode) {
+            npcQuantityInput.addEventListener('change', () => {
+                const quantity = parseInt(npcQuantityInput.value) || 1;
+                massAddNPCQuantity = quantity;
+                // Update side panel if mass-add mode is showing
+                if (massAddNPCMode) {
+                    updateSidePanel();
+                }
+            });
+        }
         
         // Request room items for this room
         if (selectedRoom.id && ws && ws.readyState === WebSocket.OPEN) {
@@ -1909,6 +2180,14 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleConnectMode();
         });
     }
+    
+    // Mass Add NPC button
+    const massAddNPCBtn = document.getElementById('massAddNPCBtn');
+    if (massAddNPCBtn) {
+        massAddNPCBtn.addEventListener('click', () => {
+            toggleMassAddNPCMode();
+        });
+    }
 
     // Room type colors button
     const roomTypeColorsBtn = document.getElementById('roomTypeColorsBtn');
@@ -1985,10 +2264,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Connect to WebSocket and initialize
     connectWebSocket();
     
-    // Load all maps
+    // Load all maps and NPCs
     setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'getAllMaps' }));
+            loadNPCs();
         }
     }, 500);
 });

@@ -6,7 +6,7 @@
  */
 
 import Component from '../core/Component.js';
-import { parseMarkup } from '../utils/Markup.js';
+import { parseMarkup, initializeTypewriterEffects } from '../utils/Markup.js';
 
 export default class Terminal extends Component {
     constructor(game) {
@@ -22,6 +22,8 @@ export default class Terminal extends Component {
         this.idleLookInterval = null;
         // Track NPC elements in current room for in-place status updates
         this.currentRoomNPCs = new Map(); // npcId -> { element, nameSpan, statusSpan, lastStatus }
+        // Track if disconnect message has been shown (to prevent duplicate messages)
+        this.disconnectMessageShown = false;
     }
     
     init() {
@@ -47,6 +49,8 @@ export default class Terminal extends Component {
         // Subscribe to MessageBus events
         this.subscribe('terminal:message', (data) => this.handleTerminalMessage(data));
         this.subscribe('terminal:error', (data) => this.handleTerminalError(data));
+        this.subscribe('game:disconnected', (data) => this.handleDisconnected(data));
+        this.subscribe('game:connected', (data) => this.handleConnected(data));
         this.subscribe('room:update', (data) => this.handleRoomUpdate(data));
         this.subscribe('room:moved', (data) => this.handleRoomMoved(data));
         this.subscribe('player:joined', (data) => this.handlePlayerJoined(data));
@@ -93,6 +97,10 @@ export default class Terminal extends Component {
         }
         
         this.terminalContent.appendChild(msgDiv);
+        
+        // Initialize typewriter effects if any typewriter spans are present
+        initializeTypewriterEffects(msgDiv);
+        
         this.scrollToBottom();
         
         // Save to terminal history (use raw message text, not HTML)
@@ -125,6 +133,13 @@ export default class Terminal extends Component {
         const { message, type = 'info', html = null, messageType = 'info' } = data;
         if (!message) return;
         
+        // Filter out authentication error messages during disconnection/reconnection
+        const messageLower = message.toLowerCase();
+        if (messageLower.includes('not authenticated') || messageLower.includes('please authenticate')) {
+            // Silently ignore these messages during reconnection attempts
+            return;
+        }
+        
         // Server sends pre-processed HTML - use it directly
         // If html is provided, it's already been processed by the server's markup service
         // If not provided, fall back to client-side parsing (for backwards compatibility)
@@ -142,8 +157,36 @@ export default class Terminal extends Component {
      */
     handleTerminalError(data) {
         if (data.message) {
+            // Filter out authentication error messages during disconnection/reconnection
+            const message = data.message.toLowerCase();
+            if (message.includes('not authenticated') || message.includes('please authenticate')) {
+                // Silently ignore these messages during reconnection attempts
+                return;
+            }
             this.addMessage(data.message, 'error', true);
         }
+    }
+    
+    /**
+     * Handle disconnect event - show one disconnect message
+     */
+    handleDisconnected(data) {
+        // Only show disconnect message once
+        if (!this.disconnectMessageShown) {
+            this.disconnectMessageShown = true;
+            this.addMessage('Server connection has failed. Attempting to reconnect...', 'error', true);
+        }
+    }
+    
+    /**
+     * Handle reconnect event - optionally show reconnection message
+     */
+    handleConnected(data) {
+        // Reset disconnect message flag on successful reconnection
+        this.disconnectMessageShown = false;
+        // Optionally show reconnection message, but keep it brief
+        // Only show if we were previously disconnected (can check if we want)
+        // For now, we'll let the server handle showing reconnection status
     }
     
     /**

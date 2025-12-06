@@ -666,6 +666,16 @@ function renderNpcForm() {
                         <input type="number" id="npcMissVitalis" value="${selectedNpc.miss_vitalis || 0}" min="0">
                     </div>
                 </div>
+                <!-- Row 2.3: Pulse Echo Yield -->
+                <div class="npc-row">
+                    <div class="npc-field-group npc-field-half">
+                        <label>Pulse Echo Yield</label>
+                        <input type="number" id="npcPulseEchoYield" value="${selectedNpc.pulse_echo_yield || 1}" min="1" title="Base pulse echoes awarded per successful harvest hit">
+                    </div>
+                    <div class="npc-field-group npc-field-half">
+                        <!-- Empty for balance -->
+                    </div>
+                </div>
                 <!-- Row 2.5: Harvest Prerequisite Item (50%) + Harvest Prerequisite Message (50%) -->
                 <div class="npc-row">
                     <div class="npc-field-group npc-field-half">
@@ -1342,6 +1352,7 @@ function saveNpc() {
     const cooldown_time = parseInt(document.getElementById('npcCooldown')?.value, 10) || 120000;
     const hit_vitalis = parseInt(document.getElementById('npcHitVitalis')?.value, 10) || 0;
     const miss_vitalis = parseInt(document.getElementById('npcMissVitalis')?.value, 10) || 0;
+    const pulse_echo_yield = parseInt(document.getElementById('npcPulseEchoYield')?.value, 10) || 1;
     const harvest_prerequisite_item = document.getElementById('npcHarvestPrerequisiteItem')?.value.trim() || null;
     const harvest_prerequisite_message = document.getElementById('npcHarvestPrerequisiteMessage')?.value.trim() || null;
     const required_stats = document.getElementById('npcRequiredStats').value.trim();
@@ -1420,6 +1431,7 @@ function saveNpc() {
         cooldown_time,
         hit_vitalis,
         miss_vitalis,
+        pulse_echo_yield,
         harvest_prerequisite_item: harvest_prerequisite_item || null,
         harvest_prerequisite_message: harvest_prerequisite_message || null,
         required_stats: required_stats || null,

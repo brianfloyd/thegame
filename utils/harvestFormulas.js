@@ -315,6 +315,188 @@ function getFormulaSummary(config, samplePoints = [5, 25, 50, 75, 100]) {
   });
 }
 
+// ============================================================
+// Attunement Formula Functions
+// ============================================================
+
+/**
+ * Calculate attunement cooldown reduction based on player resonance
+ * Returns the multiplier to apply to base cooldown time (e.g., 0.25 means 75% reduction)
+ * 
+ * @param {number} resonance - Player's resonance stat value
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Cooldown time multiplier (1 - reduction percentage)
+ */
+async function calculateAttunementCooldownReduction(resonance, db) {
+  const config = await getHarvestFormulaConfig(db, 'attunement_cooldown_reduction');
+  if (!config) {
+    // No config found, return 1 (no reduction)
+    return 1;
+  }
+  
+  const reduction = calculateExponentialCurve(resonance, config);
+  // Return multiplier (1 - reduction), clamped to minimum of 0.1 (90% max reduction)
+  return Math.max(0.1, 1 - reduction);
+}
+
+/**
+ * Calculate attunement restore bonus based on player fortitude
+ * Returns the multiplier to apply to base restore amount (e.g., 2.0 means double restore)
+ * 
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Restore amount multiplier (1 + bonus percentage)
+ */
+async function calculateAttunementRestoreBonus(fortitude, db) {
+  const config = await getHarvestFormulaConfig(db, 'attunement_restore_bonus');
+  if (!config) {
+    // No config found, return 1 (no bonus)
+    return 1;
+  }
+  
+  const bonus = calculateExponentialCurve(fortitude, config);
+  // Return multiplier (1 + bonus), e.g., 1.0 bonus = 2.0 multiplier (double restore)
+  return 1 + bonus;
+}
+
+/**
+ * Calculate attunement delay reduction based on average of resonance and fortitude
+ * Returns the multiplier to apply to base delay time (e.g., 0.25 means 75% reduction)
+ * 
+ * @param {number} resonance - Player's resonance stat value
+ * @param {number} fortitude - Player's fortitude stat value
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Delay time multiplier (1 - reduction percentage)
+ */
+async function calculateAttunementDelayReduction(resonance, fortitude, db) {
+  const config = await getHarvestFormulaConfig(db, 'attunement_delay_reduction');
+  if (!config) {
+    // No config found, return 1 (no reduction)
+    return 1;
+  }
+  
+  // Calculate average of resonance and fortitude
+  const averageStat = (resonance + fortitude) / 2;
+  
+  const reduction = calculateExponentialCurve(averageStat, config);
+  // Return multiplier (1 - reduction), clamped to minimum of 0.1 (90% max reduction)
+  return Math.max(0.1, 1 - reduction);
+}
+
+// ============================================================
+// Pulse Echo Formula Functions
+// ============================================================
+
+/**
+ * Calculate pulse echo yield based on NPC base yield and player resonance
+ * Uses exponential curve formula with configurable multiplier and bonus rate
+ * 
+ * @param {number} npcPulseEchoYield - Base pulse echo yield from NPC definition
+ * @param {number} resonance - Player's resonance stat value
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Final pulse echo yield (integer)
+ */
+async function calculatePulseEchoYield(npcPulseEchoYield, resonance, db) {
+  // Get yield multiplier config
+  const multiplierConfig = await getHarvestFormulaConfig(db, 'pulse_echo_yield_multiplier');
+  const bonusConfig = await getHarvestFormulaConfig(db, 'pulse_echo_resonance_bonus_rate');
+  
+  let baseYield = npcPulseEchoYield || 1;
+  
+  // Apply yield multiplier if configured
+  if (multiplierConfig) {
+    const multiplier = calculateExponentialCurve(resonance, multiplierConfig);
+    baseYield = baseYield * multiplier;
+  }
+  
+  // Apply resonance bonus if configured
+  if (bonusConfig) {
+    const bonusRate = calculateExponentialCurve(resonance, bonusConfig);
+    baseYield = baseYield * (1 + bonusRate);
+  }
+  
+  // Return integer (floor)
+  return Math.max(1, Math.floor(baseYield));
+}
+
+/**
+ * Calculate required echoes for a specific tier
+ * Uses curved progression formula: baseCost * tier^curveMultiplier
+ * 
+ * @param {number} tier - Target tier level
+ * @param {number} resonance - Player's resonance stat value (affects curve)
+ * @param {object} db - Database module
+ * @returns {Promise<number>} Required echoes for this tier
+ */
+async function calculateRequiredEchoesForTier(tier, resonance, db) {
+  const baseCostConfig = await getHarvestFormulaConfig(db, 'pulse_echo_base_cost');
+  const curveConfig = await getHarvestFormulaConfig(db, 'pulse_echo_tier_curve_multiplier');
+  
+  // Default values if configs not found
+  const baseCost = baseCostConfig ? parseFloat(baseCostConfig.min_value) : 10;
+  
+  // Get curve multiplier based on resonance (higher resonance = slower curve = easier progression)
+  let curveMultiplier = 2.0; // Default curve
+  if (curveConfig) {
+    // Invert the curve logic - higher resonance means LOWER multiplier (easier progression)
+    const maxCurve = parseFloat(curveConfig.max_value) || 3.0;
+    const minCurve = parseFloat(curveConfig.min_value) || 1.0;
+    const resonanceBonus = calculateExponentialCurve(resonance, curveConfig);
+    // Higher resonance = lower curve multiplier (between min and max)
+    curveMultiplier = maxCurve - (resonanceBonus * (maxCurve - minCurve));
+  }
+  
+  // Calculate required echoes: baseCost * tier^curveMultiplier
+  return Math.floor(baseCost * Math.pow(tier, curveMultiplier));
+}
+
+/**
+ * Check and apply tier progression based on current pulse echoes
+ * Handles multi-tier gains (if player has enough echoes for multiple tiers)
+ * 
+ * @param {object} db - Database module
+ * @param {number} playerId - Player ID
+ * @returns {Promise<object>} { oldTier, newTier, tiersGained }
+ */
+async function checkAndApplyTierProgression(db, playerId) {
+  const player = await db.getPlayerById(playerId);
+  if (!player) {
+    return { oldTier: 1, newTier: 1, tiersGained: 0 };
+  }
+  
+  const currentEchoes = player.pulse_echoes || 0;
+  const currentTier = player.pulse_echo_tier || 1;
+  const resonance = player.stat_resonance || 5;
+  
+  // Check minimum required echoes
+  const minRequiredConfig = await getHarvestFormulaConfig(db, 'pulse_echo_minimum_required');
+  const minRequired = minRequiredConfig ? parseFloat(minRequiredConfig.min_value) : 0;
+  
+  if (currentEchoes < minRequired) {
+    return { oldTier: currentTier, newTier: currentTier, tiersGained: 0 };
+  }
+  
+  // Check for tier progression (handle multi-tier gains)
+  let newTier = currentTier;
+  let nextTierCost = await calculateRequiredEchoesForTier(newTier + 1, resonance, db);
+  
+  while (currentEchoes >= nextTierCost) {
+    newTier++;
+    nextTierCost = await calculateRequiredEchoesForTier(newTier + 1, resonance, db);
+  }
+  
+  // Update tier if changed
+  if (newTier > currentTier) {
+    await db.updatePulseEchoTier(playerId, newTier);
+  }
+  
+  return {
+    oldTier: currentTier,
+    newTier: newTier,
+    tiersGained: newTier - currentTier
+  };
+}
+
 module.exports = {
   calculateExponentialCurve,
   calculateCycleTimeMultiplier,
@@ -330,6 +512,14 @@ module.exports = {
   checkHarvestHit,
   calculateVitalisDrainReduction,
   applyVitalisDrainReduction,
-  getFormulaSummary
+  getFormulaSummary,
+  // Attunement formula functions
+  calculateAttunementCooldownReduction,
+  calculateAttunementRestoreBonus,
+  calculateAttunementDelayReduction,
+  // Pulse Echo formula functions
+  calculatePulseEchoYield,
+  calculateRequiredEchoesForTier,
+  checkAndApplyTierProgression
 };
 

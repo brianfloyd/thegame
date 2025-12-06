@@ -53,12 +53,16 @@ export default class MapRenderer {
             // Fixed grid mode (like main map widget)
             const halfSize = Math.floor(this.gridSize / 2);
             if (centerRoom) {
-                const baseCellSize = Math.min(
-                    this.canvas.width / this.gridSize, 
-                    this.canvas.height / this.gridSize, 
-                    this.cellSize
-                );
-                const scaledCellSize = baseCellSize * this.zoom;
+                // Calculate cell size to maximize use of available canvas space
+                // Use the smaller dimension to ensure the grid fits, but don't limit by this.cellSize
+                const cellSizeX = this.canvas.width / this.gridSize;
+                const cellSizeY = this.canvas.height / this.gridSize;
+                const baseCellSize = Math.min(cellSizeX, cellSizeY);
+                
+                // Apply zoom, but respect min/max constraints
+                let scaledCellSize = baseCellSize * this.zoom;
+                if (this.minCellSize) scaledCellSize = Math.max(scaledCellSize, this.minCellSize);
+                if (this.maxCellSize) scaledCellSize = Math.min(scaledCellSize, this.maxCellSize);
                 
                 // Adjust for pan
                 const adjustedMinX = centerRoom.x - halfSize + this.panX;
@@ -69,14 +73,19 @@ export default class MapRenderer {
                 const scaledGridWidth = this.gridSize * scaledCellSize;
                 const scaledGridHeight = this.gridSize * scaledCellSize;
                 
+                // Calculate offsets to center the grid, ensuring bottom row is visible
+                // Use Math.floor to avoid fractional pixels that could cause truncation
+                const offsetX = Math.floor((this.canvas.width - scaledGridWidth) / 2);
+                const offsetY = Math.floor((this.canvas.height - scaledGridHeight) / 2);
+                
                 return {
                     minX: adjustedMinX,
                     maxX: adjustedMaxX,
                     minY: adjustedMinY,
                     maxY: adjustedMaxY,
                     cellSize: scaledCellSize,
-                    offsetX: (this.canvas.width - scaledGridWidth) / 2,
-                    offsetY: (this.canvas.height - scaledGridHeight) / 2
+                    offsetX: offsetX,
+                    offsetY: offsetY
                 };
             }
         }
@@ -168,19 +177,28 @@ export default class MapRenderer {
         const screenX = offsetX + (room.x - minX) * cellSize;
         const screenY = offsetY + (maxY - room.y) * cellSize;
         
+        // Clamp to canvas bounds to prevent drawing outside canvas
+        const maxScreenX = this.canvas.width - 1;
+        const maxScreenY = this.canvas.height - 1;
+        
         // Get room styling
         const fillColor = this.getRoomColor(room);
         const border = this.getRoomBorder(room);
         
-        // Draw room fill
+        // Draw room fill - ensure we don't exceed canvas bounds
         this.ctx.fillStyle = fillColor;
-        const roomSize = cellSize - 2;
-        this.ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        const roomSize = Math.max(1, cellSize - 2); // Ensure at least 1px
+        const drawX = Math.max(0, Math.min(screenX + 1, maxScreenX - roomSize));
+        const drawY = Math.max(0, Math.min(screenY + 1, maxScreenY - roomSize));
+        const drawWidth = Math.min(roomSize, maxScreenX - drawX + 1);
+        const drawHeight = Math.min(roomSize, maxScreenY - drawY + 1);
+        
+        this.ctx.fillRect(drawX, drawY, drawWidth, drawHeight);
         
         // Draw border
         this.ctx.strokeStyle = border.color || '#333';
         this.ctx.lineWidth = border.width || 1;
-        this.ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        this.ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
         
         return { screenX, screenY, roomSize };
     }

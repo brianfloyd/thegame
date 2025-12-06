@@ -25,6 +25,9 @@ export default class MapWidget extends Component {
         this.pathingCursorRoom = null;
         this.currentPath = [];
         
+        // God mode state (for double-click to open map editor)
+        this.godMode = false;
+        
         // Viewport size (20x20 grid)
         this.VIEWPORT_SIZE = 20;
     }
@@ -46,8 +49,20 @@ export default class MapWidget extends Component {
         this.subscribe('map:update', (data) => this.handleMapUpdate(data));
         this.subscribe('room:update', (data) => {
             if (data.room) {
-                this.currentRoom = data.room;
+                // Update currentRoom - try to find matching room in mapRooms first for consistency
+                const matchingRoom = this.mapRooms.find(r => 
+                    r.id === data.room.id || 
+                    (r.x === data.room.x && r.y === data.room.y && r.mapId === (data.room.mapId || this.currentMapId))
+                );
+                this.currentRoom = matchingRoom || data.room;
                 this.render();
+            }
+        });
+        
+        // Subscribe to player stats to track god mode
+        this.subscribe('player:stats', (data) => {
+            if (data.stats && data.stats.godMode !== undefined) {
+                this.godMode = data.stats.godMode.value === true || data.stats.godMode === true;
             }
         });
         
@@ -153,6 +168,15 @@ export default class MapWidget extends Component {
         this.mapCanvas.addEventListener('click', (e) => {
             if (this.pathingModeActive) {
                 this.handlePathingModeClick(e);
+            }
+        });
+        
+        // Add double-click handler to open map editor (god mode only)
+        this.mapCanvas.addEventListener('dblclick', (e) => {
+            // Check if god mode is active
+            if (this.godMode) {
+                e.preventDefault();
+                window.location.href = '/map';
             }
         });
         
@@ -445,8 +469,17 @@ export default class MapWidget extends Component {
         }
         
         // Check for current room (if not in pathing mode)
-        if (!this.pathingModeActive && this.currentRoom && room.id === this.currentRoom.id) {
-            return { color: '#ffff00', width: 2 }; // Yellow border for current room
+        // Compare by ID first, then fall back to coordinates if IDs don't match (handles type mismatches)
+        if (!this.pathingModeActive && this.currentRoom) {
+            const idMatch = room.id === this.currentRoom.id || 
+                           String(room.id) === String(this.currentRoom.id);
+            const coordMatch = room.x === this.currentRoom.x && 
+                             room.y === this.currentRoom.y &&
+                             room.mapId === this.currentMapId;
+            
+            if (idMatch || coordMatch) {
+                return { color: '#ffff00', width: 2 }; // Yellow border for current room
+            }
         }
         
         // Connection rooms get light grey border

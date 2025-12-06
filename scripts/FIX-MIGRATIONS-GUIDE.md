@@ -100,3 +100,4 @@ SELECT * FROM game_messages WHERE message_key IN ('vitalis_drain_hit', 'vitalis_
 - Solution: The script handles this automatically with `ON CONFLICT` clauses
 
 
+

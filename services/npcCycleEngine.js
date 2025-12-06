@@ -10,7 +10,9 @@ const {
   calculateCycleTimeMultiplier, 
   checkHarvestHit, 
   getHarvestFormulaConfig,
-  applyVitalisDrainReduction
+  applyVitalisDrainReduction,
+  calculatePulseEchoYield,
+  checkAndApplyTierProgression
 } = require('../utils/harvestFormulas');
 const messageCache = require('../utils/messageCache');
 const { 
@@ -643,11 +645,21 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       }
                       
                       // Send room update to all players in the room so they see the new items
+                      // BUT respect their room_update_interval_ms setting
                       const room = await db.getRoomById(roomNpc.roomId);
                       if (room) {
                         const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
-                        for (const { connId } of playersInRoom) {
-                          await sendRoomUpdate(connId, room);
+                        const now = Date.now();
+                        for (const { connId, playerData } of playersInRoom) {
+                          // Check if enough time has passed since last update for this player
+                          const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
+                          const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
+                          
+                          const timeSinceLastUpdate = now - lastUpdate;
+                          if (timeSinceLastUpdate >= interval) {
+                            await sendRoomUpdate(connId, room);
+                            // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
+                          }
                         }
                       }
                     } else if (outputDistribution === 'player') {
@@ -691,11 +703,21 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                           }
                           
                           // Also send room update so players see the dropped item
+                          // BUT respect their room_update_interval_ms setting
                           const room = await db.getRoomById(roomNpc.roomId);
                           if (room) {
                             const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
-                            for (const { connId } of playersInRoom) {
-                              await sendRoomUpdate(connId, room);
+                            const now = Date.now();
+                            for (const { connId, playerData } of playersInRoom) {
+                              // Check if enough time has passed since last update for this player
+                              const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
+                              const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
+                              
+                              const timeSinceLastUpdate = now - lastUpdate;
+                              if (timeSinceLastUpdate >= interval) {
+                                await sendRoomUpdate(connId, room);
+                                // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
+                              }
                             }
                           }
                         }
@@ -746,6 +768,45 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                     // Vitalis depleted, harvest ended - skip to next NPC
                     console.log(`[NPC Cycle] Harvest ended due to vitalis depletion for player ${harvestingPlayerId}`);
                     continue;
+                  }
+                  
+                  // Award Pulse Echoes on successful harvest hit
+                  try {
+                    const npcPulseEchoYield = npcDef?.pulse_echo_yield || 1;
+                    const echoYield = await calculatePulseEchoYield(npcPulseEchoYield, playerResonance, db);
+                    
+                    if (echoYield > 0) {
+                      // Add pulse echoes to player
+                      const echoResult = await db.addPulseEchoes(harvestingPlayerId, echoYield);
+                      const totalEchoes = echoResult.player.pulse_echoes || 0;
+                      
+                      // Send pulse echo gained message
+                      const echoMessage = messageCache.getFormattedMessage('pulse_echo_gained', {
+                        echoes: echoYield,
+                        totalEchoes: totalEchoes
+                      });
+                      await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, echoMessage, 'info', db);
+                      
+                      // Check for tier progression
+                      const tierResult = await checkAndApplyTierProgression(db, harvestingPlayerId);
+                      if (tierResult.tiersGained > 0) {
+                        const tierMessage = messageCache.getFormattedMessage('pulse_echo_tier_up', {
+                          newTier: tierResult.newTier
+                        });
+                        await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, tierMessage, 'info', db);
+                      }
+                      
+                      // Update player stats widget to reflect new pulse echoes
+                      for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                        if (playerData.playerId === harvestingPlayerId) {
+                          await sendPlayerStats(currentConnectedPlayers, db, connId);
+                          break;
+                        }
+                      }
+                    }
+                  } catch (pulseEchoErr) {
+                    console.error(`[NPC Cycle] Error awarding pulse echoes:`, pulseEchoErr);
+                    // Non-fatal - continue with harvest
                   }
                   
                   // Verify harvest is still active after drain (defensive check)
@@ -951,11 +1012,21 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               }
               
               // Send room update to all players in the room so they see the new items
+              // BUT respect their room_update_interval_ms setting
               const room = await db.getRoomById(roomNpc.roomId);
               if (room) {
                 const playersInRoom = getPlayersInRoom(currentConnectedPlayers, roomNpc.roomId);
-                for (const { connId } of playersInRoom) {
-                  await sendRoomUpdate(connId, room);
+                const now = Date.now();
+                for (const { connId, playerData } of playersInRoom) {
+                  // Check if enough time has passed since last update for this player
+                  const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
+                  const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
+                  
+                  const timeSinceLastUpdate = now - lastUpdate;
+                  if (timeSinceLastUpdate >= interval) {
+                    await sendRoomUpdate(connId, room);
+                    // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
+                  }
                 }
               }
             }
@@ -975,30 +1046,161 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
   console.log(`NPC Cycle Engine started (interval: ${NPC_TICK_INTERVAL}ms)`);
 }
 
+// Track last room update time per player
+// This is the SINGLE SOURCE OF TRUTH for when room updates were last sent
+const playerLastRoomUpdate = new Map(); // Map<connectionId, timestamp>
+
+// Cache player intervals to avoid fetching every time
+// Map<connectionId, { interval, lastFetch, playerId }>
+const playerIntervalCache = new Map();
+const CACHE_TTL = 60000; // Refresh cache every 60 seconds
+
+/**
+ * Get player's room update interval (with caching)
+ * @param {object} db - Database module
+ * @param {object} playerData - Player data object
+ * @returns {Promise<number>} Interval in milliseconds
+ */
+async function getPlayerRoomUpdateInterval(db, playerData) {
+  if (!playerData || !playerData.playerId) {
+    return GLOBAL_ROOM_UPDATE_INTERVAL;
+  }
+  
+  const MIN_INTERVAL = 1000; // Minimum 1 second interval (safety check)
+  const now = Date.now();
+  // Use connectionId as cache key (more reliable than playerId since connectionId is unique per session)
+  const cacheKey = playerData.connectionId || `player_${playerData.playerId}`;
+  const cached = playerIntervalCache.get(cacheKey);
+  
+  // Refresh cache if needed or if player changed
+  if (!cached || (now - cached.lastFetch) > CACHE_TTL || cached.playerId !== playerData.playerId) {
+    try {
+      const player = await db.getPlayerById(playerData.playerId);
+      let interval = (player && player.room_update_interval_ms) 
+        ? player.room_update_interval_ms 
+        : GLOBAL_ROOM_UPDATE_INTERVAL;
+      
+      // Enforce minimum interval (safety check)
+      if (interval < MIN_INTERVAL) {
+        console.warn(`[RoomUpdateTimer] Player ${playerData.playerId} has interval ${interval}ms, enforcing minimum ${MIN_INTERVAL}ms`);
+        interval = MIN_INTERVAL;
+      }
+      
+      // Cache the interval
+      playerIntervalCache.set(cacheKey, {
+        interval: interval,
+        lastFetch: now,
+        playerId: playerData.playerId
+      });
+      
+      return interval;
+    } catch (err) {
+      // Use global default on error and cache it
+      const interval = Math.max(GLOBAL_ROOM_UPDATE_INTERVAL, MIN_INTERVAL);
+      playerIntervalCache.set(cacheKey, {
+        interval: interval,
+        lastFetch: now,
+        playerId: playerData.playerId
+      });
+      return interval;
+    }
+  } else {
+    // Use cached interval
+    return cached.interval;
+  }
+}
+
 /**
  * Start periodic room update timer for harvest/cooldown progress bars
+ * Uses per-player intervals (room_update_interval_ms) with global default fallback
  * @param {object} db - Database module
  * @param {Map} connectedPlayers - Connected players map
  * @param {Function} sendRoomUpdate - Room update function
  */
+// Global default room update interval (can be overridden by player setting)
+let GLOBAL_ROOM_UPDATE_INTERVAL = 30000; // 30 seconds default
+
+/**
+ * Set global default room update interval (for formula config)
+ * @param {number} intervalMs - Interval in milliseconds
+ */
+function setGlobalRoomUpdateInterval(intervalMs) {
+  const MIN_INTERVAL = 1000; // Minimum 1 second interval
+  GLOBAL_ROOM_UPDATE_INTERVAL = Math.max(intervalMs, MIN_INTERVAL);
+  if (intervalMs < MIN_INTERVAL) {
+    console.warn(`[RoomUpdateTimer] Global interval ${intervalMs}ms is below minimum ${MIN_INTERVAL}ms, using ${MIN_INTERVAL}ms`);
+  }
+  console.log(`[RoomUpdateTimer] Global default interval set to ${GLOBAL_ROOM_UPDATE_INTERVAL}ms`);
+}
+
+/**
+ * Get global default room update interval
+ * @returns {number} Interval in milliseconds
+ */
+function getGlobalRoomUpdateInterval() {
+  return GLOBAL_ROOM_UPDATE_INTERVAL;
+}
+
+/**
+ * Mark a room update as sent for a player (to prevent timer from sending duplicate updates)
+ * This should be called whenever sendRoomUpdate is called from anywhere in the codebase
+ * @param {string} connectionId - Connection ID of the player
+ */
+function markRoomUpdateSent(connectionId) {
+  if (connectionId) {
+    playerLastRoomUpdate.set(connectionId, Date.now());
+  }
+}
+
 function startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdate) {
+  // Use the shared playerIntervalCache (defined at module level)
+  
+  // Check every second, but only update players whose interval has elapsed
   setInterval(async () => {
     try {
-      // Send room updates to all connected players to refresh progress bars
+      const now = Date.now();
+      
+      // Send room updates to players whose interval has elapsed
       for (const [connId, playerData] of connectedPlayers) {
         if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN && playerData.roomId) {
-          const room = await db.getRoomById(playerData.roomId);
-          if (room) {
-            await sendRoomUpdate(connId, room);
+          // Get player's room update interval (cached, with fallback to global default)
+          const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
+          
+          // Check if enough time has passed since last update
+          const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
+          const timeSinceLastUpdate = now - lastUpdate;
+          
+          // Only send update if enough time has passed
+          // CRITICAL: This prevents room updates from being sent too frequently
+          if (timeSinceLastUpdate >= interval) {
+            const room = await db.getRoomById(playerData.roomId);
+            if (room) {
+              await sendRoomUpdate(connId, room);
+              // sendRoomUpdate already calls markRoomUpdateSent via broadcast.js, 
+              // which updates playerLastRoomUpdate timestamp
+            }
+          }
+        }
+      }
+      
+      // Clean up entries for disconnected players
+      for (const [connId] of playerLastRoomUpdate) {
+        if (!connectedPlayers.has(connId)) {
+          playerLastRoomUpdate.delete(connId);
+          // Clean up cache entries (check both connId and player_* keys)
+          playerIntervalCache.delete(connId);
+          const playerData = connectedPlayers.get(connId);
+          if (playerData && playerData.playerId) {
+            playerIntervalCache.delete(`player_${playerData.playerId}`);
           }
         }
       }
     } catch (err) {
       console.error('Error in room update timer:', err);
     }
-  }, 1000); // Update every second
+  }, 1000); // Check every second
   
-  console.log('Room update timer started (interval: 1000ms)');
+  console.log(`Room update timer started (per-player intervals, global default: ${GLOBAL_ROOM_UPDATE_INTERVAL}ms, checking every 1000ms)`);
 }
 
 module.exports = {
@@ -1009,6 +1211,9 @@ module.exports = {
   isHarvestSafeCommand,
   startNPCCycleEngine,
   startRoomUpdateTimer,
+  setGlobalRoomUpdateInterval,
+  getGlobalRoomUpdateInterval,
+  markRoomUpdateSent, // Export to mark room updates as sent (prevents duplicate timer updates)
   setConnectedPlayersReference, // Export for server.js to update reference if needed
   getConnectedPlayersReference // Export for debugging/validation
 };

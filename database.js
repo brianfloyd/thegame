@@ -360,14 +360,16 @@ async function createPlayer(name, accountId) {
   }
   
   // Create player with new stats (5/5/5/5, 0 abilities)
+  // Includes base attunement values: 10 points, 10000ms cooldown, 2000ms delay
   const result = await query(
     `INSERT INTO players (
       name, current_room_id,
       stat_ingenuity, stat_resonance, stat_fortitude, stat_acumen,
       ability_crafting, ability_attunement, ability_endurance, ability_commerce,
       assignable_points, flag_god_mode, flag_always_first_time, auto_navigation_time_ms,
-      resource_vitalis, resource_max_vitalis
-    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0, 1000, 50, 100)
+      resource_vitalis, resource_max_vitalis,
+      base_attunement_points, base_attunement_cooldown_ms, base_attunement_delay_ms
+    ) VALUES ($1, $2, 5, 5, 5, 5, 0, 0, 0, 0, 5, 0, 0, 1000, 50, 100, 10, 10000, 2000)
     RETURNING id, name, current_room_id`,
     [name, townSquare.id]
   );
@@ -399,7 +401,9 @@ async function updatePlayer(player) {
     'stat_ingenuity', 'stat_resonance', 'stat_fortitude', 'stat_acumen',
     'ability_crafting', 'ability_attunement', 'ability_endurance', 'ability_commerce',
     'resource_max_encumbrance', 'assignable_points', 'flag_god_mode', 'current_room_id',
-    'auto_navigation_time_ms', 'loop_delay_ms', 'resource_vitalis', 'resource_max_vitalis', 'last_attune_time'
+    'auto_navigation_time_ms', 'loop_delay_ms', 'room_update_interval_ms', 'resource_vitalis', 'resource_max_vitalis', 'last_attune_time',
+    'base_attunement_points', 'base_attunement_cooldown_ms', 'base_attunement_delay_ms',
+    'pulse_echoes', 'pulse_echo_tier'
   ];
   
   const updates = [];
@@ -435,6 +439,53 @@ async function updatePlayerVitalis(playerId, newVitalis) {
   await query(
     'UPDATE players SET resource_vitalis = $1 WHERE id = $2',
     [newVitalis, playerId]
+  );
+  return getPlayerById(playerId);
+}
+
+/**
+ * Add pulse echoes to player and check for tier progression (atomic operation)
+ * @param {number} playerId - Player ID
+ * @param {number} echoesToAdd - Number of pulse echoes to add
+ * @returns {Promise<object>} { player, echoesGained, oldTier, newTier, tierIncreased }
+ */
+async function addPulseEchoes(playerId, echoesToAdd) {
+  const player = await getPlayerById(playerId);
+  if (!player) {
+    throw new Error('Player not found');
+  }
+  
+  const oldEchoes = player.pulse_echoes || 0;
+  const oldTier = player.pulse_echo_tier || 1;
+  const newEchoes = oldEchoes + echoesToAdd;
+  
+  // Update pulse echoes
+  await query(
+    'UPDATE players SET pulse_echoes = $1 WHERE id = $2',
+    [newEchoes, playerId]
+  );
+  
+  // Return updated player and tier info (tier calculation happens in harvestFormulas.js)
+  const updatedPlayer = await getPlayerById(playerId);
+  return {
+    player: updatedPlayer,
+    echoesGained: echoesToAdd,
+    oldTier,
+    newTier: updatedPlayer.pulse_echo_tier || 1,
+    tierIncreased: (updatedPlayer.pulse_echo_tier || 1) > oldTier
+  };
+}
+
+/**
+ * Update player's pulse echo tier (atomic operation)
+ * @param {number} playerId - Player ID
+ * @param {number} newTier - New tier value
+ * @returns {Promise<object>} Updated player object
+ */
+async function updatePulseEchoTier(playerId, newTier) {
+  await query(
+    'UPDATE players SET pulse_echo_tier = $1 WHERE id = $2',
+    [newTier, playerId]
   );
   return getPlayerById(playerId);
 }
@@ -595,6 +646,45 @@ function getPlayerStats(player) {
     }
   }
   
+  // Add base attunement values (non-prefixed fields)
+  if (player.base_attunement_points !== undefined) {
+    stats.baseAttunementPoints = {
+      value: player.base_attunement_points,
+      displayName: 'Base Attunement Points',
+      category: 'attunement'
+    };
+  }
+  if (player.base_attunement_cooldown_ms !== undefined) {
+    stats.baseAttunementCooldownMs = {
+      value: player.base_attunement_cooldown_ms,
+      displayName: 'Base Attunement Cooldown (ms)',
+      category: 'attunement'
+    };
+  }
+  if (player.base_attunement_delay_ms !== undefined) {
+    stats.baseAttunementDelayMs = {
+      value: player.base_attunement_delay_ms,
+      displayName: 'Base Attunement Delay (ms)',
+      category: 'attunement'
+    };
+  }
+  
+  // Add pulse echo stats (non-prefixed fields)
+  if (player.pulse_echoes !== undefined) {
+    stats.pulseEchoes = {
+      value: player.pulse_echoes,
+      displayName: 'Pulse Echoes',
+      category: 'progression'
+    };
+  }
+  if (player.pulse_echo_tier !== undefined) {
+    stats.pulseEchoTier = {
+      value: player.pulse_echo_tier,
+      displayName: 'Pulse Echo Tier',
+      category: 'progression'
+    };
+  }
+  
   return stats;
 }
 
@@ -644,7 +734,8 @@ async function createScriptableNPC(npc) {
     enable_resonance_bonuses = true,
     enable_fortitude_bonuses = true,
     hit_vitalis = 0,
-    miss_vitalis = 0
+    miss_vitalis = 0,
+    pulse_echo_yield = 1
   } = npc;
 
   const status_message_idle = npc.status_message_idle || '(idle)';
@@ -653,9 +744,9 @@ async function createScriptableNPC(npc) {
   const status_message_cooldown = npc.status_message_cooldown || '(cooldown)';
 
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield]
   );
 
   return result.rows[0].id;
@@ -700,7 +791,8 @@ async function updateScriptableNPC(npc) {
     status_message_harvesting = '(harvesting)',
     status_message_cooldown = '(cooldown)',
     hit_vitalis = 0,
-    miss_vitalis = 0
+    miss_vitalis = 0,
+    pulse_echo_yield = 1
   } = npc;
 
   await query(
@@ -716,9 +808,9 @@ async function updateScriptableNPC(npc) {
       harvest_prerequisite_item = $30, harvest_prerequisite_message = $31,
       enable_resonance_bonuses = $32, enable_fortitude_bonuses = $33,
       status_message_idle = $34, status_message_ready = $35, status_message_harvesting = $36, status_message_cooldown = $37,
-      hit_vitalis = $38, miss_vitalis = $39
-     WHERE id = $40`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, id]
+      hit_vitalis = $38, miss_vitalis = $39, pulse_echo_yield = $40
+     WHERE id = $41`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, id]
   );
 }
 
@@ -794,11 +886,11 @@ function safeJsonParse(jsonString, defaultValue, fieldName) {
 async function getAllActiveNPCs() {
   const rows = await getAll(
     `SELECT rn.id, rn.npc_id, rn.room_id, rn.state, rn.last_cycle_run,
-            sn.npc_type, sn.base_cycle_time, sn.required_stats, 
+            sn.npc_type, sn.base_cycle_time, sn.required_stats,
             sn.required_buffs, sn.input_items, sn.output_items, sn.output_distribution, sn.failure_states,
-            sn.display_color, sn.harvestable_time, sn.cooldown_time, 
+            sn.display_color, sn.harvestable_time, sn.cooldown_time,
             sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses,
-            sn.hit_vitalis, sn.miss_vitalis
+            sn.hit_vitalis, sn.miss_vitalis, sn.pulse_echo_yield
      FROM room_npcs rn
      JOIN scriptable_npcs sn ON rn.npc_id = sn.id
      WHERE rn.active = TRUE AND sn.active = TRUE`
@@ -826,7 +918,8 @@ async function getAllActiveNPCs() {
         enableResonanceBonuses: row.enable_resonance_bonuses !== false, // Default to true
         enableFortitudeBonuses: row.enable_fortitude_bonuses !== false, // Default to true
         hitVitalis: row.hit_vitalis || 0,
-        missVitalis: row.miss_vitalis || 0
+        missVitalis: row.miss_vitalis || 0,
+        pulseEchoYield: row.pulse_echo_yield || 1
       };
     } catch (error) {
       console.error(`Error processing NPC row (ID: ${row.id}, NPC: ${row.npc_id}, Room: ${row.room_id}):`, error);
@@ -2430,6 +2523,8 @@ module.exports = {
   updatePlayerRoom,
   updatePlayer,
   updatePlayerVitalis,
+  addPulseEchoes,
+  updatePulseEchoTier,
   getPlayerStats,
   detectPlayerAttributes,
   

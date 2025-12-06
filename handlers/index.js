@@ -42,6 +42,7 @@ const handlerMap = {
   sell: gameHandlers.sell,
   wealth: gameHandlers.wealth,
   who: gameHandlers.who,
+  pulseEcho: gameHandlers.pulseEcho,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
   assignAttributePoint: gameHandlers.assignAttributePoint,
   getAutoPathMaps: gameHandlers.getAutoPathMaps,

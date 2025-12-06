@@ -1899,9 +1899,17 @@ async function resumeLoopAfterHarvest(ctx, connectionId, roomNpcId) {
 
 /**
  * Handle attune command - restore Vitalis
+ * Uses formula-based system for cooldown, restore amount, and delay
  */
 async function attune(ctx, data) {
   const { ws, db, playerName } = ctx;
+  
+  // Import harvest formula functions
+  const { 
+    calculateAttunementCooldownReduction, 
+    calculateAttunementRestoreBonus, 
+    calculateAttunementDelayReduction 
+  } = require('../utils/harvestFormulas');
   
   try {
     const player = await db.getPlayerByName(playerName);
@@ -1911,67 +1919,102 @@ async function attune(ctx, data) {
     }
     
     const now = Date.now();
+    const resonance = player.stat_resonance || 5;
+    const fortitude = player.stat_fortitude || 5;
+    
+    // Get base attunement values from player (with defaults)
+    const baseCooldown = player.base_attunement_cooldown_ms || 10000;
+    const basePoints = player.base_attunement_points || 10;
+    const baseDelay = player.base_attunement_delay_ms || 2000;
+    
+    // Calculate effective cooldown using resonance
+    const cooldownMultiplier = await calculateAttunementCooldownReduction(resonance, db);
+    const effectiveCooldown = Math.round(baseCooldown * cooldownMultiplier);
     
     // Check cooldown
-    if (player.last_attune_time && (now - player.last_attune_time) < 5000) {
+    if (player.last_attune_time && (now - player.last_attune_time) < effectiveCooldown) {
+      const remainingMs = effectiveCooldown - (now - player.last_attune_time);
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      
       const cooldownMessage = messageCache.getFormattedMessage('attune_cooldown', {});
+      const { formatMessageForTerminal } = require('../utils/markupService');
+      
+      let rawMessage;
       if (!cooldownMessage || cooldownMessage === 'attune_cooldown') {
         // Fallback if message not in cache
-        ws.send(JSON.stringify({
-          type: 'terminal:message',
-          message: 'Your connection is still stabilizing. You need a moment before you can attune again.',
-          messageType: 'info'
-        }));
+        rawMessage = `Your connection is still stabilizing. You need ${remainingSec} more second${remainingSec !== 1 ? 's' : ''} before you can attune again.`;
       } else {
-        ws.send(JSON.stringify({
-          type: 'terminal:message',
-          message: cooldownMessage,
-          messageType: 'info'
-        }));
+        rawMessage = cooldownMessage;
       }
+      
+      const html = formatMessageForTerminal(rawMessage, 'info', '#00ffff');
+      ws.send(JSON.stringify({
+        type: 'terminal:message',
+        message: rawMessage,
+        html: html,
+        messageType: 'info'
+      }));
       return;
     }
     
-    // Calculate restore
-    const resonance = player.stat_resonance || 5;
-    const restore = 10 + Math.floor(resonance * 0.2);
+    // Calculate effective restore using fortitude
+    const restoreMultiplier = await calculateAttunementRestoreBonus(fortitude, db);
+    const effectiveRestore = Math.round(basePoints * restoreMultiplier);
+    
+    // Calculate effective delay using average of resonance and fortitude
+    const delayMultiplier = await calculateAttunementDelayReduction(resonance, fortitude, db);
+    const effectiveDelay = Math.round(baseDelay * delayMultiplier);
+    
+    // Calculate final vitalis values
     const currentVitalis = player.resource_vitalis || 0;
     const maxVitalis = player.resource_max_vitalis || 100;
-    const newVitalis = Math.min(currentVitalis + restore, maxVitalis);
+    const newVitalis = Math.min(currentVitalis + effectiveRestore, maxVitalis);
     
-    // Update player
+    // Update last_attune_time immediately (to prevent spam during delay)
     await db.updatePlayer({
       id: player.id,
-      resource_vitalis: newVitalis,
       last_attune_time: now
     });
     
-    // Send success message
-    const successMessage = messageCache.getFormattedMessage('attune_success', {
-      vitalis: newVitalis,
-      maxVitalis: maxVitalis
-    });
+    // Send initial message with typewriter effect (vitalis will be granted after delay)
+    // Use typewriter markup for the message
+    const { formatMessageForTerminal } = require('../utils/markupService');
+    const attuneMessage = `{{typewriter:100}}You kneel and attune to the pulse beneath your feet. Your Vitalis surges. (${newVitalis} / ${maxVitalis}){{/typewriter}}`;
+    const html = formatMessageForTerminal(attuneMessage, 'info', '#00ffff');
     
-    if (!successMessage || successMessage === 'attune_success') {
-      // Fallback if message not in cache
-      ws.send(JSON.stringify({
-        type: 'terminal:message',
-        message: `You kneel and attune to the pulse beneath your feet. Your Vitalis surges. (${newVitalis} / ${maxVitalis})`,
-        messageType: 'info'
-      }));
-    } else {
-      ws.send(JSON.stringify({
-        type: 'terminal:message',
-        message: successMessage,
-        messageType: 'info'
-      }));
-    }
+    ws.send(JSON.stringify({
+      type: 'terminal:message',
+      message: attuneMessage,
+      html: html,
+      messageType: 'info'
+    }));
     
-    // Update player stats widget
-    if (ctx.connectionId && ctx.connectedPlayers) {
-      const { sendPlayerStats } = require('../utils/broadcast');
-      await sendPlayerStats(ctx.connectedPlayers, db, ctx.connectionId);
-    }
+    // After the delay, actually grant the vitalis points
+    setTimeout(async () => {
+      try {
+        // Re-fetch player to get current vitalis (in case it changed)
+        const currentPlayer = await db.getPlayerByName(playerName);
+        if (!currentPlayer) return;
+        
+        const currentVitalisNow = currentPlayer.resource_vitalis || 0;
+        const finalVitalis = Math.min(currentVitalisNow + effectiveRestore, maxVitalis);
+        
+        // Update player with new vitalis
+        await db.updatePlayer({
+          id: currentPlayer.id,
+          resource_vitalis: finalVitalis
+        });
+        
+        // Update player stats widget
+        if (ctx.connectionId && ctx.connectedPlayers) {
+          const { sendPlayerStats } = require('../utils/broadcast');
+          await sendPlayerStats(ctx.connectedPlayers, db, ctx.connectionId);
+        }
+      } catch (delayError) {
+        console.error('[attune] Error in delayed vitalis grant:', delayError);
+      }
+    }, effectiveDelay);
+    
   } catch (error) {
     console.error('[attune] Error:', error);
     ws.send(JSON.stringify({ 
@@ -4130,6 +4173,58 @@ async function who(ctx, data) {
 }
 
 /**
+ * Handle pulse echo command - display player's pulse echo stats
+ */
+async function pulseEcho(ctx, data) {
+  const { ws, db, playerName } = ctx;
+  
+  try {
+    const player = await db.getPlayerByName(playerName);
+    if (!player) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+      return;
+    }
+    
+    // Get pulse echo stats (with defaults if not yet set)
+    const pulseEchoes = player.pulse_echoes || 0;
+    const pulseEchoTier = player.pulse_echo_tier || 1;
+    
+    // Build HTML table similar to who command
+    let html = '<div class="who-list">';
+    html += '<table class="who-table">';
+    html += '<thead><tr>';
+    html += '<th>Pulse Echo Stat</th>';
+    html += '<th>Value</th>';
+    html += '</tr></thead>';
+    html += '<tbody>';
+    
+    html += '<tr>';
+    html += '<td>Total Pulse Echoes</td>';
+    html += `<td style="color: #00ffff;"><strong>${pulseEchoes.toLocaleString()}</strong></td>`;
+    html += '</tr>';
+    
+    html += '<tr>';
+    html += '<td>Pulse Echo Tier</td>';
+    html += `<td style="color: #ff00ff;"><strong>${pulseEchoTier}</strong></td>`;
+    html += '</tr>';
+    
+    html += '</tbody></table>';
+    html += '</div>';
+    
+    // Send message with HTML content
+    ws.send(JSON.stringify({ 
+      type: 'message', 
+      message: 'Your Pulse Echo Status:',
+      html: html,
+      messageType: 'info'
+    }));
+  } catch (err) {
+    console.error('Pulse Echo command error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get pulse echo status' }));
+  }
+}
+
+/**
  * Escape HTML to prevent XSS
  */
 function escapeHtml(text) {
@@ -5321,6 +5416,7 @@ module.exports = {
   sell,
   wealth,
   who,
+  pulseEcho,
   saveTerminalMessage,
   assignAttributePoint,
   getAutoPathMaps,

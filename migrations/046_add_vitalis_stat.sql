@@ -11,3 +11,4 @@ UPDATE players SET resource_max_vitalis = 100 WHERE resource_max_vitalis IS NULL
 
 
 
+

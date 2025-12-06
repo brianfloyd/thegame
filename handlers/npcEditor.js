@@ -374,6 +374,13 @@ async function updateHarvestFormulaConfig(ctx, data) {
     // Clear the cache so new values take effect immediately
     clearConfigCache();
     
+    // If this is the room update interval config, update the global default
+    if (config.config_key === 'room_update_interval_ms') {
+      const { setGlobalRoomUpdateInterval } = require('../services/npcCycleEngine');
+      setGlobalRoomUpdateInterval(config.min_resonance);
+      console.log(`[FormulaConfig] Updated global room update interval to ${config.min_resonance}ms`);
+    }
+    
     ws.send(JSON.stringify({
       type: 'harvestFormulaConfigUpdated',
       config_key: config.config_key

@@ -28,6 +28,13 @@ export default class Game {
         this.wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
         this.wsUrl = this.wsProtocol + location.host;
         
+        // Track if disconnect message has been shown (to prevent endless messages)
+        this.disconnectMessageShown = false;
+        
+        // Track reconnection state to prevent multiple simultaneous reconnection attempts
+        this.reconnectTimer = null;
+        this.isReconnecting = false;
+        
         // Initialize popup detection
         this.initPopupDetection();
         
@@ -135,10 +142,46 @@ export default class Game {
      * Connect to WebSocket server
      */
     connect() {
+        // Don't connect if already connecting/connected (unless it's actually closed)
+        if (this.isReconnecting) {
+            return;
+        }
+        
+        // Don't connect if we already have an active connection
+        if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+            return;
+        }
+        
+        // Clean up any existing WebSocket connection
+        if (this.ws) {
+            // Remove all event handlers to prevent duplicate handlers
+            this.ws.onopen = null;
+            this.ws.onmessage = null;
+            this.ws.onerror = null;
+            this.ws.onclose = null;
+            
+            // Close if not already closed
+            if (this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
+                this.ws.close();
+            }
+            this.ws = null;
+        }
+        
+        // Cancel any pending reconnection timer
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        
+        this.isReconnecting = true;
         this.ws = new WebSocket(this.wsUrl);
         
         this.ws.onopen = () => {
             console.log('WebSocket connected');
+            
+            // Reset flags on successful connection
+            this.disconnectMessageShown = false;
+            this.isReconnecting = false;
             
             // Emit connection event
             this.messageBus.emit('game:connected', {
@@ -170,9 +213,13 @@ export default class Game {
         
         this.ws.onclose = () => {
             console.log('WebSocket disconnected');
+            this.isReconnecting = false;
             
-            // Emit disconnect event
-            this.messageBus.emit('game:disconnected', {});
+            // Only emit disconnect event once per disconnect session (prevents endless messages)
+            if (!this.disconnectMessageShown) {
+                this.disconnectMessageShown = true;
+                this.messageBus.emit('game:disconnected', {});
+            }
             
             // If restart was requested, redirect to character selection
             if (this.restartRequested) {
@@ -181,8 +228,13 @@ export default class Game {
                 return;
             }
             
-            // Attempt to reconnect after 3 seconds
-            setTimeout(() => this.connect(), 3000);
+            // Only schedule reconnection if we don't already have one scheduled
+            if (!this.reconnectTimer) {
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
+                    this.connect();
+                }, 3000);
+            }
         };
     }
     

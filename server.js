@@ -371,12 +371,26 @@ async function startServer() {
     await initializeMarkupService(db);
     
     // Start HTTP server
-    server.listen(PORT, HOST, () => {
+    server.listen(PORT, HOST, async () => {
       console.log(`Server running on http://${HOST}:${PORT} - Build ${Date.now()}`);
       
       // Start NPC cycle engine after server starts
       // CRITICAL: Pass connectedPlayers reference - the engine will store it internally
       startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdateWrapper);
+      
+      // Load global room update interval from config and set it
+      const { setGlobalRoomUpdateInterval } = require('./services/npcCycleEngine');
+      try {
+        const roomUpdateConfig = await db.getHarvestFormulaConfig('room_update_interval_ms');
+        if (roomUpdateConfig && roomUpdateConfig.min_resonance) {
+          setGlobalRoomUpdateInterval(roomUpdateConfig.min_resonance);
+          console.log(`[Server] Loaded global room update interval: ${roomUpdateConfig.min_resonance}ms`);
+        } else {
+          console.log(`[Server] Using default room update interval: 30000ms`);
+        }
+      } catch (err) {
+        console.warn(`[Server] Failed to load room update interval config, using default:`, err.message);
+      }
       
       // Start room update timer for progress bars
       startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdateWrapper);

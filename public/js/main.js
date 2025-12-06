@@ -58,12 +58,20 @@ if (commandInput) {
 }
 
 // Command execution
+let lastConnectionWarningTime = 0;
+const CONNECTION_WARNING_COOLDOWN = 5000; // Only show connection warning once every 5 seconds
+
 function executeCommand(input) {
     if (!input) return;
     
     const ws = game.getWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        terminal.addMessage('Not connected to server. Please wait...', 'error');
+        // Only show connection warning if enough time has passed since last warning
+        const now = Date.now();
+        if (now - lastConnectionWarningTime > CONNECTION_WARNING_COOLDOWN) {
+            lastConnectionWarningTime = now;
+            terminal.addMessage('Not connected to server. Please wait...', 'error');
+        }
         return;
     }
     
@@ -223,6 +231,7 @@ function normalizeCommand(input) {
         'deposit': 'deposit', 'dep': 'deposit',
         'balance': 'balance', 'bal': 'balance',
         'who': 'who',
+        'pulseecho': 'pulseEcho', 'pulse': 'pulseEcho', 'pe': 'pulseEcho', 'p': 'pulseEcho',
         'solve': 'solve', 'sol': 'solve',
         'clue': 'clue', 'cl': 'clue',
         'ask': 'ask',
@@ -390,6 +399,10 @@ function normalizeCommand(input) {
     
     if (commandType === 'who') {
         return { type: 'who' };
+    }
+    
+    if (commandType === 'pulseEcho') {
+        return { type: 'pulseEcho' };
     }
     
     if (commandType === 'solve') {

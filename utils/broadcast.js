@@ -516,6 +516,16 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
       onGround: onGroundMessage
     }
   }));
+  
+  // Mark this room update as sent to prevent the timer from sending duplicate updates
+  // This ensures all room updates (from NPC cycles, player movement, etc.) are tracked
+  try {
+    const { markRoomUpdateSent } = require('../services/npcCycleEngine');
+    markRoomUpdateSent(connectionId);
+  } catch (err) {
+    // If npcCycleEngine is not available, silently continue (shouldn't happen in normal operation)
+    console.warn('[sendRoomUpdate] Could not mark room update as sent:', err.message);
+  }
 }
 
 /**

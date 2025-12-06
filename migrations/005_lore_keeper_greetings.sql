@@ -35,3 +35,4 @@ CREATE INDEX IF NOT EXISTS idx_lore_keeper_greetings_player_npc ON lore_keeper_g
 
 
 
+
