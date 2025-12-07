@@ -1113,17 +1113,59 @@ async function look(ctx, data) {
   const target = (data.target || '').trim();
   if (!target) {
     // No specific target: send full room update (same as entering room)
-    console.log(`[LOOK COMMAND] User-initiated look command from ${lookPlayerData.playerName || connectionId} - sending room update (bypasses interval check)`);
     
     // IMPORTANT: Update connectedPlayers roomId if it differs from database
     // This ensures the server's state matches the database (e.g., for teleportation)
+    const oldRoomId = lookPlayerData.roomId;
+    const playerActuallyMoved = oldRoomId && oldRoomId !== currentRoom.id;
+    
     if (lookPlayerData.roomId !== currentRoom.id) {
       console.log(`[LOOK COMMAND] Room mismatch detected: connectedPlayers has room ${lookPlayerData.roomId}, database has room ${currentRoom.id}. Updating...`);
       lookPlayerData.roomId = currentRoom.id;
       connectedPlayers.set(connectionId, lookPlayerData);
+      
+      // If the player moved to a different room, notify other players in both rooms
+      if (playerActuallyMoved) {
+        // Notify players in the old room that this player left
+        const otherPlayersInOldRoom = getConnectedPlayersInRoom(connectedPlayers, oldRoomId).filter(p => p !== lookPlayerData.playerName);
+        for (const otherPlayerName of otherPlayersInOldRoom) {
+          for (const [otherConnId, otherPlayerData] of connectedPlayers.entries()) {
+            if (otherPlayerData.playerName === otherPlayerName && otherPlayerData.roomId === oldRoomId) {
+              const oldRoom = await db.getRoomById(oldRoomId);
+              if (oldRoom) {
+                await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, oldRoom, false);
+              }
+              break;
+            }
+          }
+        }
+        
+        // Notify players in the new room that this player joined
+        const displayPlayerNameForJoin = stripPlayerNameMarkup(lookPlayerData.playerName);
+        const joinedMessage = messageCache.getFormattedMessage('player_arrived', { playerName: displayPlayerNameForJoin });
+        broadcastToRoom(connectedPlayers, currentRoom.id, {
+          type: 'playerJoined',
+          playerName: lookPlayerData.playerName,
+          message: joinedMessage
+        }, connectionId);
+        
+        // IMPORTANT: Only send room updates to other players when the player actually moved rooms
+        // This prevents the room update timer from being reset unnecessarily when someone just uses "look"
+        const otherPlayersInNewRoom = getConnectedPlayersInRoom(connectedPlayers, currentRoom.id).filter(p => p !== lookPlayerData.playerName);
+        for (const otherPlayerName of otherPlayersInNewRoom) {
+          for (const [otherConnId, otherPlayerData] of connectedPlayers.entries()) {
+            if (otherPlayerData.playerName === otherPlayerName && otherPlayerData.roomId === currentRoom.id) {
+              await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, otherConnId, currentRoom, false);
+              break;
+            }
+          }
+        }
+      }
     }
     
+    // Send room update to the player who used look (always, so they see current state)
     await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, true);
+    
     return;
   }
 

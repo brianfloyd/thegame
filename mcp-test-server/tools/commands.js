@@ -86,6 +86,8 @@ export async function handleCommandTool(name, args) {
       if (target) {
         if (command === 'move') {
           cmdData.direction = target;
+        } else if (command === 'telepath') {
+          cmdData.targetPlayer = target;
         } else if (command === 'harvest' || command === 'look') {
           cmdData.target = target;
         } else {

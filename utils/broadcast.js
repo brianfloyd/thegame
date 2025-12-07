@@ -522,10 +522,9 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   try {
     const { markRoomUpdateSent } = require('../services/npcCycleEngine');
     markRoomUpdateSent(connectionId);
-    console.log(`[sendRoomUpdate] ✅ Room update message sent to connectionId=${connectionId}, WebSocket message sent`);
   } catch (err) {
     // If npcCycleEngine is not available, silently continue (shouldn't happen in normal operation)
-    console.error('[sendRoomUpdate] ❌ Could not mark room update as sent:', err.message, err.stack);
+    console.warn('[sendRoomUpdate] Could not mark room update as sent:', err.message);
   }
 }
 
