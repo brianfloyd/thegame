@@ -74,21 +74,27 @@ async function connect() {
     client.selectedPlayerName = ZORK_NAME;
 
     console.log(`[Auto-Follow] Connecting as ${ZORK_NAME}...`);
+    console.log(`[Auto-Follow] Using HTTP URL: ${HTTP_URL}, WS URL: ${WS_URL}`);
+    console.log(`[Auto-Follow] Selected player name: ${client.selectedPlayerName}`);
     
     // Add timeout to connection attempt
+    console.log('[Auto-Follow] Attempting WebSocket connection...');
     const connectPromise = client.connect();
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Connection timeout')), 10000)
+      setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
     );
     
     await Promise.race([connectPromise, timeoutPromise]);
+    console.log('[Auto-Follow] ✅ WebSocket connected');
     
     // Add timeout to authentication as well
+    console.log('[Auto-Follow] Attempting authentication...');
     const authPromise = client.authenticate();
     const authTimeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Authentication timeout')), 10000)
+      setTimeout(() => reject(new Error('Authentication timeout after 10 seconds')), 10000)
     );
     await Promise.race([authPromise, authTimeoutPromise]);
+    console.log('[Auto-Follow] ✅ Authentication successful');
 
     const state = client.getState();
     currentRoomId = state.room?.id;
@@ -120,10 +126,10 @@ async function connect() {
     // Check Fliz's location immediately
     await checkAndFollowFliz();
 
-    // Set up periodic check (every 5 seconds)
+    // Set up periodic check (every 2 seconds for more responsive following)
     setInterval(async () => {
       await checkAndFollowFliz();
-    }, 5000);
+    }, 2000);
 
     reconnectAttempts = 0;
     
@@ -133,7 +139,11 @@ async function connect() {
     console.log(`📍 Current location: Room ${currentRoomId}`);
     console.log('═══════════════════════════════════════════════════════════\n');
   } catch (error) {
-    console.error('[Auto-Follow] Connection error:', error.message);
+    // Better error logging to see what's actually failing
+    console.error('[Auto-Follow] Connection error:', error);
+    console.error('[Auto-Follow] Error message:', error.message);
+    console.error('[Auto-Follow] Error stack:', error.stack);
+    console.error('[Auto-Follow] Error type:', error.constructor.name);
     
     // Clean up failed connection
     if (client) {
@@ -155,23 +165,47 @@ async function connect() {
  * Set up message handlers to detect Fliz entering/moving
  */
 function setupMessageHandlers() {
-  // Listen for system messages about players entering
+  // Listen for system messages about players entering/moving
   client.onMessage('systemMessage', (message) => {
-    if (message.message && message.message.includes(FLIZ_NAME)) {
+    if (message.message && (message.message.includes(FLIZ_NAME) || message.message.includes('Fliz'))) {
       console.log(`[Auto-Follow] Detected Fliz activity: ${message.message}`);
-      // Check Fliz location after a short delay
-      setTimeout(() => checkAndFollowFliz(), 1000);
+      // Check Fliz location immediately
+      checkAndFollowFliz();
     }
   });
 
-  // Listen for room updates that might show Fliz
+  // Listen for room updates - this is how we know ZORK's room changed
   client.onMessage('roomUpdate', (message) => {
-    if (message.room && message.players) {
-      const hasFliz = message.players.some(p => p === FLIZ_NAME || p.includes('Fliz'));
-      if (hasFliz && message.room.id !== currentRoomId) {
-        console.log(`[Auto-Follow] Fliz detected in room ${message.room.id}`);
-        checkAndFollowFliz();
+    if (message.room && message.room.id) {
+      // Update our tracking of ZORK's current room
+      if (message.room.id !== currentRoomId) {
+        console.log(`[Auto-Follow] 📍 ZORK's room updated: ${currentRoomId} -> ${message.room.id}`);
+        currentRoomId = message.room.id;
       }
+      
+      // Check if Fliz is in this room
+      if (message.players) {
+        const hasFliz = message.players.some(p => p === FLIZ_NAME || p.includes('Fliz'));
+        if (hasFliz) {
+          console.log(`[Auto-Follow] ✅ Fliz is in the same room as ZORK (room ${message.room.id})`);
+        }
+      }
+    }
+  });
+  
+  // Listen for player movement messages
+  client.onMessage('playerJoined', (message) => {
+    if (message.playerName && (message.playerName === FLIZ_NAME || message.playerName.includes('Fliz'))) {
+      console.log(`[Auto-Follow] Fliz joined room: ${message.playerName}`);
+      checkAndFollowFliz();
+    }
+  });
+  
+  client.onMessage('playerLeft', (message) => {
+    if (message.playerName && (message.playerName === FLIZ_NAME || message.playerName.includes('Fliz'))) {
+      console.log(`[Auto-Follow] Fliz left room: ${message.playerName}`);
+      // Check after a short delay to let the database update
+      setTimeout(() => checkAndFollowFliz(), 500);
     }
   });
 }
@@ -194,24 +228,57 @@ async function checkAndFollowFliz() {
 
     const newFlizRoomId = fliz.current_room_id;
 
-    // If Fliz is in a different room, teleport there
-    if (newFlizRoomId !== currentRoomId && newFlizRoomId !== flizRoomId) {
-      console.log(`[Auto-Follow] 🚀 Fliz moved to room ${newFlizRoomId}, teleporting...`);
+    // Always teleport if Fliz is in a different room than ZORK
+    // This ensures ZORK follows Fliz immediately whenever he moves
+    if (newFlizRoomId !== currentRoomId) {
+      console.log(`[Auto-Follow] 🚀 Fliz is in room ${newFlizRoomId}, ZORK is in ${currentRoomId}, teleporting...`);
       
-      // Update database
+      // Update database FIRST
       await verifier.query(
         'UPDATE players SET current_room_id = $1 WHERE name = $2',
         [newFlizRoomId, ZORK_NAME]
       );
+      console.log(`[Auto-Follow] ✅ Updated database: ZORK now in room ${newFlizRoomId}`);
 
       // Update local state
       flizRoomId = newFlizRoomId;
       currentRoomId = newFlizRoomId;
 
-      // Send look command to refresh room view
+      // Force server to recognize the room change by sending look command
+      // The look command reads from the database, so it should send the correct room
       if (client && client.connected) {
+        // Wait a tiny bit to ensure database update is committed
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Send look command to refresh room view
+        // The server should check the database and send the correct room
         client.send({ type: 'look' });
-        console.log(`[Auto-Follow] ✅ Teleported to room ${newFlizRoomId}`);
+        console.log(`[Auto-Follow] ✅ Sent look command to refresh room view`);
+        
+        // Wait a bit for the room update to come back, then verify
+        setTimeout(async () => {
+          const state = client.getState();
+          const actualRoomId = state.room?.id;
+          if (actualRoomId === newFlizRoomId) {
+            console.log(`[Auto-Follow] ✅ Verified: ZORK is now in room ${actualRoomId}`);
+            currentRoomId = actualRoomId;
+          } else {
+            console.log(`[Auto-Follow] ⚠️ Warning: ZORK's room state shows ${actualRoomId}, expected ${newFlizRoomId}`);
+            // Try again
+            if (actualRoomId !== newFlizRoomId) {
+              console.log(`[Auto-Follow] 🔄 Retrying look command...`);
+              client.send({ type: 'look' });
+            }
+          }
+        }, 500);
+      } else {
+        console.log(`[Auto-Follow] ⚠️ Client not connected, cannot send look command`);
+      }
+    } else {
+      // Fliz and ZORK are in the same room - all good!
+      if (flizRoomId !== newFlizRoomId) {
+        // Update tracking variable
+        flizRoomId = newFlizRoomId;
       }
     }
   } catch (error) {
@@ -308,8 +375,10 @@ async function initializeZorkLocation() {
 /**
  * Wait for server to be ready (with retries and proper cleanup)
  */
-async function waitForServerReady(maxAttempts = 20) {
+async function waitForServerReady(maxAttempts = 30) {
   const WebSocket = (await import('ws')).default;
+  
+  console.log(`[Auto-Follow] Checking if server is ready at ${WS_URL}...`);
   
   for (let i = 0; i < maxAttempts; i++) {
     let ws = null;
@@ -319,7 +388,7 @@ async function waitForServerReady(maxAttempts = 20) {
         let resolved = false;
         
         ws = new WebSocket(WS_URL, {
-          handshakeTimeout: 2000, // 2 second timeout for handshake
+          handshakeTimeout: 3000, // 3 second timeout for handshake
           perMessageDeflate: false // Disable compression to avoid hanging
         });
         
@@ -333,7 +402,7 @@ async function waitForServerReady(maxAttempts = 20) {
             } catch (e) {
               // Ignore
             }
-            console.log('[Auto-Follow] Server is ready!');
+            console.log(`[Auto-Follow] ✅ Server is ready at ${WS_URL}!`);
             resolve(true);
           }
         });
@@ -347,7 +416,9 @@ async function waitForServerReady(maxAttempts = 20) {
             } catch (e) {
               // Ignore
             }
-            reject(new Error('Not ready'));
+            // More detailed error logging
+            console.log(`[Auto-Follow] Server not ready (attempt ${i + 1}/${maxAttempts}): ${error.message || error.code || 'Connection failed'}`);
+            reject(new Error(`Not ready: ${error.message || error.code || 'Connection failed'}`));
           }
         });
         
@@ -367,9 +438,9 @@ async function waitForServerReady(maxAttempts = 20) {
             } catch (e) {
               // Ignore
             }
-            reject(new Error('Timeout'));
+            reject(new Error('Connection timeout'));
           }
-        }, 2000);
+        }, 3000);
       });
       
       // If we get here, server is ready
@@ -392,10 +463,14 @@ async function waitForServerReady(maxAttempts = 20) {
       if (i < maxAttempts - 1) {
         // Longer delay between attempts to avoid overwhelming the server
         const delay = Math.min(2000 + (i * 500), 5000);
-        console.log(`[Auto-Follow] Waiting for server... (${i + 1}/${maxAttempts}, retry in ${delay}ms)`);
+        console.log(`[Auto-Follow] Waiting for server at ${WS_URL}... (${i + 1}/${maxAttempts}, retry in ${delay}ms)`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
-        console.log('[Auto-Follow] Server check timeout, will retry connection later...');
+        console.error(`[Auto-Follow] ❌ Server check timeout after ${maxAttempts} attempts. Server may not be running on ${WS_URL}`);
+        console.error(`[Auto-Follow] Please check:`);
+        console.error(`[Auto-Follow]   1. Is the server running? (npm run dev)`);
+        console.error(`[Auto-Follow]   2. Is the server listening on port 3434?`);
+        console.error(`[Auto-Follow]   3. Are there any errors in the server logs?`);
         return false;
       }
     }

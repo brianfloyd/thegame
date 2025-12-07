@@ -1114,6 +1114,15 @@ async function look(ctx, data) {
   if (!target) {
     // No specific target: send full room update (same as entering room)
     console.log(`[LOOK COMMAND] User-initiated look command from ${lookPlayerData.playerName || connectionId} - sending room update (bypasses interval check)`);
+    
+    // IMPORTANT: Update connectedPlayers roomId if it differs from database
+    // This ensures the server's state matches the database (e.g., for teleportation)
+    if (lookPlayerData.roomId !== currentRoom.id) {
+      console.log(`[LOOK COMMAND] Room mismatch detected: connectedPlayers has room ${lookPlayerData.roomId}, database has room ${currentRoom.id}. Updating...`);
+      lookPlayerData.roomId = currentRoom.id;
+      connectedPlayers.set(connectionId, lookPlayerData);
+    }
+    
     await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, true);
     return;
   }

@@ -215,6 +215,10 @@ export class GameClient {
       });
       
       this.ws.on('error', (error) => {
+        console.error(`[GameClient] WebSocket connection error:`, error);
+        console.error(`[GameClient] Error message:`, error.message);
+        console.error(`[GameClient] Error code:`, error.code);
+        console.error(`[GameClient] Connecting to:`, this.wsUrl);
         reject(error);
       });
     });
