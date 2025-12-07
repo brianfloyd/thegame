@@ -207,9 +207,11 @@ export class GameClient {
         }
       });
       
-      this.ws.on('close', () => {
+      this.ws.on('close', (code, reason) => {
         this.connected = false;
         this.authenticated = false;
+        // Clear any pending message handlers to prevent memory leaks
+        this.messageHandlers.clear();
       });
       
       this.ws.on('error', (error) => {
@@ -360,7 +362,16 @@ export class GameClient {
    */
   disconnect() {
     if (this.ws) {
-      this.ws.close();
+      // Use terminate() for immediate close to prevent hanging during server restarts
+      try {
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.terminate(); // Force close immediately
+        } else {
+          this.ws.close();
+        }
+      } catch (e) {
+        // Ignore errors during cleanup
+      }
       this.ws = null;
     }
     this.connected = false;

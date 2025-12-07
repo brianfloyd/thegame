@@ -180,6 +180,14 @@ async function triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, r
 /**
  * Authenticate a WebSocket session
  */
+/**
+ * Strip @ symbols from player name for display
+ */
+function stripPlayerNameMarkup(playerName) {
+  if (!playerName) return playerName;
+  return playerName.replace(/^@+|@+$/g, '');
+}
+
 async function authenticateSession(ctx, data) {
   const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, playerName, activeCharacterWindows } = ctx;
   
@@ -342,7 +350,8 @@ async function authenticateSession(ctx, data) {
       }
       
       // Broadcast system message: player left the game (from old connection)
-      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: player.name });
+      const displayPlayerName = stripPlayerNameMarkup(player.name);
+      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: displayPlayerName });
       broadcastToAll(connectedPlayers, {
         type: 'systemMessage',
         message: leftMessage
@@ -409,7 +418,8 @@ async function authenticateSession(ctx, data) {
   }));
 
   // Broadcast system message: player entered the game
-  const enteredMessage = messageCache.getFormattedMessage('player_entered_game', { playerName: player.name });
+  const displayPlayerName = stripPlayerNameMarkup(player.name);
+  const enteredMessage = messageCache.getFormattedMessage('player_entered_game', { playerName: displayPlayerName });
   broadcastToAll(connectedPlayers, {
     type: 'systemMessage',
     message: enteredMessage
@@ -462,7 +472,9 @@ async function authenticateSession(ctx, data) {
 
   // Notify others in the room (exclude this connection)
   // Send formatted message from database
-  const arrivedMessage = messageCache.getFormattedMessage('player_arrived', { playerName: effectivePlayerName });
+  // Reuse displayPlayerName (already set above, but use effectivePlayerName for consistency)
+  const displayPlayerNameForArrival = stripPlayerNameMarkup(effectivePlayerName);
+  const arrivedMessage = messageCache.getFormattedMessage('player_arrived', { playerName: displayPlayerNameForArrival });
   broadcastToRoom(connectedPlayers, room.id, {
     type: 'playerJoined',
     playerName: effectivePlayerName,
@@ -828,9 +840,10 @@ async function move(ctx, data) {
 
   // Notify players in old room
   // Send formatted message from database
+  const displayPlayerName = stripPlayerNameMarkup(playerName);
   const leftMessage = leftDirection 
-    ? messageCache.getFormattedMessage('player_left_to', { playerName: playerName, direction: leftDirection })
-    : messageCache.getFormattedMessage('player_left', { playerName: playerName });
+    ? messageCache.getFormattedMessage('player_left_to', { playerName: displayPlayerName, direction: leftDirection })
+    : messageCache.getFormattedMessage('player_left', { playerName: displayPlayerName });
   broadcastToRoom(connectedPlayers, oldRoomId, {
     type: 'playerLeft',
     playerName: playerName,
@@ -896,7 +909,9 @@ async function move(ctx, data) {
   const combinedEntities = [];
   const sortedPlayers = [...playersInNewRoom].sort();
   sortedPlayers.forEach(playerName => {
-    combinedEntities.push(playerName);
+    // Strip @ symbols from player name for display
+    const displayName = stripPlayerNameMarkup(playerName);
+    combinedEntities.push(displayName);
   });
   npcsInNewRoom.forEach(npc => {
     let npcDisplay = npc.name;
@@ -1014,9 +1029,11 @@ async function move(ctx, data) {
 
   // Notify players in new room
   // Send formatted message from database
+  // Reuse displayPlayerName variable (already declared above for left message)
+  const displayPlayerNameForEnter = stripPlayerNameMarkup(playerName);
   const entersMessage = enteredFrom
-    ? messageCache.getFormattedMessage('player_enters_from', { playerName: playerName, direction: enteredFrom })
-    : messageCache.getFormattedMessage('player_arrived', { playerName: playerName });
+    ? messageCache.getFormattedMessage('player_enters_from', { playerName: displayPlayerNameForEnter, direction: enteredFrom })
+    : messageCache.getFormattedMessage('player_arrived', { playerName: displayPlayerNameForEnter });
   broadcastToRoom(connectedPlayers, targetRoom.id, {
     type: 'playerJoined',
     playerName: playerName,
@@ -4148,8 +4165,12 @@ async function who(ctx, data) {
       const map = await db.getMapById(room.map_id);
       if (!map) continue;
       
+      // Strip @ symbols from player name for display
+      const displayName = stripPlayerNameMarkup(player.name);
+      
       playersList.push({
-        name: player.name,
+        name: player.name, // Keep original for sorting
+        displayName: displayName, // Display name without @ symbols
         mapName: map.name,
         roomName: room.name,
         x: room.x,
@@ -4175,7 +4196,7 @@ async function who(ctx, data) {
     } else {
       playersList.forEach(player => {
         html += '<tr>';
-        html += `<td><strong>${escapeHtml(player.name)}</strong></td>`;
+        html += `<td><strong>${escapeHtml(player.displayName)}</strong></td>`;
         html += `<td>${escapeHtml(player.mapName)}</td>`;
         html += `<td>${escapeHtml(player.roomName)} (${player.x}, ${player.y})</td>`;
         html += '</tr>';

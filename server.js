@@ -327,7 +327,9 @@ wss.on('connection', (ws, req) => {
 
       // Broadcast system message: player left the game
       const messageCache = require('./utils/messageCache');
-      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: disconnectedPlayerName });
+      // Strip @ symbols from player name for display
+      const displayPlayerName = disconnectedPlayerName.replace(/^@+|@+$/g, '');
+      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: displayPlayerName });
       broadcastToAll(connectedPlayers, {
         type: 'systemMessage',
         message: leftMessage

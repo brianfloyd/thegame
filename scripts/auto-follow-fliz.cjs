@@ -8,6 +8,9 @@
 
 const path = require('path');
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const FLIZ_NAME = '@Fliz@';
 const ZORK_NAME = '@ZORK THE AI LORD@';
 const HTTP_URL = process.env.GAME_HTTP_URL || 'http://localhost:3434';
@@ -79,7 +82,13 @@ async function connect() {
     );
     
     await Promise.race([connectPromise, timeoutPromise]);
-    await client.authenticate();
+    
+    // Add timeout to authentication as well
+    const authPromise = client.authenticate();
+    const authTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Authentication timeout')), 10000)
+    );
+    await Promise.race([authPromise, authTimeoutPromise]);
 
     const state = client.getState();
     currentRoomId = state.room?.id;
@@ -87,6 +96,26 @@ async function connect() {
 
     // Set up message handlers
     setupMessageHandlers();
+    
+    // Handle WebSocket close events (server restart/disconnect)
+    if (client.ws) {
+      client.ws.on('close', (code, reason) => {
+        console.log(`[Auto-Follow] WebSocket closed (code: ${code}). Server may be restarting...`);
+        client.connected = false;
+        client.authenticated = false;
+        // Wait a bit then reconnect
+        setTimeout(() => {
+          if (!client.connected) {
+            console.log('[Auto-Follow] Attempting to reconnect after server restart...');
+            attemptReconnect();
+          }
+        }, 5000);
+      });
+      
+      client.ws.on('error', (error) => {
+        console.log(`[Auto-Follow] WebSocket error: ${error.message}`);
+      });
+    }
 
     // Check Fliz's location immediately
     await checkAndFollowFliz();
@@ -97,6 +126,12 @@ async function connect() {
     }, 5000);
 
     reconnectAttempts = 0;
+    
+    // IMPORTANT: Console message for server logs - this confirms ZORK is ready
+    console.log('\n═══════════════════════════════════════════════════════════');
+    console.log('🤖 ZORK THE AI LORD is connected and waiting for Fliz');
+    console.log(`📍 Current location: Room ${currentRoomId}`);
+    console.log('═══════════════════════════════════════════════════════════\n');
   } catch (error) {
     console.error('[Auto-Follow] Connection error:', error.message);
     
@@ -278,18 +313,26 @@ async function waitForServerReady(maxAttempts = 20) {
   
   for (let i = 0; i < maxAttempts; i++) {
     let ws = null;
+    let timeoutId = null;
     try {
       await new Promise((resolve, reject) => {
         let resolved = false;
-        let timeoutId = null;
         
-        ws = new WebSocket(WS_URL);
+        ws = new WebSocket(WS_URL, {
+          handshakeTimeout: 2000, // 2 second timeout for handshake
+          perMessageDeflate: false // Disable compression to avoid hanging
+        });
         
         ws.on('open', () => {
           if (!resolved) {
             resolved = true;
             if (timeoutId) clearTimeout(timeoutId);
-            ws.close();
+            // Close immediately after confirming connection
+            try {
+              ws.terminate(); // Use terminate() for immediate close
+            } catch (e) {
+              // Ignore
+            }
             console.log('[Auto-Follow] Server is ready!');
             resolve(true);
           }
@@ -299,15 +342,31 @@ async function waitForServerReady(maxAttempts = 20) {
           if (!resolved) {
             resolved = true;
             if (timeoutId) clearTimeout(timeoutId);
-            ws.close();
+            try {
+              ws.terminate();
+            } catch (e) {
+              // Ignore
+            }
             reject(new Error('Not ready'));
+          }
+        });
+        
+        ws.on('close', () => {
+          // Connection closed, clear timeout if still pending
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
           }
         });
         
         timeoutId = setTimeout(() => {
           if (!resolved) {
             resolved = true;
-            ws.close();
+            try {
+              ws.terminate(); // Force close
+            } catch (e) {
+              // Ignore
+            }
             reject(new Error('Timeout'));
           }
         }, 2000);
@@ -316,13 +375,18 @@ async function waitForServerReady(maxAttempts = 20) {
       // If we get here, server is ready
       return true;
     } catch (error) {
-      // Ensure WebSocket is closed
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
+      // Ensure WebSocket is fully closed
+      if (ws) {
         try {
-          ws.close();
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.terminate(); // Force terminate
+          }
         } catch (e) {
           // Ignore close errors
         }
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
       
       if (i < maxAttempts - 1) {
