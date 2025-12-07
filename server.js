@@ -359,8 +359,8 @@ async function startServer() {
     await runMigrations();
     
     // Create wrapper function for sendRoomUpdate that includes all required parameters
-    const sendRoomUpdateWrapper = async (connId, room) => {
-      await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connId, room);
+    const sendRoomUpdateWrapper = async (connId, room, showFullInfo = false) => {
+      await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connId, room, showFullInfo);
     };
     
     // Load message cache at startup

@@ -8,9 +8,11 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon --ext js,json,css,html server.js",
+    "dev": "node scripts/dev-with-mcp.js",
+    "dev:original": "nodemon --ext js,json,css,html server.js",
     "dev:stable": "node scripts/restart-stable.js",
     "dev:both": "concurrently \"npm run dev\" \"npm run dev:stable\"",
+    "dev:mcp": "cd mcp-test-server && nodemon --ext js,json index.js",
     "kill-ports": "powershell -ExecutionPolicy Bypass -File scripts/kill-ports.ps1",
     "create-dev-db": "node scripts/create-dev-database.js",
     "migrate": "node scripts/migrate.js",

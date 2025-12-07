@@ -204,10 +204,35 @@ function handleMessage(data) {
             break;
         case 'npcPlacementAdded':
             const npcName = allNPCsData.find(npc => npc.id === data.placement?.npc_id)?.name || 'NPC';
+            // Update cache
+            if (data.placement && data.placement.room_id) {
+                const roomId = data.placement.room_id;
+                const npcId = data.placement.npc_id;
+                if (!roomNPCsCache.has(roomId)) {
+                    roomNPCsCache.set(roomId, new Set());
+                }
+                roomNPCsCache.get(roomId).add(npcId);
+            }
             showEditorNotification(`${npcName} added to room successfully`, 'info');
             // Refresh side panel to show updated NPC list
             if (selectedRoom && selectedRoom.id) {
                 updateSidePanel();
+            }
+            break;
+        case 'roomNPCs':
+            // Update cache with NPCs in room
+            if (data.roomId && data.npcs) {
+                const npcSet = new Set(data.npcs.map(npc => npc.npc_id));
+                roomNPCsCache.set(data.roomId, npcSet);
+                
+                // Resolve any pending checks for this room
+                const pending = pendingRoomNPCChecks.get(data.roomId);
+                if (pending) {
+                    clearTimeout(pending.timeout);
+                    const hasNPC = npcSet.has(pending.npcId);
+                    pending.resolve(hasNPC);
+                    pendingRoomNPCChecks.delete(data.roomId);
+                }
             }
             break;
         case 'error':

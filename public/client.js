@@ -2,6 +2,9 @@
 let ws = null;
 let currentPlayerName = null;
 let currentRoomId = null; // Track current room to detect room changes
+let isReconnecting = false; // Track if we're in the process of reconnecting after session loss
+let reconnectAttempts = 0; // Track number of reconnection attempts to prevent infinite loops
+const MAX_RECONNECT_ATTEMPTS = 3; // Maximum number of automatic reconnection attempts
 
 // Popup window tracking
 let isPopupWindow = false;
@@ -302,6 +305,18 @@ function connectWebSocket() {
         if (restartRequested) {
             restartRequested = false; // Clear flag
             window.location.href = '/';
+            return;
+        }
+        
+        // Don't auto-reconnect if we're in the process of reselecting character
+        // or if we've exceeded max reconnection attempts
+        if (isReconnecting) {
+            console.log('Skipping auto-reconnect - character reselection in progress');
+            return;
+        }
+        
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.log('Skipping auto-reconnect - max attempts reached');
             return;
         }
         
@@ -629,6 +644,11 @@ function handleMessage(data) {
             if (data.stats.playerName) {
                 const previousPlayerName = currentPlayerName;
                 currentPlayerName = data.stats.playerName;
+                // Persist player name to localStorage for reconnection
+                localStorage.setItem('lastPlayerName', currentPlayerName);
+                // Reset reconnection attempts on successful connection
+                reconnectAttempts = 0;
+                isReconnecting = false;
                 document.title = `The Game - ${data.stats.playerName}`;
                 
                 // Load comms history for this player if name changed
@@ -787,6 +807,35 @@ function handleMessage(data) {
             // Emit error to GameBus - terminal component will handle it
             if (data.message) {
                 GameBus.emit('terminal:error', { message: data.message });
+                
+                // If we get "No valid session" error and have a stored player name, automatically reselect character
+                // Only do this if we're on the game page (not character selection)
+                if (data.message === 'No valid session. Please select a character first.' && !isReconnecting) {
+                    const gameView = document.getElementById('gameView');
+                    if (gameView) { // Only auto-reselect if we're on the game page
+                        const storedPlayerName = localStorage.getItem('lastPlayerName');
+                        if (storedPlayerName && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            console.log(`Session lost (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS}), automatically reselecting character:`, storedPlayerName);
+                            reconnectAttempts++;
+                            isReconnecting = true;
+                            // Close WebSocket to prevent it from reconnecting while we reselect
+                            if (ws && ws.readyState !== WebSocket.CLOSED) {
+                                ws.close();
+                            }
+                            reselectCharacter(storedPlayerName);
+                        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                            console.log('Maximum reconnection attempts reached. Please select a character manually.');
+                            GameBus.emit('terminal:error', { 
+                                message: 'Automatic reconnection failed after multiple attempts. Please select a character manually or refresh the page.' 
+                            });
+                        } else if (!storedPlayerName) {
+                            console.log('No stored player name found. Cannot auto-reselect.');
+                            GameBus.emit('terminal:error', { 
+                                message: 'Session expired. Please select a character manually.' 
+                            });
+                        }
+                    }
+                }
             }
             break;
         case 'message':
@@ -2606,6 +2655,83 @@ async function selectCharacter(playerName) {
     } catch (error) {
         console.error('Error selecting character:', error);
         alert('Failed to select character. Please try again.');
+    }
+}
+
+// Reselect character for reconnection (doesn't redirect, just recreates session)
+async function reselectCharacter(playerName) {
+    try {
+        console.log('Attempting to reselect character:', playerName);
+        const response = await fetch('/api/select-character', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include', // Include cookies for session
+            body: JSON.stringify({ playerName })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('Character reselected successfully, reconnecting WebSocket...');
+            // Close existing connection if any
+            if (ws) {
+                if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                    ws.close();
+                }
+            }
+            // Reset reconnecting flag and reconnect after a brief delay
+            // This gives the session cookie time to be set
+            setTimeout(() => {
+                isReconnecting = false;
+                reconnectAttempts = 0; // Reset attempts on success
+                connectWebSocket();
+            }, 1000); // Increased delay to ensure session cookie is set
+        } else {
+            console.error('Failed to reselect character:', data.error);
+            isReconnecting = false;
+            
+            // If account session is lost, redirect to login page
+            if (data.error === 'Please log in first' || data.error?.includes('log in') || data.error?.includes('authenticated')) {
+                console.log('Account session expired, redirecting to login...');
+                localStorage.removeItem('lastPlayerName'); // Clear stored name
+                reconnectAttempts = 0; // Reset attempts
+                window.location.href = '/';
+                return;
+            }
+            
+            // If we've exceeded max attempts, stop trying and show final error
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                console.log('Maximum reconnection attempts reached. Stopping auto-reconnect.');
+                GameBus.emit('terminal:error', { 
+                    message: 'Automatic reconnection failed. Please select a character manually or refresh the page.' 
+                });
+                return;
+            }
+            
+            // Show error for this attempt
+            GameBus.emit('terminal:error', { 
+                message: `Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} failed: ${data.error || 'Unknown error'}. Retrying...` 
+            });
+        }
+    } catch (error) {
+        console.error('Error reselecting character:', error);
+        isReconnecting = false;
+        
+        // If we've exceeded max attempts, stop trying
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.log('Maximum reconnection attempts reached. Stopping auto-reconnect.');
+            GameBus.emit('terminal:error', { 
+                message: 'Automatic reconnection failed. Please select a character manually or refresh the page.' 
+            });
+            return;
+        }
+        
+        // Show error for this attempt
+        GameBus.emit('terminal:error', { 
+            message: `Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} failed. Retrying...` 
+        });
     }
 }
 

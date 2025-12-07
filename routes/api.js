@@ -633,6 +633,112 @@ function setupRoutes(app, options) {
       res.status(500).send(`Dev login failed: ${err.message}`);
     }
   });
+  
+  // DEV BACKDOOR: Direct editor access for development (only works in dev mode)
+  // Usage:
+  //   /dev-map-editor - opens map editor with first god mode character
+  //   /dev-player-editor - opens player editor with first god mode character
+  //   /dev-item-editor - opens item editor with first god mode character
+  //   /dev-npc-editor - opens NPC editor with first god mode character
+  // These routes create a session with a god mode character and redirect to the editor
+  async function createDevEditorSession(req, res, editorPath) {
+    // Only allow in development
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).send('Dev backdoor disabled in production');
+    }
+    
+    try {
+      const db = options.db;
+      const activeAccountSessions = options.activeAccountSessions;
+      const { sessionStore } = require('../middleware/session');
+      
+      // Get brian's account
+      const account = await db.getAccountByEmail('brian@brianfloyd.me');
+      if (!account) {
+        return res.status(404).send('Dev account (brian@brianfloyd.me) not found. Run migration 023_seed_brian_account.sql');
+      }
+      
+      // Get tab ID from header
+      const tabId = req.headers['x-tab-id'] || `dev-${Date.now()}`;
+      
+      // Invalidate old session if exists (allows switching between editors)
+      if (activeAccountSessions && activeAccountSessions.has(account.id)) {
+        activeAccountSessions.delete(account.id);
+      }
+      
+      // Get user's characters and find a god mode character
+      const characters = await db.getUserCharacters(account.id);
+      if (!characters || characters.length === 0) {
+        return res.status(404).send('No characters found for dev account. Run migration 023_seed_brian_account.sql');
+      }
+      
+      // Find first god mode character, or fall back to first character
+      let targetCharacter = characters.find(char => char.flag_god_mode === 1 || char.flag_god_mode === true);
+      if (!targetCharacter) {
+        targetCharacter = characters[0];
+        console.warn(`[DEV BACKDOOR] No god mode character found, using ${targetCharacter.name} (may not have editor access)`);
+      }
+      
+      const player = await db.getPlayerByName(targetCharacter.name);
+      if (!player) {
+        return res.status(404).send(`Character ${targetCharacter.name} not found`);
+      }
+      
+      // Create account session
+      req.session.accountId = account.id;
+      req.session.accountEmail = account.email;
+      req.session.emailVerified = account.email_verified;
+      req.session.tabId = tabId;
+      
+      // Track active session
+      if (activeAccountSessions) {
+        activeAccountSessions.set(account.id, { sessionId: req.sessionID, tabId: tabId });
+      }
+      
+      // Create player session
+      const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+      sessionStore.set(req.sessionID, {
+        accountId: account.id,
+        playerName: player.name,
+        playerId: player.id,
+        createdAt: Date.now(),
+        expiresAt: expiresAt
+      });
+      
+      req.session.playerName = player.name;
+      req.session.playerId = player.id;
+      
+      // Save session and redirect
+      req.session.save((err) => {
+        if (err) {
+          console.error('Dev editor session save error:', err);
+          return res.status(500).send('Failed to create session');
+        }
+        
+        console.log(`[DEV BACKDOOR] Auto-logged in as ${account.email} with character ${player.name} for ${editorPath}`);
+        res.redirect(editorPath);
+      });
+    } catch (err) {
+      console.error('Dev editor login error:', err);
+      res.status(500).send('Dev editor login failed: ' + err.message);
+    }
+  }
+  
+  app.get('/dev-map-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/map');
+  });
+  
+  app.get('/dev-player-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/player');
+  });
+  
+  app.get('/dev-item-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/items');
+  });
+  
+  app.get('/dev-npc-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/npc');
+  });
 }
 
 module.exports = {

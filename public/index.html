@@ -865,6 +865,9 @@
                     // Stop session checking on logout
                     stopSessionCheck();
                     
+                    // Clear stored player name for auto-reconnection
+                    localStorage.removeItem('lastPlayerName');
+                    
                     currentAccount = null;
                     currentCharacters = [];
                     document.getElementById('loginScreen').style.display = 'block';

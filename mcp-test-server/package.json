@@ -1,0 +1,19 @@
+{
+  "name": "@thegame/mcp-test-server",
+  "version": "1.0.0",
+  "description": "MCP server for automated game testing with AI-driven test execution",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node tests/run-tests.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.14.2",
+    "pg": "^8.11.3",
+    "node-fetch": "^3.3.2"
+  }
+}
+
+
