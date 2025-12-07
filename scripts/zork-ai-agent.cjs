@@ -61,6 +61,7 @@ let systemPrompt = '';               // loaded from zork-system-prompt.md
 let lastSuccessfulConnectionTime = 0; // Track when we last successfully connected
 let isReconnecting = false; // Track if we're in the middle of a reconnection
 let currentWebSocket = null; // Track the current active WebSocket connection
+let followCheckIntervalId = null; // Track the follow check interval to prevent duplicates
 
 // ============================================================================
 // INITIALIZATION
@@ -238,8 +239,11 @@ async function connect() {
     // Initial follow check
     await checkAndFollowFliz();
     
-    // Set up periodic follow check
-    setInterval(checkAndFollowFliz, CONFIG.FOLLOW_CHECK_INTERVAL);
+    // Set up periodic follow check (clear any existing interval first)
+    if (followCheckIntervalId) {
+      clearInterval(followCheckIntervalId);
+    }
+    followCheckIntervalId = setInterval(checkAndFollowFliz, CONFIG.FOLLOW_CHECK_INTERVAL);
     
     reconnectAttempts = 0;
     
@@ -299,11 +303,13 @@ async function connect() {
  * Handle disconnection
  */
 function handleDisconnect(code, reason) {
-  // If we just successfully connected recently (within last 3 seconds), this is likely
-  // the server disconnecting an old duplicate connection. Ignore it to prevent reconnect loops.
   const timeSinceLastConnection = Date.now() - lastSuccessfulConnectionTime;
-  if (timeSinceLastConnection < 3000 && client?.connected) {
-    console.log(`[ZORK] Ignoring disconnect shortly after connection (likely duplicate cleanup) - code: ${code}, time since connection: ${timeSinceLastConnection}ms`);
+  
+  // If we just successfully connected very recently (within last 2 seconds), this is likely
+  // the server disconnecting an old duplicate connection during nodemon restart.
+  // Ignore it to prevent reconnect loops.
+  if (timeSinceLastConnection < 2000) {
+    console.log(`[ZORK] Ignoring disconnect shortly after connection (likely duplicate cleanup during restart) - code: ${code}, time since connection: ${timeSinceLastConnection}ms`);
     return;
   }
   
@@ -320,12 +326,17 @@ function handleDisconnect(code, reason) {
   }
   
   // Code 1006 = abnormal closure (server restart/crash)
-  // Code 1000 = normal closure
+  // Code 1000 = normal closure (but during nodemon restart, this can also mean server restart)
   // Code 1001 = going away (server restart)
-  if (code === 1006 || code === 1001) {
+  // During nodemon restarts, connections are often closed with code 1000, so we need to detect this scenario
+  const isLikelyServerRestart = code === 1006 || code === 1001 || 
+                                (code === 1000 && timeSinceLastConnection < 10000); // Code 1000 within 10s of connection = likely restart
+  
+  if (isLikelyServerRestart) {
     // Server restart detected - use longer delay to give server time to restart
-    console.log(`[ZORK] Server restart detected (code: ${code}). Waiting 10s before reconnecting...`);
+    console.log(`[ZORK] Server restart detected (code: ${code}, connected ${Math.round(timeSinceLastConnection/1000)}s ago). Waiting 15s before reconnecting...`);
     reconnectAttempts = 0; // Reset attempts for fresh restart
+    consecutiveConnectionRefused = 0; // Reset this counter too
   } else if (code !== 1000) {
     console.log(`[ZORK] Disconnected (code: ${code}). Reconnecting...`);
   } else {
@@ -337,7 +348,7 @@ function handleDisconnect(code, reason) {
   isReconnecting = true;
   
   // Longer delay for server restarts to give nodemon time to restart cleanly
-  const delay = (code === 1006 || code === 1001) ? 10000 : 5000;
+  const delay = isLikelyServerRestart ? 15000 : 5000;
   
   setTimeout(() => {
     if (!client?.connected) {
@@ -601,12 +612,12 @@ async function processAndRespond(speaker, message, method) {
         try {
           const result = await executeAction(action, speaker);
           
-          // For markup and game message actions, result contains the data (don't need verification)
-          if (['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword'].includes(action.type)) {
-            console.log(`[ZORK] Markup action ${action.type} completed successfully`);
-            // Mark as successful (no verification needed for direct DB operations)
+          // For markup, game message, and connection management actions, result contains the data (don't need verification)
+          if (['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword', 'disconnectZork', 'reconnectZork', 'getZorkConnectionStatus'].includes(action.type)) {
+            console.log(`[ZORK] Action ${action.type} completed successfully`);
+            // Mark as successful (no verification needed for direct DB operations or connection management)
             action.verificationFailed = false;
-            if (result && action.type === 'getMarkupConventions') {
+            if (result && (action.type === 'getMarkupConventions' || action.type === 'getZorkConnectionStatus')) {
               // Store result for potential use in response
               action.result = result;
             }
@@ -1292,6 +1303,9 @@ async function findNpcRoomId(npcName) {
  * - Map name (e.g., "Newhaven") - returns first room on that map, or "Town Square" if it exists
  * - "Map Name, Room Name" format (e.g., "Newhaven, Town Square")
  * - NPC name or "NPC's room" format (e.g., "Calder" or "Calder's room") - finds room where NPC is located
+ * - Room type keywords (e.g., "factory", "shop", "warehouse") - finds rooms with matching room_type
+ * - Room name containing keywords (e.g., "factory" finds "Resin Factory")
+ * - Combined: "factory in new haven" - finds factory-type rooms or rooms with "factory" in name on New Haven map
  */
 async function resolveRoomId(roomNameOrId) {
   // If it's already a number, return it
@@ -1346,7 +1360,111 @@ async function resolveRoomId(roomNameOrId) {
     }
   }
   
-  // First, try to find by room name
+  // Enhanced: Check for room type keywords or room name keywords with optional map filter
+  // Examples: "factory", "factory in new haven", "a factory", "shop in town"
+  if (typeof roomNameOrId === 'string') {
+    const lowerInput = roomNameOrId.toLowerCase();
+    
+    // Common room type keywords
+    const roomTypeKeywords = ['factory', 'shop', 'merchant', 'warehouse', 'normal'];
+    
+    // Try to extract map name and room type/keyword from patterns like:
+    // "factory in new haven", "a factory", "shop in town", etc.
+    let mapName = null;
+    let roomKeyword = null;
+    
+    // Pattern: "keyword in mapname" or "a keyword in mapname"
+    const inPattern = /(?:a\s+)?(\w+)\s+in\s+(.+)/i;
+    const inMatch = lowerInput.match(inPattern);
+    if (inMatch) {
+      roomKeyword = inMatch[1].trim();
+      mapName = inMatch[2].trim();
+    } else {
+      // Check if the whole input is a room type keyword
+      const trimmed = lowerInput.trim();
+      if (roomTypeKeywords.includes(trimmed) || trimmed.startsWith('a ') && roomTypeKeywords.includes(trimmed.substring(2))) {
+        roomKeyword = trimmed.replace(/^a\s+/, '');
+      } else {
+        // Otherwise, treat the whole input as a potential room name/keyword
+        roomKeyword = trimmed.replace(/^a\s+/, '');
+      }
+    }
+    
+    // If we found a room keyword, search for it
+    if (roomKeyword) {
+      try {
+        // First, try exact room name match (highest priority)
+        if (!mapName) {
+          const exactRoom = await verifier.queryOne(
+            'SELECT id FROM rooms WHERE LOWER(name) = LOWER($1) LIMIT 1',
+            [roomKeyword]
+          );
+          if (exactRoom) {
+            console.log(`[ZORK] Resolved exact room name "${roomKeyword}" to room ID: ${exactRoom.id}`);
+            return exactRoom.id;
+          }
+        }
+        
+        // Build query for room name containing keyword OR room_type matching keyword
+        let query = `
+          SELECT r.id, r.name, r.room_type
+          FROM rooms r
+        `;
+        const params = [];
+        const conditions = [];
+        
+        // Add map filter if specified
+        if (mapName) {
+          query += ' JOIN maps m ON r.map_id = m.id';
+          conditions.push(`LOWER(m.name) LIKE LOWER($${params.length + 1})`);
+          params.push(`%${mapName}%`);
+        }
+        
+        // Add room matching conditions
+        const roomConditions = [];
+        
+        // 1. Room name contains the keyword
+        roomConditions.push(`LOWER(r.name) LIKE LOWER($${params.length + 1})`);
+        params.push(`%${roomKeyword}%`);
+        
+        // 2. Room type matches the keyword (if it's a known room type)
+        if (roomTypeKeywords.includes(roomKeyword)) {
+          roomConditions.push(`LOWER(r.room_type) = LOWER($${params.length + 1})`);
+          params.push(roomKeyword);
+        }
+        
+        if (roomConditions.length > 0) {
+          conditions.push(`(${roomConditions.join(' OR ')})`);
+        }
+        
+        if (conditions.length > 0) {
+          query += ` WHERE ${conditions.join(' AND ')}`;
+        }
+        
+        // Prioritize: exact name matches first, then room type matches
+        // Add roomKeyword as parameters for ORDER BY (will be at index params.length + 1 and + 2)
+        const orderByParam1 = params.length + 1;
+        const orderByParam2 = params.length + 2;
+        query += ` ORDER BY 
+          CASE WHEN LOWER(r.name) = LOWER($${orderByParam1}) THEN 1 ELSE 2 END,
+          CASE WHEN LOWER(r.room_type) = LOWER($${orderByParam2}) THEN 1 ELSE 2 END,
+          r.name
+          LIMIT 1`;
+        params.push(roomKeyword);
+        params.push(roomKeyword);
+        
+        const room = await verifier.queryOne(query, params);
+        if (room) {
+          console.log(`[ZORK] Resolved "${roomNameOrId}" to room "${room.name}" (ID: ${room.id}, type: ${room.room_type})`);
+          return room.id;
+        }
+      } catch (error) {
+        console.error(`[ZORK] Error resolving room by keyword/type:`, error.message);
+      }
+    }
+  }
+  
+  // First, try to find by room name (fallback for non-keyword searches)
   try {
     const room = await verifier.queryOne(
       'SELECT id FROM rooms WHERE LOWER(name) LIKE LOWER($1) LIMIT 1',
@@ -1632,6 +1750,63 @@ async function executeAction(action, speakerName = null) {
       return result;
     }
     
+    // Connection management actions (ZORK-specific)
+    if (type === 'disconnectZork') {
+      console.log('[ZORK] Disconnecting on command...');
+      if (client && client.connected) {
+        // Clean disconnect - don't trigger reconnect
+        isReconnecting = false;
+        reconnectAttempts = 0;
+        if (client.ws) {
+          client.ws.removeAllListeners('close'); // Remove close handler to prevent auto-reconnect
+        }
+        client.disconnect();
+        client.connected = false;
+        client.authenticated = false;
+        console.log('[ZORK] Disconnected successfully');
+        return { success: true, message: 'ZORK disconnected from the game' };
+      } else {
+        console.log('[ZORK] Already disconnected');
+        return { success: true, message: 'ZORK is already disconnected' };
+      }
+    }
+    
+    if (type === 'reconnectZork') {
+      console.log('[ZORK] Reconnecting on command...');
+      if (client && client.connected) {
+        console.log('[ZORK] Already connected');
+        return { success: true, message: 'ZORK is already connected', connected: true };
+      }
+      
+      // Reset reconnection state
+      isReconnecting = false;
+      reconnectAttempts = 0;
+      consecutiveConnectionRefused = 0;
+      
+      // Attempt to connect
+      try {
+        await connect();
+        return { success: true, message: 'ZORK reconnected successfully', connected: true };
+      } catch (error) {
+        console.error('[ZORK] Reconnection failed:', error.message);
+        return { success: false, message: `Reconnection failed: ${error.message}`, connected: false };
+      }
+    }
+    
+    if (type === 'getZorkConnectionStatus') {
+      const status = {
+        connected: client?.connected || false,
+        authenticated: client?.authenticated || false,
+        currentRoomId: currentRoomId,
+        currentRoom: currentRoom?.name || null,
+        isReconnecting: isReconnecting,
+        reconnectAttempts: reconnectAttempts,
+        lastSuccessfulConnectionTime: lastSuccessfulConnectionTime ? new Date(lastSuccessfulConnectionTime).toISOString() : null
+      };
+      console.log('[ZORK] Connection status:', status);
+      return { success: true, status };
+    }
+    
     // Resolve player names to IDs for player-related commands
     const playerCommands = ['removePlayerInventoryItem', 'addPlayerInventoryItem', 'updatePlayer', 'getPlayerInventory'];
     let resolvedPlayerId = null;
@@ -1788,6 +1963,13 @@ async function executeAction(action, speakerName = null) {
         params.roomId = currentRoomId;
         console.log(`[ZORK] Using current room ID: ${currentRoomId}`);
       }
+    }
+    
+    // Handle connection management commands (return early, don't send via WebSocket)
+    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus') {
+      // These actions are handled above and return early
+      // They don't need WebSocket communication
+      return;
     }
     
     // Handle markup commands (direct database operations - return early, don't send via WebSocket)
@@ -2175,6 +2357,13 @@ async function executeAction(action, speakerName = null) {
         console.error(`[ZORK] Error deleting NPC keyword:`, error.message);
         throw error;
       }
+    }
+    
+    // Handle connection management commands (return early, don't send via WebSocket)
+    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus') {
+      // These actions are handled above and return early
+      // They don't need WebSocket communication
+      return;
     }
     
     // Send as WebSocket command (for non-markup actions)

@@ -51,6 +51,12 @@ let customConventionsLoaded = false;
 let builtInConventionEdits = {};
 let builtInEditsLoaded = false;
 
+// Player names cache (for auto-wrapping player names with @ symbols)
+let playerNamesCache = [];
+let playerNamesCacheLoaded = false;
+let playerNamesCacheTimestamp = 0;
+const PLAYER_NAMES_CACHE_TTL = 60000; // 1 minute cache
+
 /**
  * Load custom markup conventions from database
  * @param {object} db - Database module

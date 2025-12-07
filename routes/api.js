@@ -742,11 +742,13 @@ function setupRoutes(app, options) {
   });
 
   // ============================================================
-  // Markup API Endpoints (God Mode Only)
+  // Markup API Endpoints
+  // GET endpoints: All authenticated players can read markup conventions
+  // POST/PUT/DELETE endpoints: God mode required for creating/editing/deleting
   // ============================================================
 
-  // Get all custom markup conventions
-  app.get('/api/markup/conventions', validateSession, checkGodMode, async (req, res) => {
+  // Get all custom markup conventions (readable by all authenticated players)
+  app.get('/api/markup/conventions', validateSession, async (req, res) => {
     try {
       const conventions = await db.getAllMarkupConventions();
       console.log(`[API] GET /api/markup/conventions: Returning ${conventions.length} conventions from database`);
@@ -788,8 +790,8 @@ function setupRoutes(app, options) {
     }
   });
 
-  // Get single markup convention by ID
-  app.get('/api/markup/conventions/:id', validateSession, checkGodMode, async (req, res) => {
+  // Get single markup convention by ID (readable by all authenticated players)
+  app.get('/api/markup/conventions/:id', validateSession, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -896,8 +898,8 @@ function setupRoutes(app, options) {
     }
   });
 
-  // Get all built-in convention edits
-  app.get('/api/markup/builtin-edits', validateSession, checkGodMode, async (req, res) => {
+  // Get all built-in convention edits (readable by all authenticated players)
+  app.get('/api/markup/builtin-edits', validateSession, async (req, res) => {
     try {
       const edits = await db.getBuiltInConventionEdits();
       res.json(edits);
@@ -907,8 +909,8 @@ function setupRoutes(app, options) {
     }
   });
 
-  // Get single built-in convention edit by key
-  app.get('/api/markup/builtin-edits/:key', validateSession, checkGodMode, async (req, res) => {
+  // Get single built-in convention edit by key (readable by all authenticated players)
+  app.get('/api/markup/builtin-edits/:key', validateSession, async (req, res) => {
     try {
       const { key } = req.params;
       const edit = await db.getBuiltInConventionEdit(key);
