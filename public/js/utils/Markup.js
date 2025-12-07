@@ -264,6 +264,62 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
     let placeholderIndex = 0;
     let result = text;
     
+    // First, extract typewriter blocks and replace with placeholders
+    // Typewriter pattern: {{typewriter:delay}}content{{/typewriter}}
+    const TYPEWRITER_PATTERN = /\{\{typewriter(?::(\d+))?\}\}([\s\S]*?)\{\{\/typewriter\}\}/gi;
+    const typewriterBlocks = [];
+    let typewriterIndex = 0;
+    
+    result = result.replace(TYPEWRITER_PATTERN, (match, delay, content) => {
+        const delayMs = delay ? parseInt(delay, 10) : 100;
+        // Process content inside typewriter for other markup first
+        // Use placeholders to avoid double-escaping
+        const innerPlaceholders = [];
+        let innerPlaceholderIndex = 0;
+        let processedContent = content;
+        
+        // Process other markup conventions inside typewriter content
+        for (const [key, convention] of sortedConventions) {
+            const opening = convention.opening;
+            const closing = convention.closing;
+            const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapedOpening = escapeRegex(opening);
+            const escapedClosing = escapeRegex(closing);
+            const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
+            
+            processedContent = processedContent.replace(pattern, (match, innerContent) => {
+                const escapedContent = escapeHtml(innerContent);
+                let color = convention.color;
+                if (color === 'keyword') {
+                    color = glowColor;
+                } else if (color === 'inherit') {
+                    color = 'inherit';
+                }
+                const css = generateMarkupCSS(convention.effects || {}, color);
+                const className = `markup-${key}`;
+                const placeholder = `__INNER_${innerPlaceholderIndex}__`;
+                innerPlaceholders[innerPlaceholderIndex] = `<span class="${className}" style="${css}">${escapedContent}</span>`;
+                innerPlaceholderIndex++;
+                return placeholder;
+            });
+        }
+        
+        // Escape any remaining HTML in the content
+        processedContent = escapeHtml(processedContent);
+        
+        // Replace inner placeholders with actual spans
+        innerPlaceholders.forEach((span, index) => {
+            processedContent = processedContent.replace(`__INNER_${index}__`, span);
+        });
+        
+        // Store the typewriter span HTML
+        const placeholder = `__TYPEWRITER_${typewriterIndex}__`;
+        typewriterBlocks[typewriterIndex] = `<span class="typewriter-effect" data-typewriter="true" data-typewriter-delay="${delayMs}">${processedContent}</span>`;
+        typewriterIndex++;
+        
+        return placeholder;
+    });
+    
     // Process each convention BEFORE escaping HTML
     for (const [key, convention] of sortedConventions) {
         const opening = convention.opening;
@@ -304,6 +360,11 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
     
     // Now escape any remaining HTML that wasn't part of markup
     result = escapeHtml(result);
+    
+    // Replace typewriter placeholders with actual spans (they're already safe HTML)
+    typewriterBlocks.forEach((span, index) => {
+        result = result.replace(`__TYPEWRITER_${index}__`, span);
+    });
     
     // Replace placeholders with actual spans (they're already safe HTML)
     placeholders.forEach((span, index) => {

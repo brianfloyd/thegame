@@ -104,7 +104,19 @@ function executeCommand(input) {
 
 // Normalize command input
 function normalizeCommand(input) {
-    const parts = input.trim().split(/\s+/);
+    const trimmed = input.trim();
+    
+    // Check if command starts with '.' - treat as talk command
+    if (trimmed.startsWith('.')) {
+        const message = trimmed.substring(1).trim(); // Remove the '.' and trim
+        if (!message) {
+            terminal.addMessage('Talk what? (. <message>)', 'error');
+            return null;
+        }
+        return { type: 'talk', message: message };
+    }
+    
+    const parts = trimmed.split(/\s+/);
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
     

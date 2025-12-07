@@ -20,3 +20,4 @@ UPDATE players SET auto_navigation_time_ms = 1000 WHERE auto_navigation_time_ms 
 
 
 
+

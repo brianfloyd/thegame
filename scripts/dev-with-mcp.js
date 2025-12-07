@@ -61,11 +61,11 @@ if (isPort3434) {
     }
   });
 
-  // Start Auto-Follow Fliz service after a delay (to avoid interfering with nodemon restarts)
+  // Start ZORK AI Agent after a delay (to let server stabilize)
   setTimeout(() => {
-    console.log('Starting Auto-Follow Fliz service...');
-    const autoFollowScript = path.join(__dirname, 'auto-follow-fliz.cjs');
-    autoFollow = spawn('node', [autoFollowScript], {
+    console.log('Starting ZORK THE AI LORD...');
+    const zorkAgentScript = path.join(__dirname, 'zork-ai-agent.cjs');
+    autoFollow = spawn('node', [zorkAgentScript], {
       stdio: 'inherit',
       shell: true,
       env: { ...process.env, PORT },
@@ -73,13 +73,13 @@ if (isPort3434) {
     });
 
     autoFollow.on('error', (error) => {
-      console.error('Failed to start Auto-Follow service:', error);
+      console.error('Failed to start ZORK AI Agent:', error);
       // Don't exit - other services can still run
     });
 
     autoFollow.on('exit', (code) => {
       if (code !== 0 && code !== null) {
-        console.error(`Auto-Follow service exited with code ${code}`);
+        console.error(`ZORK AI Agent exited with code ${code}`);
       }
       autoFollow = null; // Clear reference
     });
@@ -119,4 +119,5 @@ gameServer.on('exit', (code) => {
   }
   process.exit(code || 0);
 });
+
 

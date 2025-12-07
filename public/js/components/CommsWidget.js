@@ -5,6 +5,7 @@
  */
 
 import Component from '../core/Component.js';
+import { parseMarkup } from '../utils/Markup.js';
 
 export default class CommsWidget extends Component {
     constructor(game) {
@@ -233,8 +234,18 @@ export default class CommsWidget extends Component {
             } else {
                 displayText = `${msg.playerName}: ${msg.message}`;
             }
-            
-            msgDiv.textContent = displayText;
+
+            // CRITICAL: Parse markup in messages (especially for ZORK's responses)
+            // Split player name and message, parse only the message part
+            const parts = displayText.split(': ');
+            if (parts.length > 1) {
+                const playerPart = parts[0] + ': ';
+                const messagePart = parts.slice(1).join(': ');
+                msgDiv.innerHTML = this.escapeHtml(playerPart) + parseMarkup(messagePart, '#00ffff');
+            } else {
+                // Fallback: parse entire text
+                msgDiv.innerHTML = parseMarkup(displayText, '#00ffff');
+            }
             this.commChatContent.appendChild(msgDiv);
         });
         
@@ -243,6 +254,16 @@ export default class CommsWidget extends Component {
         if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
+    }
+    
+    /**
+     * Escape HTML to prevent XSS
+     */
+    escapeHtml(text) {
+        if (typeof text !== 'string') return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
     
     /**

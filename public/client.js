@@ -2494,10 +2494,17 @@ function renderCommHistory() {
 function displayTalkedMessage(playerName, message) {
     const terminalContent = document.getElementById('terminalContent');
     if (!terminalContent) return;
-    
+
     const messageDiv = document.createElement('div');
     messageDiv.className = 'talked-message';
-    messageDiv.innerHTML = `<span class="talked-player">${escapeHtml(playerName)}</span> says: <span class="talked-text">${escapeHtml(message)}</span>`;
+    
+    // Parse markup in message if parseMarkup is available
+    let parsedMessage = escapeHtml(message);
+    if (typeof parseMarkup !== 'undefined') {
+        parsedMessage = parseMarkup(message, '#00ffff');
+    }
+    
+    messageDiv.innerHTML = `<span class="talked-player">${escapeHtml(playerName)}</span> says: <span class="talked-text">${parsedMessage}</span>`;
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
@@ -2506,16 +2513,22 @@ function displayTalkedMessage(playerName, message) {
 function displayTelepathMessage(playerName, message, isReceived) {
     const terminalContent = document.getElementById('terminalContent');
     if (!terminalContent) return;
-    
+
     const messageDiv = document.createElement('div');
     messageDiv.className = 'telepath-message';
-    
-    if (isReceived) {
-        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> <span class="telepath-player">${escapeHtml(playerName)}</span> telepaths: <span class="telepath-text">${escapeHtml(message)}</span>`;
-    } else {
-        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> You telepath <span class="telepath-player">${escapeHtml(playerName)}</span>: <span class="telepath-text">${escapeHtml(message)}</span>`;
+
+    // Parse markup in message if parseMarkup is available
+    let parsedMessage = escapeHtml(message);
+    if (typeof parseMarkup !== 'undefined') {
+        parsedMessage = parseMarkup(message, '#00ffff');
     }
-    
+
+    if (isReceived) {
+        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> <span class="telepath-player">${escapeHtml(playerName)}</span> telepaths: <span class="telepath-text">${parsedMessage}</span>`;
+    } else {
+        messageDiv.innerHTML = `<span class="telepath-label">[Telepathy]</span> You telepath <span class="telepath-player">${escapeHtml(playerName)}</span>: <span class="telepath-text">${parsedMessage}</span>`;
+    }
+
     terminalContent.appendChild(messageDiv);
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }

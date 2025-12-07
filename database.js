@@ -406,6 +406,27 @@ async function updatePlayer(player) {
     'pulse_echoes', 'pulse_echo_tier'
   ];
   
+  // CRITICAL: If updating resource_vitalis, validate it doesn't exceed max
+  if (player.resource_vitalis !== undefined) {
+    // Get current player data to check max_vitalis
+    const currentPlayer = await getPlayerById(player.id);
+    if (currentPlayer) {
+      const maxVitalis = player.resource_max_vitalis !== undefined 
+        ? player.resource_max_vitalis 
+        : (currentPlayer.resource_max_vitalis || 1000);
+      
+      // Cap vitalis at max (never allow exceeding max)
+      if (player.resource_vitalis > maxVitalis) {
+        console.warn(`[updatePlayer] Attempted to set vitalis (${player.resource_vitalis}) above max (${maxVitalis}). Capping to max.`);
+        player.resource_vitalis = maxVitalis;
+      }
+      // Also ensure it's not negative
+      if (player.resource_vitalis < 0) {
+        player.resource_vitalis = 0;
+      }
+    }
+  }
+  
   const updates = [];
   const values = [];
   let paramCount = 1;
