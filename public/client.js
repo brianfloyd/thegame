@@ -2759,6 +2759,9 @@ commandInput.addEventListener('keypress', (e) => {
         if (command) {
             executeCommand(command);
             commandInput.value = '';
+        } else {
+            // Empty command = look command (refresh room)
+            executeCommand('look');
         }
     }
 });

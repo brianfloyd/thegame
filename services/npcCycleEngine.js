@@ -652,11 +652,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                         const now = Date.now();
                         for (const { connId, playerData } of playersInRoom) {
                           // Check if enough time has passed since last update for this player
+                          // Use a small buffer (500ms) to prevent race conditions with the room update timer
                           const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
                           const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
                           
                           const timeSinceLastUpdate = now - lastUpdate;
-                          if (timeSinceLastUpdate >= interval) {
+                          if (timeSinceLastUpdate >= (interval - 500)) {
                             await sendRoomUpdate(connId, room);
                             // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
                           }
@@ -713,11 +714,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                               const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
                               const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
                               
-                              const timeSinceLastUpdate = now - lastUpdate;
-                              if (timeSinceLastUpdate >= interval) {
-                                await sendRoomUpdate(connId, room);
-                                // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
-                              }
+                          const timeSinceLastUpdate = now - lastUpdate;
+                          // Use a small buffer (500ms) to prevent race conditions with the room update timer
+                          if (timeSinceLastUpdate >= (interval - 500)) {
+                            await sendRoomUpdate(connId, room);
+                            // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
+                          }
                             }
                           }
                         }
@@ -1022,11 +1024,12 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                   const lastUpdate = playerLastRoomUpdate.get(connId) || 0;
                   const interval = await getPlayerRoomUpdateInterval(db, { ...playerData, connectionId: connId });
                   
-                  const timeSinceLastUpdate = now - lastUpdate;
-                  if (timeSinceLastUpdate >= interval) {
-                    await sendRoomUpdate(connId, room);
-                    // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
-                  }
+                          const timeSinceLastUpdate = now - lastUpdate;
+                          // Use a small buffer (500ms) to prevent race conditions with the room update timer
+                          if (timeSinceLastUpdate >= (interval - 500)) {
+                            await sendRoomUpdate(connId, room);
+                            // sendRoomUpdate already calls markRoomUpdateSent, so timestamp is updated
+                          }
                 }
               }
             }
@@ -1172,7 +1175,8 @@ function startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdate) {
           
           // Only send update if enough time has passed
           // CRITICAL: This prevents room updates from being sent too frequently
-          if (timeSinceLastUpdate >= interval) {
+          // Use a small buffer (500ms) to prevent race conditions with NPC cycles
+          if (timeSinceLastUpdate >= (interval - 500)) {
             const room = await db.getRoomById(playerData.roomId);
             if (room) {
               await sendRoomUpdate(connId, room);

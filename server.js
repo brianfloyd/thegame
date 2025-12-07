@@ -384,9 +384,16 @@ async function startServer() {
       const { setGlobalRoomUpdateInterval } = require('./services/npcCycleEngine');
       try {
         const roomUpdateConfig = await db.getHarvestFormulaConfig('room_update_interval_ms');
-        if (roomUpdateConfig && roomUpdateConfig.min_resonance) {
-          setGlobalRoomUpdateInterval(roomUpdateConfig.min_resonance);
-          console.log(`[Server] Loaded global room update interval: ${roomUpdateConfig.min_resonance}ms`);
+        if (roomUpdateConfig) {
+          // CRITICAL: Use min_value (the actual interval in ms), not min_resonance (which is a stat threshold)
+          // Fall back to min_resonance for backward compatibility with old migration data
+          const interval = roomUpdateConfig.min_value || roomUpdateConfig.min_resonance;
+          if (interval && interval > 0) {
+            setGlobalRoomUpdateInterval(interval);
+            console.log(`[Server] Loaded global room update interval: ${interval}ms`);
+          } else {
+            console.log(`[Server] Invalid room update interval config, using default: 30000ms`);
+          }
         } else {
           console.log(`[Server] Using default room update interval: 30000ms`);
         }
