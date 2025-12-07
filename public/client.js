@@ -1598,11 +1598,14 @@ function updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay 
         terminalContent.appendChild(roomNameDiv);
         saveTerminalContentToHistory(displayName, 'info');
         
-        // Display room description (with markup parsing)
+        // Display room description (use server-processed HTML if available, otherwise client-side processing)
         const roomDescDiv = document.createElement('div');
         roomDescDiv.className = 'room-description';
-        if (typeof parseMarkup !== 'undefined' && room.description) {
-            // Apply markup parsing to room description
+        if (room.descriptionHtml) {
+            // Use server-processed HTML (preferred - uses server's markup cache)
+            roomDescDiv.innerHTML = room.descriptionHtml;
+        } else if (typeof parseMarkup !== 'undefined' && room.description) {
+            // Fallback to client-side markup parsing
             roomDescDiv.innerHTML = parseMarkup(room.description, '#00ffff');
         } else {
             roomDescDiv.textContent = room.description;

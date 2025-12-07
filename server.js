@@ -3,6 +3,8 @@
  * 
  * Sets up Express server, WebSocket server, and wires together all modules.
  * This is the main server file that imports handlers, middleware, and services.
+ * 
+ * Test restart trigger - testing ZORK reconnect fix v3
  */
 
 const express = require('express');

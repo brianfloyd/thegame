@@ -55,23 +55,84 @@ export const MARKUP_CONVENTIONS = {
     }
 };
 
-// Custom markup conventions (loaded from localStorage)
+// Custom markup conventions (loaded from API/database)
 let customMarkupConventions = {};
+let customConventionsLoaded = false;
 
 // Active typewriter animations (for cleanup)
 const activeTypewriters = new Map();
 
-// Load custom conventions from localStorage
-function loadCustomConventions() {
-    try {
-        const stored = localStorage.getItem('customMarkupConventions');
-        if (stored) {
-            customMarkupConventions = JSON.parse(stored);
-        }
-    } catch (e) {
-        console.error('Failed to load custom markup conventions:', e);
-        customMarkupConventions = {};
+// Load custom conventions from API (same as markup-helper.js)
+async function loadCustomConventions() {
+    // If already loaded, return cached (but allow force reload)
+    if (customConventionsLoaded && Object.keys(customMarkupConventions).length > 0) {
+        return;
     }
+    
+    try {
+        const response = await fetch('/api/markup/conventions');
+        if (!response.ok) {
+            // If API fails (e.g., not logged in or no god mode), fall back to localStorage
+            console.warn('[Markup] API failed, checking localStorage fallback...');
+            const stored = localStorage.getItem('customMarkupConventions');
+            if (stored) {
+                try {
+                    customMarkupConventions = JSON.parse(stored);
+                    console.log('[Markup] Loaded conventions from localStorage fallback');
+                    customConventionsLoaded = true;
+                    return;
+                } catch (e) {
+                    console.error('[Markup] Failed to parse localStorage conventions:', e);
+                }
+            }
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const conventions = await response.json();
+        
+        // Convert array to object format (keyed by custom_<id>)
+        customMarkupConventions = {};
+        for (const conv of conventions) {
+            if (!conv || !conv.id) {
+                continue;
+            }
+            
+            const key = `custom_${conv.id}`;
+            
+            // Parse effects if it's a string (shouldn't happen with JSONB, but be safe)
+            let effects = conv.effects || {};
+            if (typeof effects === 'string') {
+                try {
+                    effects = JSON.parse(effects);
+                } catch (e) {
+                    effects = {};
+                }
+            }
+            
+            customMarkupConventions[key] = {
+                syntax: conv.syntax || '',
+                opening: conv.opening || '',
+                closing: conv.closing || '',
+                description: conv.description || '',
+                example: conv.example || '',
+                color: conv.color || 'keyword',
+                effects: effects
+            };
+        }
+        
+        customConventionsLoaded = true;
+        console.log(`[Markup] Loaded ${Object.keys(customMarkupConventions).length} custom conventions from API`);
+    } catch (e) {
+        console.error('[Markup] Failed to load custom markup conventions:', e);
+        customMarkupConventions = {};
+        customConventionsLoaded = true; // Mark as loaded to prevent infinite retries
+    }
+}
+
+// Force reload conventions (e.g., after creating new ones)
+export async function reloadCustomConventions() {
+    customConventionsLoaded = false;
+    await loadCustomConventions();
 }
 
 /**
@@ -246,8 +307,13 @@ function escapeHtml(text) {
 export function parseMarkup(text, keywordColor = '#ff00ff') {
     if (!text) return '';
     
-    // Reload custom conventions in case they were updated
-    loadCustomConventions();
+    // Load custom conventions if not already loaded (async, but we'll use cached version)
+    // Note: This is called synchronously, so we use cached conventions
+    // Conventions should be pre-loaded when the page loads
+    if (!customConventionsLoaded) {
+        // Trigger async load (won't block, will use empty object for now)
+        loadCustomConventions().catch(() => {});
+    }
     
     const glowColor = keywordColor || '#ff00ff';
     
@@ -349,9 +415,16 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
             const css = generateMarkupCSS(convention.effects || {}, color);
             const className = `markup-${key}`;
             
+            // Handle typewriter effect - wrap in span with data attributes
+            let spanContent = escapedContent;
+            if (convention.effects?.typewriter) {
+                const delay = convention.effects.typewriterDelay || 100;
+                spanContent = `<span class="typewriter-effect" data-typewriter="true" data-typewriter-delay="${delay}">${escapedContent}</span>`;
+            }
+            
             // Store the span HTML
             const placeholder = `__MARKUP_${placeholderIndex}__`;
-            placeholders[placeholderIndex] = `<span class="${className}" style="${css}">${escapedContent}</span>`;
+            placeholders[placeholderIndex] = `<span class="${className}" style="${css}">${spanContent}</span>`;
             placeholderIndex++;
             
             return placeholder;
@@ -372,6 +445,22 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
     });
     
     return result;
+}
+
+// Make initializeTypewriterEffects available globally for markup-helper.js
+if (typeof window !== 'undefined') {
+    window.initializeTypewriterEffects = initializeTypewriterEffects;
+    window.reloadCustomConventions = reloadCustomConventions;
+    
+    // Pre-load conventions when module loads (if in browser)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            loadCustomConventions().catch(() => {});
+        });
+    } else {
+        // DOM already loaded, load immediately
+        loadCustomConventions().catch(() => {});
+    }
 }
 
 

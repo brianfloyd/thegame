@@ -19,6 +19,7 @@ const path = require('path');
  */
 function setupRoutes(app, options) {
   const { 
+    db,
     validateSession, 
     optionalSession, 
     checkGodMode,
@@ -738,6 +739,239 @@ function setupRoutes(app, options) {
   
   app.get('/dev-npc-editor', optionalSession, (req, res) => {
     createDevEditorSession(req, res, '/npc');
+  });
+
+  // ============================================================
+  // Markup API Endpoints (God Mode Only)
+  // ============================================================
+
+  // Get all custom markup conventions
+  app.get('/api/markup/conventions', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const conventions = await db.getAllMarkupConventions();
+      console.log(`[API] GET /api/markup/conventions: Returning ${conventions.length} conventions from database`);
+      res.json(conventions);
+    } catch (error) {
+      console.error('Error fetching markup conventions:', error);
+      res.status(500).json({ error: 'Failed to fetch markup conventions' });
+    }
+  });
+  
+  // Debug endpoint to check server-side cache (god mode only)
+  app.get('/api/markup/debug-cache', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const { loadCustomConventions, getMergedBuiltInConventions } = require('../utils/markupService');
+      const db = require('../database');
+      
+      // Reload from database
+      await loadCustomConventions(db);
+      
+      // Get what's in the cache (we need to export it or access it differently)
+      // For now, just return what's in the database and what the service would use
+      const dbConventions = await db.getAllMarkupConventions();
+      const mergedBuiltIn = getMergedBuiltInConventions();
+      
+      res.json({
+        database: {
+          count: dbConventions.length,
+          conventions: dbConventions
+        },
+        builtIn: {
+          count: Object.keys(mergedBuiltIn).length,
+          conventions: mergedBuiltIn
+        },
+        note: 'Server-side cache is private. This shows what would be loaded into cache.'
+      });
+    } catch (error) {
+      console.error('Error in debug endpoint:', error);
+      res.status(500).json({ error: 'Failed to get debug info' });
+    }
+  });
+
+  // Get single markup convention by ID
+  app.get('/api/markup/conventions/:id', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid convention ID' });
+      }
+      const convention = await db.getMarkupConventionById(id);
+      if (!convention) {
+        return res.status(404).json({ error: 'Convention not found' });
+      }
+      res.json(convention);
+    } catch (error) {
+      console.error('Error fetching markup convention:', error);
+      res.status(500).json({ error: 'Failed to fetch markup convention' });
+    }
+  });
+
+  // Create new markup convention
+  app.post('/api/markup/conventions', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const { syntax, opening, closing, description, example, color, effects } = req.body;
+      
+      if (!syntax || !opening || !closing) {
+        return res.status(400).json({ error: 'syntax, opening, and closing are required' });
+      }
+
+      const convention = await db.createMarkupConvention({
+        syntax,
+        opening,
+        closing,
+        description,
+        example,
+        color,
+        effects
+      });
+
+      // Reload markup service cache
+      const { reloadMarkupConventions } = require('../utils/markupService');
+      await reloadMarkupConventions(db);
+
+      res.status(201).json(convention);
+    } catch (error) {
+      console.error('Error creating markup convention:', error);
+      res.status(500).json({ error: 'Failed to create markup convention' });
+    }
+  });
+
+  // Update markup convention
+  app.put('/api/markup/conventions/:id', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid convention ID' });
+      }
+
+      const { syntax, opening, closing, description, example, color, effects } = req.body;
+      
+      if (!syntax || !opening || !closing) {
+        return res.status(400).json({ error: 'syntax, opening, and closing are required' });
+      }
+
+      const convention = await db.updateMarkupConvention(id, {
+        syntax,
+        opening,
+        closing,
+        description,
+        example,
+        color,
+        effects
+      });
+
+      if (!convention) {
+        return res.status(404).json({ error: 'Convention not found' });
+      }
+
+      // Reload markup service cache
+      const { reloadMarkupConventions } = require('../utils/markupService');
+      await reloadMarkupConventions(db);
+
+      res.json(convention);
+    } catch (error) {
+      console.error('Error updating markup convention:', error);
+      res.status(500).json({ error: 'Failed to update markup convention' });
+    }
+  });
+
+  // Delete markup convention
+  app.delete('/api/markup/conventions/:id', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid convention ID' });
+      }
+
+      await db.deleteMarkupConvention(id);
+
+      // Reload markup service cache
+      const { reloadMarkupConventions } = require('../utils/markupService');
+      await reloadMarkupConventions(db);
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting markup convention:', error);
+      res.status(500).json({ error: 'Failed to delete markup convention' });
+    }
+  });
+
+  // Get all built-in convention edits
+  app.get('/api/markup/builtin-edits', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const edits = await db.getBuiltInConventionEdits();
+      res.json(edits);
+    } catch (error) {
+      console.error('Error fetching built-in convention edits:', error);
+      res.status(500).json({ error: 'Failed to fetch built-in convention edits' });
+    }
+  });
+
+  // Get single built-in convention edit by key
+  app.get('/api/markup/builtin-edits/:key', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const { key } = req.params;
+      const edit = await db.getBuiltInConventionEdit(key);
+      if (!edit) {
+        return res.status(404).json({ error: 'Edit not found' });
+      }
+      res.json(edit);
+    } catch (error) {
+      console.error('Error fetching built-in convention edit:', error);
+      res.status(500).json({ error: 'Failed to fetch built-in convention edit' });
+    }
+  });
+
+  // Update or insert built-in convention edit
+  app.put('/api/markup/builtin-edits/:key', validateSession, checkGodMode, async (req, res) => {
+    try {
+      const { key } = req.params;
+      const { syntax, example } = req.body;
+
+      const edit = await db.upsertBuiltInConventionEdit(key, syntax, example);
+
+      // Reload markup service cache
+      const { reloadMarkupConventions } = require('../utils/markupService');
+      await reloadMarkupConventions(db);
+
+      res.json(edit);
+    } catch (error) {
+      console.error('Error updating built-in convention edit:', error);
+      res.status(500).json({ error: 'Failed to update built-in convention edit' });
+    }
+  });
+
+  // Internal cache refresh endpoint (for ZORK and other internal processes)
+  // Uses a simple token-based auth to prevent external access
+  app.post('/api/internal/refresh-cache', async (req, res) => {
+    try {
+      // Simple token check (can be improved with proper auth if needed)
+      const token = req.headers['x-internal-token'] || req.body.token;
+      const expectedToken = process.env.INTERNAL_CACHE_TOKEN || 'internal-cache-refresh-token';
+      
+      if (token !== expectedToken) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { cacheType } = req.body; // 'markup', 'messages', or 'all'
+      
+      if (cacheType === 'markup' || cacheType === 'all') {
+        const { reloadMarkupConventions } = require('../utils/markupService');
+        await reloadMarkupConventions(db);
+        console.log('[CacheRefresh] Reloaded markup conventions cache');
+      }
+      
+      if (cacheType === 'messages' || cacheType === 'all') {
+        const messageCache = require('../utils/messageCache');
+        await messageCache.reloadMessageCache();
+        console.log('[CacheRefresh] Reloaded game messages cache');
+      }
+      
+      res.json({ success: true, refreshed: cacheType || 'all' });
+    } catch (error) {
+      console.error('[CacheRefresh] Error refreshing cache:', error);
+      res.status(500).json({ error: 'Failed to refresh cache' });
+    }
   });
 }
 

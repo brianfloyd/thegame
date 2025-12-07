@@ -39,6 +39,9 @@ const CONFIG = {
   // Connection settings
   MAX_RECONNECT_ATTEMPTS: 10,
   FOLLOW_CHECK_INTERVAL: 2000,
+  // Server restart detection - if we get ECONNREFUSED multiple times in a row,
+  // assume server is restarting and back off longer
+  SERVER_RESTART_BACKOFF_MS: 15000, // 15 seconds when server restart detected
 };
 
 // ============================================================================
@@ -51,9 +54,13 @@ let anthropic = null;
 let currentRoomId = null;
 let currentRoom = null;
 let reconnectAttempts = 0;
+let consecutiveConnectionRefused = 0; // Track consecutive ECONNREFUSED errors
 let conversationHistory = new Map(); // per-player conversation history
 let recentEvents = [];               // recent room events for context
 let systemPrompt = '';               // loaded from zork-system-prompt.md
+let lastSuccessfulConnectionTime = 0; // Track when we last successfully connected
+let isReconnecting = false; // Track if we're in the middle of a reconnection
+let currentWebSocket = null; // Track the current active WebSocket connection
 
 // ============================================================================
 // INITIALIZATION
@@ -148,7 +155,14 @@ async function connect() {
   try {
     // Clean up existing connection
     if (client) {
-      try { client.disconnect(); } catch (e) {}
+      try { 
+        // Mark old WebSocket as no longer current before disconnecting
+        if (client.ws) {
+          const oldWs = currentWebSocket;
+          currentWebSocket = null;
+        }
+        client.disconnect(); 
+      } catch (e) {}
       client = null;
     }
     
@@ -180,17 +194,44 @@ async function connect() {
     const state = client.getState();
     currentRoomId = state.room?.id;
     currentRoom = state.room;
-    
+
     console.log(`[ZORK] Connected! Current room: ${currentRoomId}`);
     
+    // Mark successful connection time and clear reconnecting flag
+    lastSuccessfulConnectionTime = Date.now();
+    isReconnecting = false;
+    reconnectAttempts = 0; // Reset on successful connection
+
     // Set up message handlers
     setupMessageHandlers();
-    
+
     // Set up reconnection on close
     if (client.ws) {
-      client.ws.on('close', handleDisconnect);
-      client.ws.on('error', (error) => {
-        console.log(`[ZORK] WebSocket error: ${error.message}`);
+      // Store reference to current WebSocket BEFORE setting up handlers
+      const thisWs = client.ws;
+      currentWebSocket = thisWs;
+      
+      // Remove any existing close handler to avoid duplicates
+      thisWs.removeAllListeners('close');
+      
+      // Create a close handler that captures the WebSocket reference
+      const closeHandler = (code, reason) => {
+        // Only handle disconnect if this WebSocket is still the current one
+        // This prevents handling disconnects from old connections that were replaced
+        if (thisWs === currentWebSocket && client?.ws === thisWs) {
+          handleDisconnect(code, reason);
+        } else {
+          // This is an old connection being closed, ignore it
+          console.log(`[ZORK] Ignoring disconnect of old/replaced WebSocket connection (code: ${code})`);
+        }
+      };
+      
+      thisWs.on('close', closeHandler);
+      thisWs.on('error', (error) => {
+        // Suppress ECONNREFUSED errors (expected during server restarts)
+        if (error.code !== 'ECONNREFUSED' && !error.message?.includes('ECONNREFUSED')) {
+          console.log(`[ZORK] WebSocket error: ${error.message}`);
+        }
       });
     }
     
@@ -208,12 +249,49 @@ async function connect() {
     console.log('='.repeat(60) + '\n');
     
   } catch (error) {
-    console.error('[ZORK] Connection error:', error.message);
+    // Suppress verbose logging for ECONNREFUSED (expected during server restarts)
+    // Handle both regular errors and AggregateError (which wraps ECONNREFUSED)
+    const isConnectionRefused = error.code === 'ECONNREFUSED' || 
+                                error.message?.includes('ECONNREFUSED') ||
+                                (error.errors && error.errors.some(e => e.code === 'ECONNREFUSED'));
+    
+    if (isConnectionRefused) {
+      consecutiveConnectionRefused++;
+      // If we get multiple ECONNREFUSED in a row, server is likely restarting
+      // Back off longer to give nodemon time to restart cleanly
+      if (consecutiveConnectionRefused >= 3) {
+        // Only log every 10th attempt when server is clearly restarting
+        if (reconnectAttempts % 10 === 0) {
+          console.log(`[ZORK] Server restart detected. Waiting longer before reconnect... (attempt ${reconnectAttempts + 1})`);
+        }
+      } else {
+        // Only log first attempt and every 5th attempt to reduce console spam
+        if (reconnectAttempts === 0 || reconnectAttempts % 5 === 0) {
+          console.log(`[ZORK] Server unavailable, waiting to reconnect... (attempt ${reconnectAttempts + 1})`);
+        }
+      }
+    } else {
+      consecutiveConnectionRefused = 0; // Reset on non-ECONNREFUSED errors
+      console.error('[ZORK] Connection error:', error.message || error);
+    }
+    
     if (client) {
       try { client.disconnect(); } catch (e) {}
       client = null;
     }
-    await attemptReconnect();
+    // Use setImmediate to prevent unhandled promise rejections
+    setImmediate(() => {
+      attemptReconnect().catch(err => {
+        // Don't log ECONNREFUSED errors in reconnect loop
+        const isConnectionRefused = err.code === 'ECONNREFUSED' || 
+                                    err.message?.includes('ECONNREFUSED');
+        if (!isConnectionRefused) {
+          console.error('[ZORK] Fatal error in reconnect loop:', err.message || err);
+        }
+        // Still attempt to reconnect after a delay
+        setTimeout(() => attemptReconnect().catch(() => {}), 10000);
+      });
+    });
   }
 }
 
@@ -221,36 +299,121 @@ async function connect() {
  * Handle disconnection
  */
 function handleDisconnect(code, reason) {
-  console.log(`[ZORK] Disconnected (code: ${code}). Reconnecting...`);
+  // If we just successfully connected recently (within last 3 seconds), this is likely
+  // the server disconnecting an old duplicate connection. Ignore it to prevent reconnect loops.
+  const timeSinceLastConnection = Date.now() - lastSuccessfulConnectionTime;
+  if (timeSinceLastConnection < 3000 && client?.connected) {
+    console.log(`[ZORK] Ignoring disconnect shortly after connection (likely duplicate cleanup) - code: ${code}, time since connection: ${timeSinceLastConnection}ms`);
+    return;
+  }
+  
+  // If we're already in the process of reconnecting, don't start another reconnect
+  if (isReconnecting) {
+    console.log(`[ZORK] Already reconnecting, ignoring duplicate disconnect event`);
+    return;
+  }
+  
+  // If we're already connected with a different WebSocket, this disconnect is from an old connection
+  if (client?.connected && client.ws !== currentWebSocket) {
+    console.log(`[ZORK] Ignoring disconnect from old WebSocket connection (code: ${code})`);
+    return;
+  }
+  
+  // Code 1006 = abnormal closure (server restart/crash)
+  // Code 1000 = normal closure
+  // Code 1001 = going away (server restart)
+  if (code === 1006 || code === 1001) {
+    // Server restart detected - use longer delay to give server time to restart
+    console.log(`[ZORK] Server restart detected (code: ${code}). Waiting 10s before reconnecting...`);
+    reconnectAttempts = 0; // Reset attempts for fresh restart
+  } else if (code !== 1000) {
+    console.log(`[ZORK] Disconnected (code: ${code}). Reconnecting...`);
+  } else {
+    console.log(`[ZORK] Connection closed normally. Reconnecting...`);
+  }
+  
   client.connected = false;
   client.authenticated = false;
+  isReconnecting = true;
+  
+  // Longer delay for server restarts to give nodemon time to restart cleanly
+  const delay = (code === 1006 || code === 1001) ? 10000 : 5000;
+  
   setTimeout(() => {
-    if (!client?.connected) attemptReconnect();
-  }, 5000);
+    if (!client?.connected) {
+      attemptReconnect().catch(err => {
+        // Don't log ECONNREFUSED during reconnection - expected during restarts
+        const isConnectionRefused = err.code === 'ECONNREFUSED' || 
+                                    err.message?.includes('ECONNREFUSED');
+        if (!isConnectionRefused) {
+          console.error('[ZORK] Error in disconnect reconnect:', err.message || err);
+        }
+        isReconnecting = false; // Reset flag on error
+      });
+    } else {
+      isReconnecting = false; // Reset flag if already connected
+    }
+  }, delay);
 }
 
 /**
  * Attempt to reconnect
  */
 async function attemptReconnect() {
+  // If we're already connected, don't reconnect
+  if (client?.connected) {
+    console.log('[ZORK] Already connected, skipping reconnect');
+    isReconnecting = false;
+    return;
+  }
+  
   if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-    console.log('[ZORK] Max reconnect attempts reached. Retrying in 30s...');
+    console.log('[ZORK] Max reconnect attempts reached. Waiting 30s before retry...');
     reconnectAttempts = 0;
+    isReconnecting = false;
     setTimeout(attemptReconnect, 30000);
     return;
   }
   
   reconnectAttempts++;
-  const delay = Math.min(2000 * reconnectAttempts, 30000);
   
-  console.log(`[ZORK] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`);
+  // Use exponential backoff with longer delays during server restarts
+  // If we've had multiple ECONNREFUSED in a row, server is likely restarting
+  let delay;
+  if (consecutiveConnectionRefused >= 3) {
+    // Server restart detected - use longer backoff to give nodemon time
+    delay = CONFIG.SERVER_RESTART_BACKOFF_MS; // 15 seconds
+  } else if (reconnectAttempts === 1) {
+    delay = 5000; // First attempt: 5 seconds
+  } else if (reconnectAttempts <= 3) {
+    delay = 10000; // Next few attempts: 10 seconds
+  } else {
+    delay = Math.min(5000 * reconnectAttempts, 30000); // Then exponential up to 30s
+  }
+  
+  // Only log every 5th attempt to reduce console spam during server restarts
+  if (reconnectAttempts === 1 || reconnectAttempts % 5 === 0) {
+    console.log(`[ZORK] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`);
+  }
   
   setTimeout(async () => {
-    if (client) {
-      try { client.disconnect(); } catch (e) {}
-      client = null;
+    try {
+      if (client) {
+        try { client.disconnect(); } catch (e) {}
+        client = null;
+      }
+      await connect();
+    } catch (error) {
+      // Prevent unhandled promise rejections from crashing the process
+      // The connect() function will handle its own errors and trigger reconnect
+      // Don't log ECONNREFUSED errors here - they're expected during restarts
+      const isConnectionRefused = error.code === 'ECONNREFUSED' || 
+                                  error.message?.includes('ECONNREFUSED') ||
+                                  (error.errors && error.errors.some(e => e.code === 'ECONNREFUSED'));
+      if (!isConnectionRefused) {
+        console.error('[ZORK] Error during reconnect attempt:', error.message || error);
+      }
     }
-    await connect();
   }, delay);
 }
 
@@ -435,7 +598,24 @@ async function processAndRespond(speaker, message, method) {
           action.params.playerName = speaker;
           console.log(`[ZORK] Auto-filled playerName: ${speaker}`);
         }
-        await executeAction(action, speaker);
+        try {
+          const result = await executeAction(action, speaker);
+          
+          // For markup and game message actions, result contains the data (don't need verification)
+          if (['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword'].includes(action.type)) {
+            console.log(`[ZORK] Markup action ${action.type} completed successfully`);
+            // Mark as successful (no verification needed for direct DB operations)
+            action.verificationFailed = false;
+            if (result && action.type === 'getMarkupConventions') {
+              // Store result for potential use in response
+              action.result = result;
+            }
+          }
+        } catch (error) {
+          console.error(`[ZORK] Action execution error: ${error.message}`);
+          action.verificationFailed = true;
+          action.verificationError = error.message;
+        }
         
         // Collect verification failures
         if (action.verificationFailed) {
@@ -1365,6 +1545,78 @@ async function getPlayerNameById(playerId) {
 }
 
 /**
+ * Refresh server cache via internal API endpoint
+ * @param {string} cacheType - 'markup', 'messages', or 'all'
+ */
+/**
+ * Refresh server cache via internal API endpoint
+ * @param {string} cacheType - 'markup', 'messages', or 'all'
+ */
+async function refreshServerCache(cacheType = 'all') {
+  try {
+    const http = require('http');
+    const https = require('https');
+    const url = require('url');
+    
+    const serverUrl = new URL(CONFIG.HTTP_URL);
+    const cacheToken = process.env.INTERNAL_CACHE_TOKEN || 'internal-cache-refresh-token';
+    const isHttps = serverUrl.protocol === 'https:';
+    const httpModule = isHttps ? https : http;
+    
+    const postData = JSON.stringify({ cacheType });
+    const options = {
+      hostname: serverUrl.hostname,
+      port: serverUrl.port || (isHttps ? 443 : 80),
+      path: '/api/internal/refresh-cache',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'x-internal-token': cacheToken
+      },
+      timeout: 5000 // 5 second timeout
+    };
+    
+    return new Promise((resolve, reject) => {
+      const req = httpModule.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            console.log(`[ZORK] Successfully refreshed ${cacheType} cache on server`);
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              resolve({ success: true });
+            }
+          } else {
+            console.warn(`[ZORK] Cache refresh returned status ${res.statusCode}: ${data}`);
+            resolve(null); // Don't fail the action if cache refresh fails
+          }
+        });
+      });
+      
+      req.on('error', (error) => {
+        console.warn(`[ZORK] Failed to refresh cache (non-critical): ${error.message}`);
+        resolve(null); // Don't fail the action if cache refresh fails
+      });
+      
+      req.on('timeout', () => {
+        req.destroy();
+        console.warn(`[ZORK] Cache refresh request timed out (non-critical)`);
+        resolve(null);
+      });
+      
+      req.write(postData);
+      req.end();
+    });
+  } catch (error) {
+    console.warn(`[ZORK] Error refreshing cache (non-critical): ${error.message}`);
+    return null; // Don't fail the action if cache refresh fails
+  }
+}
+
+/**
  * Execute a god-mode action
  */
 async function executeAction(action, speakerName = null) {
@@ -1538,7 +1790,394 @@ async function executeAction(action, speakerName = null) {
       }
     }
     
-    // Send as WebSocket command
+    // Handle markup commands (direct database operations - return early, don't send via WebSocket)
+    if (type === 'getMarkupConventions') {
+      try {
+        const conventions = await verifier.query(
+          'SELECT * FROM markup_conventions ORDER BY created_at ASC'
+        );
+        console.log(`[ZORK] Retrieved ${conventions.rows.length} markup conventions`);
+        return conventions.rows;
+      } catch (error) {
+        console.error(`[ZORK] Error getting markup conventions:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'createMarkupConvention') {
+      try {
+        const { syntax, opening, closing, description, example, color, effects } = params;
+        if (!syntax || !opening || !closing) {
+          throw new Error('syntax, opening, and closing are required');
+        }
+        
+        const now = Date.now();
+        const result = await verifier.query(
+          `INSERT INTO markup_conventions (syntax, opening, closing, description, example, color, effects, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING *`,
+          [syntax, opening, closing, description || null, example || null, color || null, JSON.stringify(effects || {}), now, now]
+        );
+        
+        // verifier.query() returns an array directly, not {rows: [...]}
+        if (!result || result.length === 0) {
+          throw new Error('Failed to create markup convention');
+        }
+        
+        console.log(`[ZORK] Created markup convention: ${syntax} (ID: ${result[0].id})`);
+        
+        // Refresh markup cache on server
+        await refreshServerCache('markup');
+        
+        return result[0];
+      } catch (error) {
+        console.error(`[ZORK] Error creating markup convention:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'updateMarkupConvention') {
+      try {
+        const { conventionId, syntax, opening, closing, description, example, color, effects } = params;
+        if (!conventionId) {
+          throw new Error('conventionId is required');
+        }
+        
+        const now = Date.now();
+        const updates = [];
+        const values = [];
+        let paramIndex = 1;
+        
+        if (syntax !== undefined) { updates.push(`syntax = $${paramIndex++}`); values.push(syntax); }
+        if (opening !== undefined) { updates.push(`opening = $${paramIndex++}`); values.push(opening); }
+        if (closing !== undefined) { updates.push(`closing = $${paramIndex++}`); values.push(closing); }
+        if (description !== undefined) { updates.push(`description = $${paramIndex++}`); values.push(description); }
+        if (example !== undefined) { updates.push(`example = $${paramIndex++}`); values.push(example); }
+        if (color !== undefined) { updates.push(`color = $${paramIndex++}`); values.push(color); }
+        if (effects !== undefined) { updates.push(`effects = $${paramIndex++}`); values.push(JSON.stringify(effects)); }
+        updates.push(`updated_at = $${paramIndex++}`); values.push(now);
+        values.push(conventionId);
+        
+        const result = await verifier.query(
+          `UPDATE markup_conventions
+           SET ${updates.join(', ')}
+           WHERE id = $${paramIndex}
+           RETURNING *`,
+          values
+        );
+        
+        // verifier.query() returns an array directly, not {rows: [...]}
+        if (!result || result.length === 0) {
+          throw new Error(`Convention with ID ${conventionId} not found`);
+        }
+        
+        console.log(`[ZORK] Updated markup convention: ${conventionId}`);
+        
+        // Refresh markup cache on server
+        await refreshServerCache('markup');
+        
+        return result[0];
+      } catch (error) {
+        console.error(`[ZORK] Error updating markup convention:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'deleteMarkupConvention') {
+      try {
+        const { conventionId } = params;
+        if (!conventionId) {
+          throw new Error('conventionId is required');
+        }
+        
+        await verifier.query(
+          'DELETE FROM markup_conventions WHERE id = $1',
+          [conventionId]
+        );
+        
+        console.log(`[ZORK] Deleted markup convention: ${conventionId}`);
+        
+        // Refresh markup cache on server
+        await refreshServerCache('markup');
+        
+        return { success: true };
+      } catch (error) {
+        console.error(`[ZORK] Error deleting markup convention:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'updateBuiltInMarkupEdit') {
+      try {
+        const { conventionKey, syntax, example } = params;
+        if (!conventionKey) {
+          throw new Error('conventionKey is required');
+        }
+        
+        const now = Date.now();
+        const result = await verifier.query(
+          `INSERT INTO markup_builtin_edits (convention_key, syntax, example, updated_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (convention_key)
+           DO UPDATE SET
+             syntax = EXCLUDED.syntax,
+             example = EXCLUDED.example,
+             updated_at = EXCLUDED.updated_at
+           RETURNING *`,
+          [conventionKey, syntax || null, example || null, now]
+        );
+        
+        // verifier.query() returns an array directly, not {rows: [...]}
+        if (!result || result.length === 0) {
+          throw new Error('Failed to update built-in markup edit');
+        }
+        
+        console.log(`[ZORK] Updated built-in markup edit: ${conventionKey}`);
+        
+        // Refresh markup cache on server
+        await refreshServerCache('markup');
+        
+        return result[0];
+      } catch (error) {
+        console.error(`[ZORK] Error updating built-in markup edit:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Game message commands (direct database operations)
+    if (type === 'getGameMessage') {
+      try {
+        const { messageKey, messageId } = params;
+        
+        // Support both key and ID lookup
+        if (messageId) {
+          const message = await verifier.queryOne(
+            'SELECT * FROM game_messages WHERE id = $1',
+            [messageId]
+          );
+          if (!message) {
+            throw new Error(`Game message with ID ${messageId} not found`);
+          }
+          console.log(`[ZORK] Retrieved game message by ID: ${messageId} (${message.message_key})`);
+          return message;
+        }
+        
+        if (!messageKey) {
+          throw new Error('messageKey or messageId is required');
+        }
+        
+        const message = await verifier.queryOne(
+          'SELECT * FROM game_messages WHERE message_key = $1',
+          [messageKey]
+        );
+        
+        if (!message) {
+          throw new Error(`Game message with key "${messageKey}" not found`);
+        }
+        
+        console.log(`[ZORK] Retrieved game message: ${messageKey}`);
+        return message;
+      } catch (error) {
+        console.error(`[ZORK] Error getting game message:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'getAllGameMessages') {
+      try {
+        const { category } = params;
+        let query = 'SELECT * FROM game_messages';
+        let queryParams = [];
+        
+        if (category) {
+          query += ' WHERE category = $1';
+          queryParams.push(category);
+        }
+        
+        query += ' ORDER BY message_key';
+        
+        const messages = await verifier.query(query, queryParams);
+        // verifier.query() returns an array directly, not {rows: [...]}
+        console.log(`[ZORK] Retrieved ${messages.length} game messages${category ? ` (category: ${category})` : ''}`);
+        return messages;
+      } catch (error) {
+        console.error(`[ZORK] Error getting game messages:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'updateGameMessage') {
+      try {
+        const { messageKey, messageTemplate, description } = params;
+        if (!messageKey) {
+          throw new Error('messageKey is required');
+        }
+        if (!messageTemplate) {
+          throw new Error('messageTemplate is required');
+        }
+        
+        const now = Date.now();
+        const result = await verifier.query(
+          `UPDATE game_messages 
+           SET message_template = $1, 
+               description = COALESCE($2, description),
+               updated_at = $3
+           WHERE message_key = $4
+           RETURNING *`,
+          [messageTemplate, description || null, now, messageKey]
+        );
+        
+        // verifier.query() returns an array directly, not {rows: [...]}
+        if (!result || result.length === 0) {
+          throw new Error(`Game message with key "${messageKey}" not found`);
+        }
+        
+        console.log(`[ZORK] Updated game message: ${messageKey}`);
+        
+        // Refresh message cache on server
+        await refreshServerCache('messages');
+        
+        return result[0];
+      } catch (error) {
+        console.error(`[ZORK] Error updating game message:`, error.message);
+        throw error;
+      }
+    }
+    
+    // NPC keyword/message commands (direct database operations)
+    if (type === 'getNPCKeywords') {
+      try {
+        const { npcId, npcName } = params;
+        let resolvedNpcId = npcId;
+        
+        // Resolve NPC name to ID if needed
+        if (npcName && !resolvedNpcId) {
+          resolvedNpcId = await resolveNpcId(npcName);
+          if (!resolvedNpcId) {
+            throw new Error(`NPC "${npcName}" not found`);
+          }
+        }
+        
+        if (!resolvedNpcId) {
+          throw new Error('npcId or npcName is required');
+        }
+        
+        const loreKeeper = await verifier.queryOne(
+          'SELECT keywords_responses FROM lore_keepers WHERE npc_id = $1',
+          [resolvedNpcId]
+        );
+        
+        if (!loreKeeper) {
+          throw new Error(`Lore Keeper config not found for NPC ID ${resolvedNpcId}`);
+        }
+        
+        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        console.log(`[ZORK] Retrieved keywords for NPC ID ${resolvedNpcId}:`, Object.keys(keywords).length, 'keywords');
+        return { npcId: resolvedNpcId, keywords };
+      } catch (error) {
+        console.error(`[ZORK] Error getting NPC keywords:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'updateNPCKeyword') {
+      try {
+        const { npcId, npcName, keyword, response } = params;
+        let resolvedNpcId = npcId;
+        
+        // Resolve NPC name to ID if needed
+        if (npcName && !resolvedNpcId) {
+          resolvedNpcId = await resolveNpcId(npcName);
+          if (!resolvedNpcId) {
+            throw new Error(`NPC "${npcName}" not found`);
+          }
+        }
+        
+        if (!resolvedNpcId) {
+          throw new Error('npcId or npcName is required');
+        }
+        if (!keyword) {
+          throw new Error('keyword is required');
+        }
+        if (!response) {
+          throw new Error('response is required');
+        }
+        
+        // Get current keywords
+        const loreKeeper = await verifier.queryOne(
+          'SELECT keywords_responses FROM lore_keepers WHERE npc_id = $1',
+          [resolvedNpcId]
+        );
+        
+        if (!loreKeeper) {
+          throw new Error(`Lore Keeper config not found for NPC ID ${resolvedNpcId}`);
+        }
+        
+        // Update keywords JSON
+        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        keywords[keyword.toLowerCase()] = response;
+        
+        await verifier.query(
+          'UPDATE lore_keepers SET keywords_responses = $1, updated_at = NOW() WHERE npc_id = $2',
+          [JSON.stringify(keywords), resolvedNpcId]
+        );
+        
+        console.log(`[ZORK] Updated keyword "${keyword}" for NPC ID ${resolvedNpcId}`);
+        return { npcId: resolvedNpcId, keyword, response };
+      } catch (error) {
+        console.error(`[ZORK] Error updating NPC keyword:`, error.message);
+        throw error;
+      }
+    }
+    
+    if (type === 'deleteNPCKeyword') {
+      try {
+        const { npcId, npcName, keyword } = params;
+        let resolvedNpcId = npcId;
+        
+        // Resolve NPC name to ID if needed
+        if (npcName && !resolvedNpcId) {
+          resolvedNpcId = await resolveNpcId(npcName);
+          if (!resolvedNpcId) {
+            throw new Error(`NPC "${npcName}" not found`);
+          }
+        }
+        
+        if (!resolvedNpcId) {
+          throw new Error('npcId or npcName is required');
+        }
+        if (!keyword) {
+          throw new Error('keyword is required');
+        }
+        
+        // Get current keywords
+        const loreKeeper = await verifier.queryOne(
+          'SELECT keywords_responses FROM lore_keepers WHERE npc_id = $1',
+          [resolvedNpcId]
+        );
+        
+        if (!loreKeeper) {
+          throw new Error(`Lore Keeper config not found for NPC ID ${resolvedNpcId}`);
+        }
+        
+        // Remove keyword from JSON
+        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        delete keywords[keyword.toLowerCase()];
+        
+        await verifier.query(
+          'UPDATE lore_keepers SET keywords_responses = $1, updated_at = NOW() WHERE npc_id = $2',
+          [JSON.stringify(keywords), resolvedNpcId]
+        );
+        
+        console.log(`[ZORK] Deleted keyword "${keyword}" from NPC ID ${resolvedNpcId}`);
+        return { npcId: resolvedNpcId, keyword, deleted: true };
+      } catch (error) {
+        console.error(`[ZORK] Error deleting NPC keyword:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Send as WebSocket command (for non-markup actions)
     if (client && client.connected) {
       // For updatePlayer, only send type and player object (no other params)
       let command;
@@ -1691,7 +2330,7 @@ function addRecentEvent(event) {
 /**
  * Wait for server to be ready
  */
-async function waitForServerReady(maxAttempts = 30) {
+async function waitForServerReady(maxAttempts = 20) {
   const WebSocket = (await import('ws')).default;
   
   console.log(`[ZORK] Checking if server is ready at ${CONFIG.WS_URL}...`);
@@ -1699,11 +2338,11 @@ async function waitForServerReady(maxAttempts = 30) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       await new Promise((resolve, reject) => {
-        const ws = new WebSocket(CONFIG.WS_URL, { handshakeTimeout: 3000 });
+        const ws = new WebSocket(CONFIG.WS_URL, { handshakeTimeout: 5000 });
         const timeout = setTimeout(() => {
           ws.terminate();
           reject(new Error('Timeout'));
-        }, 3000);
+        }, 5000);
         
         ws.on('open', () => {
           clearTimeout(timeout);
@@ -1714,19 +2353,28 @@ async function waitForServerReady(maxAttempts = 30) {
         ws.on('error', (err) => {
           clearTimeout(timeout);
           ws.terminate();
+          // Suppress ECONNREFUSED errors - they're expected when server is down
+          if (err.code !== 'ECONNREFUSED' && err.message && !err.message.includes('ECONNREFUSED')) {
+            // Only log non-connection-refused errors
+          }
           reject(err);
         });
       });
       
-      console.log('[ZORK] Server is ready!');
+      console.log('[ZORK] ✅ Server is ready!');
       return true;
     } catch (error) {
-      const delay = Math.min(2000 + (i * 500), 5000);
-      console.log(`[ZORK] Waiting for server... (${i + 1}/${maxAttempts})`);
+      // Longer delays between attempts (3-8 seconds)
+      const delay = Math.min(3000 + (i * 500), 8000);
+      // Only log every 3rd attempt to reduce spam
+      if (i % 3 === 0 || i === maxAttempts - 1) {
+        console.log(`[ZORK] Waiting for server... (${i + 1}/${maxAttempts})`);
+      }
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   
+  console.log(`[ZORK] ⚠️ Server not ready after ${maxAttempts} attempts`);
   return false;
 }
 
@@ -1782,15 +2430,15 @@ async function main() {
     console.log(`[ZORK] Set initial location to Fliz's room: ${fliz.current_room_id}`);
   }
   
-  // Wait for server
-  console.log('[ZORK] Waiting for server...');
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  // Wait for server (longer initial delay to let server start)
+  console.log('[ZORK] Waiting for server to be ready...');
+  await new Promise(resolve => setTimeout(resolve, 5000));
   
   const serverReady = await waitForServerReady();
   
   if (!serverReady) {
-    console.log('[ZORK] Server not ready. Will retry in 5s...');
-    setTimeout(connect, 5000);
+    console.log('[ZORK] Server not ready. Will retry connection in 10s...');
+    setTimeout(connect, 10000);
   } else {
     await connect();
   }
@@ -1801,3 +2449,4 @@ main().catch(error => {
   console.error('[ZORK] Fatal error:', error);
   process.exit(1);
 });
+

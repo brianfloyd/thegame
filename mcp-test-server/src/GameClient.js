@@ -215,10 +215,20 @@ export class GameClient {
       });
       
       this.ws.on('error', (error) => {
-        console.error(`[GameClient] WebSocket connection error:`, error);
-        console.error(`[GameClient] Error message:`, error.message);
-        console.error(`[GameClient] Error code:`, error.code);
-        console.error(`[GameClient] Connecting to:`, this.wsUrl);
+        // Suppress verbose logging for ECONNREFUSED (expected during server restarts)
+        // Handle both regular errors and AggregateError (which wraps ECONNREFUSED)
+        const isConnectionRefused = error.code === 'ECONNREFUSED' || 
+                                    (error.errors && error.errors.some(e => e.code === 'ECONNREFUSED'));
+        
+        if (isConnectionRefused) {
+          // Silently handle - this is expected when server is restarting
+          // The reconnection logic will handle retries
+          reject(error);
+          return;
+        }
+        
+        // For other errors, log normally but concisely
+        console.error(`[GameClient] WebSocket connection error:`, error.message || error);
         reject(error);
       });
     });
@@ -396,6 +406,7 @@ export class GameClient {
     };
   }
 }
+
 
 
 

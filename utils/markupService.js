@@ -47,22 +47,85 @@ const TYPEWRITER_PATTERN = /\{\{typewriter(?::(\d+))?\}\}([\s\S]*?)\{\{\/typewri
 let customMarkupConventions = {};
 let customConventionsLoaded = false;
 
+// Built-in convention edits cache (loaded from database)
+let builtInConventionEdits = {};
+let builtInEditsLoaded = false;
+
 /**
  * Load custom markup conventions from database
  * @param {object} db - Database module
  */
 async function loadCustomConventions(db) {
     try {
-        // Check if database has a table for custom markup conventions
-        // For now, we'll use an empty object - custom conventions can be added later
-        // if needed via database or configuration
+        const conventions = await db.getAllMarkupConventions();
         customMarkupConventions = {};
+        
+        // Convert database rows to convention objects
+        for (const row of conventions) {
+            const key = `custom_${row.id}`;
+            customMarkupConventions[key] = {
+                syntax: row.syntax,
+                opening: row.opening,
+                closing: row.closing,
+                description: row.description || '',
+                example: row.example || '',
+                color: row.color || 'keyword',
+                effects: row.effects || {}
+            };
+        }
+        
         customConventionsLoaded = true;
+        console.log(`[MarkupService] Loaded ${conventions.length} custom markup conventions from database`);
     } catch (e) {
         console.error('[MarkupService] Failed to load custom markup conventions:', e);
         customMarkupConventions = {};
         customConventionsLoaded = true;
     }
+}
+
+/**
+ * Load built-in convention edits from database
+ * @param {object} db - Database module
+ */
+async function loadBuiltInConventionEdits(db) {
+    try {
+        const edits = await db.getBuiltInConventionEdits();
+        builtInConventionEdits = {};
+        
+        // Store edits by convention key
+        for (const row of edits) {
+            builtInConventionEdits[row.convention_key] = {
+                syntax: row.syntax,
+                example: row.example
+            };
+        }
+        
+        builtInEditsLoaded = true;
+        console.log(`[MarkupService] Loaded ${edits.length} built-in convention edits from database`);
+    } catch (e) {
+        console.error('[MarkupService] Failed to load built-in convention edits:', e);
+        builtInConventionEdits = {};
+        builtInEditsLoaded = true;
+    }
+}
+
+/**
+ * Get merged built-in conventions with edits applied
+ * @returns {object} MARKUP_CONVENTIONS with edits applied
+ */
+function getMergedBuiltInConventions() {
+    const merged = {};
+    
+    for (const [key, convention] of Object.entries(MARKUP_CONVENTIONS)) {
+        const edit = builtInConventionEdits[key];
+        merged[key] = {
+            ...convention,
+            syntax: edit?.syntax || convention.syntax,
+            example: edit?.example || convention.example
+        };
+    }
+    
+    return merged;
 }
 
 /**
@@ -157,8 +220,9 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
         return placeholder;
     });
     
-    // Combine built-in and custom conventions
-    const allConventions = { ...MARKUP_CONVENTIONS, ...customMarkupConventions };
+    // Combine built-in (with edits) and custom conventions
+    const mergedBuiltIn = getMergedBuiltInConventions();
+    const allConventions = { ...mergedBuiltIn, ...customMarkupConventions };
     
     // Sort by opening length (longest first) to handle nested/consecutive patterns
     const sortedConventions = Object.entries(allConventions).sort((a, b) => 
@@ -257,13 +321,27 @@ function formatMessageForTerminal(text, type = 'info', keywordColor = '#00ffff')
 }
 
 /**
- * Initialize markup service (load custom conventions)
+ * Initialize markup service (load custom conventions and built-in edits)
  * @param {object} db - Database module
  */
 async function initializeMarkupService(db) {
     if (!customConventionsLoaded) {
         await loadCustomConventions(db);
     }
+    if (!builtInEditsLoaded) {
+        await loadBuiltInConventionEdits(db);
+    }
+}
+
+/**
+ * Reload markup conventions from database (for cache invalidation)
+ * @param {object} db - Database module
+ */
+async function reloadMarkupConventions(db) {
+    customConventionsLoaded = false;
+    builtInEditsLoaded = false;
+    await loadCustomConventions(db);
+    await loadBuiltInConventionEdits(db);
 }
 
 module.exports = {
@@ -271,7 +349,10 @@ module.exports = {
     parseTypewriterMarkup,
     formatMessageForTerminal,
     initializeMarkupService,
+    reloadMarkupConventions,
     loadCustomConventions,
+    loadBuiltInConventionEdits,
+    getMergedBuiltInConventions,
     // Export for testing
     escapeHtml,
     generateMarkupCSS

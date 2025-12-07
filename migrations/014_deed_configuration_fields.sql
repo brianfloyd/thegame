@@ -35,3 +35,4 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS deed_automation_enabled BOOLEAN DEFAU
 
 
 
+

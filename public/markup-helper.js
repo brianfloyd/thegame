@@ -55,33 +55,300 @@ const MARKUP_CONVENTIONS = {
     }
 };
 
-// Custom markup conventions (loaded from localStorage)
+// Custom markup conventions (loaded from database via API)
 let customMarkupConventions = {};
 
-// Load custom conventions from localStorage
-function loadCustomConventions() {
+// Track editable example text for built-in conventions (loaded from database via API)
+let builtInExampleTexts = {};
+
+// Track editable syntax text for built-in conventions (loaded from database via API)
+let builtInSyntaxTexts = {};
+
+// Track active typewriter animations (for cleanup)
+const activeTypewriterTimeouts = new Map();
+
+// Check for and migrate localStorage data to database
+async function migrateLocalStorageMarkup() {
     try {
+        // Check if there's old localStorage data
         const stored = localStorage.getItem('customMarkupConventions');
-        if (stored) {
-            customMarkupConventions = JSON.parse(stored);
+        if (!stored) {
+            return { migrated: false, count: 0 };
+        }
+        
+        const localStorageConventions = JSON.parse(stored);
+        const conventionKeys = Object.keys(localStorageConventions);
+        
+        if (conventionKeys.length === 0) {
+            return { migrated: false, count: 0 };
+        }
+        
+        console.log(`[MarkupHelper] Found ${conventionKeys.length} conventions in localStorage, migrating to database...`);
+        
+        let migratedCount = 0;
+        let errorCount = 0;
+        
+        // Migrate each convention to database
+        for (const key of conventionKeys) {
+            const convention = localStorageConventions[key];
+            
+            // Skip if it doesn't have required fields
+            if (!convention.opening || !convention.closing) {
+                console.warn(`[MarkupHelper] Skipping invalid convention ${key}:`, convention);
+                continue;
+            }
+            
+            try {
+                // Create convention in database
+                await saveCustomConvention({
+                    syntax: convention.syntax || `${convention.opening}text${convention.closing}`,
+                    opening: convention.opening,
+                    closing: convention.closing,
+                    description: convention.description || '',
+                    example: convention.example || '',
+                    color: convention.color || 'keyword',
+                    effects: convention.effects || {}
+                });
+                
+                migratedCount++;
+                console.log(`[MarkupHelper] Migrated convention: ${convention.syntax || key}`);
+            } catch (e) {
+                console.error(`[MarkupHelper] Failed to migrate convention ${key}:`, e);
+                errorCount++;
+            }
+        }
+        
+        // Clear localStorage after successful migration
+        if (migratedCount > 0) {
+            localStorage.removeItem('customMarkupConventions');
+            console.log(`[MarkupHelper] Migration complete: ${migratedCount} conventions migrated, ${errorCount} errors. localStorage cleared.`);
+        }
+        
+        return { migrated: migratedCount > 0, count: migratedCount, errors: errorCount };
+    } catch (e) {
+        console.error('[MarkupHelper] Error during localStorage migration:', e);
+        return { migrated: false, count: 0, error: e.message };
+    }
+}
+
+// Load custom conventions from API
+async function loadCustomConventions() {
+    try {
+        console.log('[MarkupHelper] Fetching custom conventions from API...');
+        const response = await fetch('/api/markup/conventions');
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[MarkupHelper] API error ${response.status}:`, errorText);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        let conventions = await response.json();
+        console.log(`[MarkupHelper] API returned ${conventions.length} conventions:`, conventions);
+        
+        // If no conventions in database, check for localStorage migration
+        if (conventions.length === 0) {
+            const migrationResult = await migrateLocalStorageMarkup();
+            if (migrationResult.migrated) {
+                console.log(`[MarkupHelper] ✅ Successfully migrated ${migrationResult.count} convention(s) from localStorage to database`);
+                if (migrationResult.errors > 0) {
+                    console.warn(`[MarkupHelper] ⚠️ ${migrationResult.errors} convention(s) failed to migrate`);
+                }
+                // Reload after migration
+                const reloadResponse = await fetch('/api/markup/conventions');
+                if (reloadResponse.ok) {
+                    const reloadedConventions = await reloadResponse.json();
+                    console.log(`[MarkupHelper] After migration, found ${reloadedConventions.length} conventions in database`);
+                    // Use reloaded conventions
+                    conventions = reloadedConventions;
+                }
+            } else {
+                // Check if localStorage exists but migration wasn't needed (maybe already migrated)
+                const stored = localStorage.getItem('customMarkupConventions');
+                if (stored) {
+                    try {
+                        const parsed = JSON.parse(stored);
+                        if (Object.keys(parsed).length > 0) {
+                            console.log(`[MarkupHelper] Found ${Object.keys(parsed).length} convention(s) in localStorage but migration returned no results. They may need manual migration.`);
+                        }
+                    } catch (e) {
+                        // Ignore parse errors
+                    }
+                }
+            }
+        }
+
+        // Convert array to object format (keyed by custom_<id>)
+        customMarkupConventions = {};
+        for (const conv of conventions) {
+            if (!conv || !conv.id) {
+                console.warn('[MarkupHelper] Skipping invalid convention:', conv);
+                continue;
+            }
+            
+            const key = `custom_${conv.id}`;
+            
+            // Parse effects if it's a string (shouldn't happen with JSONB, but be safe)
+            let effects = conv.effects || {};
+            if (typeof effects === 'string') {
+                try {
+                    effects = JSON.parse(effects);
+                } catch (e) {
+                    console.warn(`[MarkupHelper] Failed to parse effects for convention ${conv.id}:`, e);
+                    effects = {};
+                }
+            }
+            
+            customMarkupConventions[key] = {
+                syntax: conv.syntax || '',
+                opening: conv.opening || '',
+                closing: conv.closing || '',
+                description: conv.description || '',
+                example: conv.example || '',
+                color: conv.color || 'keyword',
+                effects: effects
+            };
+            
+            console.log(`[MarkupHelper] Loaded convention ${key}:`, customMarkupConventions[key]);
+        }
+        
+        console.log(`[MarkupHelper] Successfully loaded ${Object.keys(customMarkupConventions).length} custom markup conventions`);
+        
+        // If we got 0 conventions but the user expects some, log a warning
+        if (Object.keys(customMarkupConventions).length === 0) {
+            console.warn('[MarkupHelper] No custom conventions found in database. If you expected to see conventions here, they may need to be recreated.');
         }
     } catch (e) {
-        console.error('Failed to load custom markup conventions:', e);
+        console.error('[MarkupHelper] Failed to load custom markup conventions:', e);
+        console.error('[MarkupHelper] Error stack:', e.stack);
+        
+        // If it's a 403, it might be a god mode issue
+        if (e.message && e.message.includes('403')) {
+            console.error('[MarkupHelper] API returned 403 - you may need god mode to access markup conventions');
+        }
+        
         customMarkupConventions = {};
     }
 }
 
-// Save custom conventions to localStorage
-function saveCustomConventions() {
+// Save custom convention to API
+async function saveCustomConvention(convention, conventionId = null) {
     try {
-        localStorage.setItem('customMarkupConventions', JSON.stringify(customMarkupConventions));
+        const url = conventionId 
+            ? `/api/markup/conventions/${conventionId}`
+            : '/api/markup/conventions';
+        const method = conventionId ? 'PUT' : 'POST';
+        
+        const response = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(convention)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const saved = await response.json();
+        
+        // Reload conventions to get updated list
+        await loadCustomConventions();
+        
+        return saved;
     } catch (e) {
-        console.error('Failed to save custom markup conventions:', e);
+        console.error('Failed to save custom markup convention:', e);
+        throw e;
     }
 }
 
-// Load on initialization
-loadCustomConventions();
+// Delete custom convention from API
+async function deleteCustomConvention(conventionId) {
+    try {
+        const response = await fetch(`/api/markup/conventions/${conventionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        // Reload conventions to get updated list
+        await loadCustomConventions();
+        
+        return true;
+    } catch (e) {
+        console.error('Failed to delete custom markup convention:', e);
+        throw e;
+    }
+}
+
+// Load built-in convention edits from API
+async function loadBuiltInConventionEdits() {
+    try {
+        const response = await fetch('/api/markup/builtin-edits');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const edits = await response.json();
+        
+        builtInExampleTexts = {};
+        builtInSyntaxTexts = {};
+        
+        for (const edit of edits) {
+            if (edit.example) {
+                builtInExampleTexts[edit.convention_key] = edit.example;
+            }
+            if (edit.syntax) {
+                builtInSyntaxTexts[edit.convention_key] = edit.syntax;
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load built-in convention edits:', e);
+        builtInExampleTexts = {};
+        builtInSyntaxTexts = {};
+    }
+}
+
+// Save built-in convention edit to API
+async function saveBuiltInConventionEdit(conventionKey, syntax, example) {
+    try {
+        const response = await fetch(`/api/markup/builtin-edits/${encodeURIComponent(conventionKey)}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ syntax, example })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const saved = await response.json();
+        
+        // Update local cache
+        if (saved.example) {
+            builtInExampleTexts[conventionKey] = saved.example;
+        }
+        if (saved.syntax) {
+            builtInSyntaxTexts[conventionKey] = saved.syntax;
+        }
+        
+        return saved;
+    } catch (e) {
+        console.error('Failed to save built-in convention edit:', e);
+        throw e;
+    }
+}
+
+// Load on initialization (async, but don't block)
+loadCustomConventions().catch(e => console.error('Initial load failed:', e));
+loadBuiltInConventionEdits().catch(e => console.error('Initial load failed:', e));
 
 /**
  * Detect opening and closing sequences from a pattern
@@ -138,7 +405,8 @@ function detectConventionPattern(pattern) {
  * Check for conflicts with existing conventions
  */
 function checkConventionConflict(opening, closing) {
-    loadCustomConventions(); // Reload to get latest
+    // Note: loadCustomConventions is async, but this function is synchronous
+    // The conventions should already be loaded when this is called
     const allConventions = { ...MARKUP_CONVENTIONS, ...customMarkupConventions };
     const conflicts = [];
     
@@ -188,10 +456,9 @@ function generateMarkupCSS(effects, color) {
  */
 function parseMarkup(text, keywordColor = '#ff00ff') {
     if (!text) return '';
-    
-    // Reload custom conventions in case they were updated
-    loadCustomConventions();
-    
+
+    // Note: loadCustomConventions is async, but this function is synchronous
+    // The conventions should already be loaded when this is called
     const glowColor = keywordColor || '#ff00ff';
     
     // Combine built-in and custom conventions
@@ -236,9 +503,16 @@ function parseMarkup(text, keywordColor = '#ff00ff') {
             const css = generateMarkupCSS(convention.effects || {}, color);
             const className = `markup-${key}`;
             
+            // Handle typewriter effect - wrap in span with data attributes
+            let spanContent = escapedContent;
+            if (convention.effects?.typewriter) {
+                const delay = convention.effects.typewriterDelay || 100;
+                spanContent = `<span class="typewriter-effect" data-typewriter="true" data-typewriter-delay="${delay}">${escapedContent}</span>`;
+            }
+            
             // Store the span HTML
             const placeholder = `__MARKUP_${placeholderIndex}__`;
-            placeholders[placeholderIndex] = `<span class="${className}" style="${css}">${escapedContent}</span>`;
+            placeholders[placeholderIndex] = `<span class="${className}" style="${css}">${spanContent}</span>`;
             placeholderIndex++;
             
             return placeholder;
@@ -266,12 +540,165 @@ function escapeHtml(text) {
 }
 
 /**
+ * Initialize typewriter effects on elements with data-typewriter attribute
+ * This is called after HTML is inserted into the DOM
+ * @param {HTMLElement} container - Container element to search for typewriter elements
+ */
+function initializeTypewriterEffects(container) {
+    if (!container) return;
+    
+    // Find all typewriter elements, including nested ones
+    const typewriterElements = container.querySelectorAll('[data-typewriter="true"]');
+    
+    typewriterElements.forEach((element, index) => {
+        // Stop any existing animation for this element
+        const existingId = element.getAttribute('data-typewriter-id');
+        if (existingId && activeTypewriterTimeouts.has(existingId)) {
+            clearTimeout(activeTypewriterTimeouts.get(existingId));
+            activeTypewriterTimeouts.delete(existingId);
+        }
+        
+        // Reset initialization state if content was replaced
+        if (element.getAttribute('data-typewriter-initialized') === 'true') {
+            // If content is empty or animating, it's already running - skip
+            if (element.innerHTML === '' || element.getAttribute('data-typewriter-animating') === 'true') {
+                return;
+            }
+            // Otherwise, content was replaced - re-initialize
+            element.removeAttribute('data-typewriter-initialized');
+            element.removeAttribute('data-typewriter-animating');
+        }
+        
+        const delay = parseInt(element.getAttribute('data-typewriter-delay') || '100', 10);
+        const fullContent = element.innerHTML;
+        
+        // If no content, skip
+        if (!fullContent || fullContent.trim() === '') {
+            return;
+        }
+        
+        // Create unique ID for this animation
+        const typewriterId = `tw_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`;
+        element.setAttribute('data-typewriter-id', typewriterId);
+        
+        // Store original content and clear element
+        element.setAttribute('data-typewriter-content', fullContent);
+        element.innerHTML = '';
+        element.style.visibility = 'visible';
+        element.setAttribute('data-typewriter-initialized', 'true');
+        element.setAttribute('data-typewriter-animating', 'true');
+        
+        // Parse HTML content into segments (tags, entities, text)
+        const segments = parseHtmlForTypewriter(fullContent);
+        let currentIndex = 0;
+        
+        function typeNext() {
+            // Check if animation was cancelled (element removed or re-initialized)
+            if (element.getAttribute('data-typewriter-id') !== typewriterId) {
+                activeTypewriterTimeouts.delete(typewriterId);
+                return;
+            }
+            
+            if (currentIndex >= segments.length) {
+                // Animation complete
+                element.removeAttribute('data-typewriter-animating');
+                activeTypewriterTimeouts.delete(typewriterId);
+                return; // Done
+            }
+            
+            const segment = segments[currentIndex];
+            if (segment.isTag) {
+                // For HTML tags, append immediately
+                element.innerHTML += segment.content;
+                currentIndex++;
+                typeNext();
+            } else {
+                // For text/entities, append character by character
+                const char = segment.content[0];
+                element.innerHTML += char;
+                segment.content = segment.content.substring(1);
+                
+                if (segment.content.length === 0) {
+                    currentIndex++;
+                }
+                
+                if (currentIndex < segments.length || segment.content.length > 0) {
+                    const timeoutId = setTimeout(typeNext, delay);
+                    activeTypewriterTimeouts.set(typewriterId, timeoutId);
+                } else {
+                    // Animation complete
+                    element.removeAttribute('data-typewriter-animating');
+                    activeTypewriterTimeouts.delete(typewriterId);
+                }
+            }
+        }
+        
+        // Start typing
+        typeNext();
+    });
+}
+
+/**
+ * Parse HTML into segments for typewriter effect
+ * Handles HTML tags and entities as single units
+ */
+function parseHtmlForTypewriter(html) {
+    const segments = [];
+    let i = 0;
+    
+    while (i < html.length) {
+        if (html[i] === '<') {
+            // Find end of tag
+            const tagEnd = html.indexOf('>', i);
+            if (tagEnd !== -1) {
+                segments.push({
+                    content: html.substring(i, tagEnd + 1),
+                    isTag: true
+                });
+                i = tagEnd + 1;
+            } else {
+                segments.push({ content: html[i], isTag: false });
+                i++;
+            }
+        } else if (html[i] === '&') {
+            // Handle HTML entities
+            const entityEnd = html.indexOf(';', i);
+            if (entityEnd !== -1 && entityEnd - i < 10) {
+                segments.push({
+                    content: html.substring(i, entityEnd + 1),
+                    isTag: false
+                });
+                i = entityEnd + 1;
+            } else {
+                segments.push({ content: html[i], isTag: false });
+                i++;
+            }
+        } else {
+            segments.push({ content: html[i], isTag: false });
+            i++;
+        }
+    }
+    
+    return segments;
+}
+
+/**
  * Show markup reference modal with custom markup editor
  */
-function showMarkupReference(editorName = 'Editor') {
+async function showMarkupReference(editorName = 'Editor') {
     // Remove existing modal if present
     const existing = document.getElementById('markupReferenceModal');
     if (existing) existing.remove();
+
+    // Reload data from API
+    await loadCustomConventions();
+    await loadBuiltInConventionEdits();
+    
+    // Debug: Log what we loaded
+    console.log(`[MarkupHelper] Showing markup reference. Custom conventions loaded:`, Object.keys(customMarkupConventions).length);
+    if (Object.keys(customMarkupConventions).length > 0) {
+        console.log(`[MarkupHelper] Custom convention keys:`, Object.keys(customMarkupConventions));
+    }
     
     const modal = document.createElement('div');
     modal.id = 'markupReferenceModal';
@@ -313,45 +740,99 @@ function showMarkupReference(editorName = 'Editor') {
     `;
     
     // List all current conventions (built-in first)
+    let builtInIndex = 0;
     Object.entries(MARKUP_CONVENTIONS).forEach(([key, convention]) => {
-        // Escape syntax for display in code tag
-        const syntaxDisplay = escapeHtml(convention.syntax);
+        // Use stored editable syntax or default
+        const currentSyntax = builtInSyntaxTexts[key] || convention.syntax;
+        const syntaxDisplay = escapeHtml(currentSyntax);
+        const syntaxInputId = `builtInSyntax_${builtInIndex}`;
+        const exampleId = `builtInExample_${builtInIndex}`;
+        const exampleTextId = `builtInExampleText_${builtInIndex}`;
+        const hasEffects = convention.effects && Object.keys(convention.effects).length > 0;
+        const replayButton = hasEffects ? `<button id="replayBuiltIn_${builtInIndex}" style="background: #003300; border: 1px solid #00ff00; color: #00ff00; padding: 3px 8px; cursor: pointer; font-size: 10px; margin-left: 5px; font-family: 'Courier New', monospace;">↻ Replay</button>` : '';
+        const deleteButton = `<button id="deleteBuiltIn_${builtInIndex}" style="background: #330000; border: 1px solid #ff0000; color: #ff6666; padding: 3px 8px; cursor: pointer; font-size: 10px; margin-left: 5px; font-family: 'Courier New', monospace;">✕ Delete</button>`;
+        
+        // Use stored editable text or default example
+        const currentExampleText = builtInExampleTexts[key] || convention.example;
+        
         html += `
-            <div style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+            <div id="builtInConvention_${builtInIndex}" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                    <code style="background: #002200; padding: 5px 10px; color: #00ff00; font-size: 14px;">${syntaxDisplay}</code>
+                    <code id="${syntaxInputId}" contenteditable="true" style="background: #002200; padding: 5px 10px; color: #00ff00; font-size: 14px; cursor: text; min-width: 80px; display: inline-block; border: 1px solid transparent;" onblur="this.style.border='1px solid transparent'" onfocus="this.style.border='1px solid #00ff00'">${syntaxDisplay}</code>
                     <span style="color: #888; font-size: 12px;">${convention.description}</span>
                 </div>
                 <div style="margin-top: 10px;">
-                    <span style="color: #888; font-size: 11px;">Example:</span>
-                    <div style="margin-top: 5px; padding: 8px; background: #000; border: 1px solid #003300; color: #00ff00;">
-                        ${parseMarkup(convention.example, '#00ffff')}
+                    <div style="display: flex; align-items: center; gap: 5px; margin-bottom: 5px;">
+                        <span style="color: #888; font-size: 11px;">Example Text:</span>
+                        ${replayButton}
+                        ${deleteButton}
+                    </div>
+                    <input type="text" id="${exampleTextId}" value="${escapeHtml(currentExampleText)}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px; font-family: 'Courier New', monospace; font-size: 12px; margin-bottom: 5px;">
+                    <div id="${exampleId}" style="margin-top: 5px; padding: 8px; background: #000; border: 1px solid #003300; color: #00ff00;">
+                        ${parseMarkup(currentExampleText, '#00ffff')}
                     </div>
                 </div>
             </div>
         `;
+        builtInIndex++;
     });
     
-    // Then show custom conventions
-    loadCustomConventions();
-    Object.entries(customMarkupConventions).forEach(([key, convention]) => {
-        // Escape syntax for display in code tag
-        const syntaxDisplay = escapeHtml(convention.syntax);
+    // Then show custom conventions (already loaded at top of function)
+    // Note: No section header - all conventions are displayed together consistently
+    let customConventionIndex = 0;
+    const customConventionKeys = Object.keys(customMarkupConventions); // Store keys for deletion
+    
+    // Debug: Log custom conventions before rendering
+    console.log(`[MarkupHelper] Rendering ${customConventionKeys.length} custom conventions`);
+    console.log(`[MarkupHelper] Custom conventions object:`, customMarkupConventions);
+    
+    if (customConventionKeys.length === 0) {
         html += `
-            <div style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+            <div style="margin-top: 20px; margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
+                <p style="color: #888; font-size: 12px; margin: 0; margin-bottom: 10px;">
+                    No custom markup conventions found in the database.
+                </p>
+                <p style="color: #ff8800; font-size: 11px; margin: 0;">
+                    <strong>Note:</strong> If you created conventions that are working in-game but not showing here, 
+                    they may need to be recreated. The server cache will reload automatically when you create new conventions.
+                </p>
+                <p style="color: #888; font-size: 11px; margin: 5px 0 0 0;">
+                    Create a new convention below, or ask ZORK to create one for you.
+                </p>
+            </div>
+        `;
+    }
+    
+    Object.entries(customMarkupConventions).forEach(([key, convention]) => {
+        console.log(`[MarkupHelper] Rendering custom convention: ${key}`, convention);
+        // Escape syntax for display in code tag (make it editable like built-ins)
+        const syntaxDisplay = escapeHtml(convention.syntax);
+        const syntaxInputId = `customSyntax_${customConventionIndex}`;
+        const exampleId = `markupExample_${customConventionIndex}`;
+        const exampleTextId = `customExampleText_${customConventionIndex}`;
+        const hasEffects = convention.effects && Object.keys(convention.effects).length > 0;
+        const replayButton = hasEffects ? `<button id="replayCustom_${customConventionIndex}" style="background: #003300; border: 1px solid #00ff00; color: #00ff00; padding: 3px 8px; cursor: pointer; font-size: 10px; margin-left: 5px; font-family: 'Courier New', monospace;">↻ Replay</button>` : '';
+        const deleteButton = `<button id="deleteCustom_${customConventionIndex}" style="background: #330000; border: 1px solid #ff0000; color: #ff6666; padding: 3px 8px; cursor: pointer; font-size: 10px; margin-left: 5px; font-family: 'Courier New', monospace;">✕ Delete</button>`;
+        html += `
+            <div id="customConvention_${customConventionIndex}" style="margin-bottom: 20px; padding: 15px; background: rgba(0, 50, 0, 0.3); border: 1px solid #006600;">
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                    <code style="background: #002200; padding: 5px 10px; color: #00ff00; font-size: 14px;">${syntaxDisplay}</code>
+                    <code id="${syntaxInputId}" contenteditable="true" style="background: #002200; padding: 5px 10px; color: #00ff00; font-size: 14px; cursor: text; min-width: 80px; display: inline-block; border: 1px solid transparent;" onblur="this.style.border='1px solid transparent'" onfocus="this.style.border='1px solid #00ff00'">${syntaxDisplay}</code>
                     <span style="color: #888; font-size: 12px;">${convention.description}</span>
-                    <span style="color: #ff8800; font-size: 10px; margin-left: auto;">(Custom)</span>
                 </div>
                 <div style="margin-top: 10px;">
-                    <span style="color: #888; font-size: 11px;">Example:</span>
-                    <div style="margin-top: 5px; padding: 8px; background: #000; border: 1px solid #003300; color: #00ff00;">
+                    <div style="display: flex; align-items: center; gap: 5px; margin-bottom: 5px;">
+                        <span style="color: #888; font-size: 11px;">Example Text:</span>
+                        ${replayButton}
+                        ${deleteButton}
+                    </div>
+                    <input type="text" id="${exampleTextId}" value="${escapeHtml(convention.example)}" style="width: 100%; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px; font-family: 'Courier New', monospace; font-size: 12px; margin-bottom: 5px;">
+                    <div id="${exampleId}" style="margin-top: 5px; padding: 8px; background: #000; border: 1px solid #003300; color: #00ff00;">
                         ${parseMarkup(convention.example, '#00ffff')}
                     </div>
                 </div>
             </div>
         `;
+        customConventionIndex++;
     });
     
     // Custom markup editor
@@ -411,7 +892,17 @@ function showMarkupReference(editorName = 'Editor') {
                             <input type="checkbox" id="newMarkupPulse">
                             <span>Pulse</span>
                         </label>
+                        <label style="display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer;">
+                            <input type="checkbox" id="newMarkupTypewriter">
+                            <span>Typewriter</span>
+                        </label>
                     </div>
+                </div>
+                
+                <div id="typewriterDelayContainer" style="display: none; margin-top: 10px; margin-bottom: 15px;">
+                    <label style="display: block; color: #888; font-size: 11px; margin-bottom: 5px;">Typewriter Delay (ms):</label>
+                    <input type="number" id="newMarkupTypewriterDelay" value="100" min="10" max="1000" step="10" style="width: 150px; background: #002200; border: 1px solid #006600; color: #00ff00; padding: 5px; font-family: 'Courier New', monospace;">
+                    <span style="color: #888; font-size: 10px; margin-left: 10px;">Delay between characters (10-1000ms)</span>
                 </div>
                 
                 <div style="margin-top: 20px; padding: 15px; background: rgba(0, 0, 0, 0.5); border: 1px solid #003300;">
@@ -433,6 +924,453 @@ function showMarkupReference(editorName = 'Editor') {
     content.innerHTML = html;
     modal.appendChild(content);
     document.body.appendChild(modal);
+    
+    // Store the count for later use
+    const totalCustomConventions = customConventionIndex;
+    const totalBuiltInConventions = builtInIndex;
+    
+    // Store convention examples for replay
+    const conventionExamples = {
+        builtIn: [],
+        custom: []
+    };
+    
+    // Store built-in examples with keys for reference
+    const builtInKeys = Object.keys(MARKUP_CONVENTIONS);
+    let builtInIdx = 0;
+    Object.entries(MARKUP_CONVENTIONS).forEach(([key, convention]) => {
+        conventionExamples.builtIn.push({
+            key: key,
+            example: builtInExampleTexts[key] || convention.example,
+            effects: convention.effects
+        });
+        builtInIdx++;
+    });
+    
+    // Store custom examples with keys for deletion
+    const customKeys = Object.keys(customMarkupConventions);
+    let customIdx = 0;
+    Object.entries(customMarkupConventions).forEach(([key, convention]) => {
+        conventionExamples.custom.push({
+            key: key,
+            example: convention.example,
+            effects: convention.effects
+        });
+        customIdx++;
+    });
+    
+    /**
+     * Replay effect for an example
+     * Returns the element (may be a new element if replaced for CSS animations)
+     */
+    function replayEffect(exampleDiv, exampleText, effects) {
+        // Stop any existing typewriter animations
+        const existingTypewriters = exampleDiv.querySelectorAll('[data-typewriter="true"]');
+        existingTypewriters.forEach(el => {
+            const id = el.getAttribute('data-typewriter-id');
+            if (id && activeTypewriterTimeouts.has(id)) {
+                clearTimeout(activeTypewriterTimeouts.get(id));
+                activeTypewriterTimeouts.delete(id);
+            }
+        });
+        
+        // Store the original ID and parent
+        const originalId = exampleDiv.id;
+        const parent = exampleDiv.parentNode;
+        
+        // For CSS animations (flash, pulse), we need to force a reflow to restart them
+        // This is done by removing and re-adding the element
+        if (effects && (effects.flash || effects.pulse)) {
+            // Force animation restart by cloning the element
+            const cloned = exampleDiv.cloneNode(false); // Clone without children
+            cloned.id = originalId; // Preserve ID
+            cloned.style.cssText = exampleDiv.style.cssText; // Preserve styles
+            cloned.innerHTML = parseMarkup(exampleText, '#00ffff'); // Re-render with fresh markup
+            parent.replaceChild(cloned, exampleDiv);
+            
+            // Re-initialize typewriter if needed
+            if (effects.typewriter && typeof initializeTypewriterEffects === 'function') {
+                setTimeout(() => {
+                    initializeTypewriterEffects(cloned);
+                }, 50);
+            }
+            
+            return cloned; // Return new element
+        } else {
+            // For non-animation effects or typewriter-only, just re-render
+            exampleDiv.innerHTML = parseMarkup(exampleText, '#00ffff');
+            
+            // Re-initialize typewriter effect if needed
+            if (effects && effects.typewriter && typeof initializeTypewriterEffects === 'function') {
+                setTimeout(() => {
+                    initializeTypewriterEffects(exampleDiv);
+                }, 50);
+            }
+            
+            return exampleDiv; // Return same element
+        }
+    }
+    
+    // Initialize typewriter effects for all example displays (after DOM is ready)
+    // This must happen after modal is appended to document.body
+    setTimeout(() => {
+        // Initialize typewriter effects in all custom convention examples
+        for (let i = 0; i < totalCustomConventions; i++) {
+            const exampleDiv = document.getElementById(`markupExample_${i}`);
+            if (exampleDiv && typeof initializeTypewriterEffects === 'function') {
+                initializeTypewriterEffects(exampleDiv);
+            }
+        }
+        
+        // Initialize typewriter effects in all built-in convention examples
+        for (let i = 0; i < totalBuiltInConventions; i++) {
+            const exampleDiv = document.getElementById(`builtInExample_${i}`);
+            if (exampleDiv && typeof initializeTypewriterEffects === 'function') {
+                initializeTypewriterEffects(exampleDiv);
+            }
+        }
+        
+        // Set up editable text handlers (moved here to ensure DOM is ready)
+        
+        /**
+         * Extract text value from syntax (e.g., "<text>" -> "text", "[text]" -> "text", "!text!" -> "text", "<test text one>" -> "test text one")
+         */
+        function extractTextFromSyntax(syntax) {
+            if (!syntax || syntax.length < 2) {
+                return 'text';
+            }
+            
+            // Try specific patterns first (more reliable)
+            const specificPatterns = [
+                /^<(.+?)>$/,  // <text> or <test text one>
+                /^\[(.+?)\]$/, // [text] or [test text one]
+                /^!(.+?)!$/,   // !text! or !test text one!
+            ];
+            
+            for (const pattern of specificPatterns) {
+                const match = syntax.match(pattern);
+                if (match && match[1]) {
+                    return match[1]; // Return the captured text (full string)
+                }
+            }
+            
+            // Fallback: try to extract anything between first and last character
+            // This handles custom syntax patterns
+            if (syntax.length > 2) {
+                return syntax.substring(1, syntax.length - 1);
+            }
+            
+            return 'text'; // fallback
+        }
+        
+        /**
+         * Update example text based on syntax change
+         */
+        function updateExampleFromSyntax(key, newSyntax, convention) {
+            const textValue = extractTextFromSyntax(newSyntax);
+            const opening = convention.opening;
+            const closing = convention.closing;
+            
+            // Get current example or use original
+            const currentExample = builtInExampleTexts[key] || convention.example;
+            
+            // Find all markup instances in the example and replace with new syntax
+            // Escape special regex characters in opening and closing
+            const escapedOpening = opening.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+            const escapedClosing = closing.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+            const regex = new RegExp(`${escapedOpening}[^${escapedClosing}]+${escapedClosing}`, 'g');
+            
+            const newExample = currentExample.replace(regex, (match) => {
+                // Replace the content between opening and closing with the new text value
+                return opening + textValue + closing;
+            });
+            
+            return newExample;
+        }
+        
+        // Add syntax editing handlers for built-in conventions
+        for (let i = 0; i < totalBuiltInConventions; i++) {
+            const syntaxElement = document.getElementById(`builtInSyntax_${i}`);
+            const exampleTextInput = document.getElementById(`builtInExampleText_${i}`);
+            const exampleDiv = document.getElementById(`builtInExample_${i}`);
+            if (syntaxElement && conventionExamples.builtIn[i]) {
+                const key = conventionExamples.builtIn[i].key;
+                const convention = MARKUP_CONVENTIONS[key];
+                
+                syntaxElement.addEventListener('blur', () => {
+                    const newSyntax = syntaxElement.textContent.trim();
+                    if (newSyntax && newSyntax !== (builtInSyntaxTexts[key] || convention.syntax)) {
+                        // Store new syntax
+                        builtInSyntaxTexts[key] = newSyntax;
+                        
+                        // Update example text based on new syntax
+                        const newExampleText = updateExampleFromSyntax(key, newSyntax, convention);
+                        builtInExampleTexts[key] = newExampleText;
+                        
+                        // Save to API
+                        saveBuiltInConventionEdit(key, newSyntax, newExampleText).catch(err => {
+                            console.error('Failed to save built-in convention edit:', err);
+                            alert('Failed to save: ' + err.message);
+                        });
+                        
+                        // Update input and display
+                        if (exampleTextInput) {
+                            exampleTextInput.value = newExampleText;
+                        }
+                        if (exampleDiv) {
+                            exampleDiv.innerHTML = parseMarkup(newExampleText, '#00ffff');
+                            // Re-initialize typewriter if needed
+                            if (conventionExamples.builtIn[i].effects?.typewriter && typeof initializeTypewriterEffects === 'function') {
+                                setTimeout(() => {
+                                    initializeTypewriterEffects(exampleDiv);
+                                }, 50);
+                            }
+                        }
+                    }
+                });
+                
+                // Prevent Enter key from creating new lines
+                syntaxElement.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        syntaxElement.blur();
+                    }
+                });
+            }
+        }
+        
+        // Add editable text input handlers for built-in conventions
+        for (let i = 0; i < totalBuiltInConventions; i++) {
+            const exampleTextInput = document.getElementById(`builtInExampleText_${i}`);
+            const exampleDiv = document.getElementById(`builtInExample_${i}`);
+            if (exampleTextInput && exampleDiv && conventionExamples.builtIn[i]) {
+                let saveTimeout = null;
+                exampleTextInput.addEventListener('input', () => {
+                    const newText = exampleTextInput.value;
+                    // Update stored text
+                    const key = conventionExamples.builtIn[i].key;
+                    builtInExampleTexts[key] = newText;
+                    
+                    // Debounce saving to API (save after 500ms of no typing)
+                    if (saveTimeout) {
+                        clearTimeout(saveTimeout);
+                    }
+                    saveTimeout = setTimeout(() => {
+                        const currentSyntax = builtInSyntaxTexts[key] || convention.syntax;
+                        saveBuiltInConventionEdit(key, currentSyntax, newText).catch(err => {
+                            console.error('Failed to save built-in convention edit:', err);
+                            alert('Failed to save: ' + err.message);
+                        });
+                    }, 500);
+                    
+                    // Update display
+                    exampleDiv.innerHTML = parseMarkup(newText, '#00ffff');
+                    // Re-initialize typewriter if needed
+                    if (conventionExamples.builtIn[i].effects?.typewriter && typeof initializeTypewriterEffects === 'function') {
+                        setTimeout(() => {
+                            initializeTypewriterEffects(exampleDiv);
+                        }, 50);
+                    }
+                });
+            }
+        }
+        
+        // Add editable syntax handlers for custom conventions (same as built-ins)
+        for (let i = 0; i < totalCustomConventions; i++) {
+            const syntaxElement = document.getElementById(`customSyntax_${i}`);
+            const exampleTextInput = document.getElementById(`customExampleText_${i}`);
+            if (syntaxElement && conventionExamples.custom[i]) {
+                const key = conventionExamples.custom[i].key;
+                const convention = customMarkupConventions[key];
+                
+                syntaxElement.addEventListener('blur', async () => {
+                    const newSyntax = syntaxElement.textContent.trim();
+                    if (newSyntax && newSyntax !== convention.syntax) {
+                        // Update stored syntax
+                        customMarkupConventions[key].syntax = newSyntax;
+                        
+                        // Extract opening and closing from syntax (similar to built-ins)
+                        // Try to detect opening/closing from the syntax pattern
+                        const textValue = extractTextFromSyntax(newSyntax);
+                        const opening = convention.opening;
+                        const closing = convention.closing;
+                        
+                        // Try to infer opening/closing from syntax if it matches the pattern
+                        // For example, if syntax is "<test>" and opening is "<", closing is ">"
+                        // We'll keep the existing opening/closing unless the syntax pattern suggests otherwise
+                        
+                        // Update example text based on new syntax (similar to built-ins)
+                        const currentExample = convention.example || '';
+                        const escapedOpening = opening.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const escapedClosing = closing.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const pattern = new RegExp(`${escapedOpening}([^${escapedClosing}]+)${escapedClosing}`, 'g');
+                        const newExampleText = currentExample.replace(pattern, (match, oldText) => {
+                            return `${opening}${textValue}${closing}`;
+                        });
+                        
+                        // If no replacement happened, create a new example
+                        const finalExample = pattern.test(currentExample) ? newExampleText : `This is ${opening}${textValue}${closing} with effects.`;
+                        customMarkupConventions[key].example = finalExample;
+                        
+                        // Update the example input field
+                        if (exampleTextInput) {
+                            exampleTextInput.value = finalExample;
+                        }
+                        
+                        // Save to API
+                        try {
+                            const conventionId = parseInt(key.replace('custom_', ''));
+                            if (!isNaN(conventionId)) {
+                                await saveCustomConvention(customMarkupConventions[key], conventionId);
+                            }
+                        } catch (err) {
+                            console.error('Failed to save custom convention syntax:', err);
+                            alert('Failed to save: ' + err.message);
+                        }
+                        
+                        // Update example display
+                        const exampleDiv = document.getElementById(`markupExample_${i}`);
+                        if (exampleDiv) {
+                            exampleDiv.innerHTML = parseMarkup(finalExample, '#00ffff');
+                            if (convention.effects?.typewriter && typeof initializeTypewriterEffects === 'function') {
+                                setTimeout(() => {
+                                    initializeTypewriterEffects(exampleDiv);
+                                }, 50);
+                            }
+                        }
+                    }
+                });
+                
+                // Prevent Enter key from creating new lines (same as built-ins)
+                syntaxElement.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        syntaxElement.blur();
+                    }
+                });
+            }
+        }
+        
+        // Add editable text input handlers for custom conventions
+        for (let i = 0; i < totalCustomConventions; i++) {
+            const exampleTextInput = document.getElementById(`customExampleText_${i}`);
+            const exampleDiv = document.getElementById(`markupExample_${i}`);
+            if (exampleTextInput && exampleDiv && conventionExamples.custom[i]) {
+                let customSaveTimeout = null;
+                exampleTextInput.addEventListener('input', () => {
+                    const newText = exampleTextInput.value;
+                    // Update stored text in convention
+                    const key = conventionExamples.custom[i].key;
+                    if (customMarkupConventions[key]) {
+                        customMarkupConventions[key].example = newText;
+                        
+                        // Debounce saving to API
+                        if (customSaveTimeout) {
+                            clearTimeout(customSaveTimeout);
+                        }
+                        customSaveTimeout = setTimeout(async () => {
+                            try {
+                                // Extract convention ID from key (custom_<id>)
+                                const conventionId = parseInt(key.replace('custom_', ''));
+                                if (!isNaN(conventionId)) {
+                                    const convention = customMarkupConventions[key];
+                                    await saveCustomConvention(convention, conventionId);
+                                }
+                            } catch (err) {
+                                console.error('Failed to save custom convention:', err);
+                                alert('Failed to save: ' + err.message);
+                            }
+                        }, 500);
+                    }
+                    // Update display
+                    exampleDiv.innerHTML = parseMarkup(newText, '#00ffff');
+                    // Re-initialize typewriter if needed
+                    if (conventionExamples.custom[i].effects?.typewriter && typeof initializeTypewriterEffects === 'function') {
+                        setTimeout(() => {
+                            initializeTypewriterEffects(exampleDiv);
+                        }, 50);
+                    }
+                });
+            }
+        }
+        
+        // Add replay button handlers for built-in conventions
+        for (let i = 0; i < totalBuiltInConventions; i++) {
+            const replayBtn = document.getElementById(`replayBuiltIn_${i}`);
+            if (replayBtn && conventionExamples.builtIn[i]) {
+                replayBtn.addEventListener('click', () => {
+                    const exampleDiv = document.getElementById(`builtInExample_${i}`);
+                    const exampleTextInput = document.getElementById(`builtInExampleText_${i}`);
+                    if (exampleDiv && exampleTextInput) {
+                        const currentText = exampleTextInput.value;
+                        replayEffect(exampleDiv, currentText, conventionExamples.builtIn[i].effects);
+                    }
+                });
+            }
+        }
+        
+        // Add replay button handlers for custom conventions
+        for (let i = 0; i < totalCustomConventions; i++) {
+            const replayBtn = document.getElementById(`replayCustom_${i}`);
+            if (replayBtn && conventionExamples.custom[i]) {
+                replayBtn.addEventListener('click', () => {
+                    const exampleDiv = document.getElementById(`markupExample_${i}`);
+                    const exampleTextInput = document.getElementById(`customExampleText_${i}`);
+                    if (exampleDiv && exampleTextInput) {
+                        const currentText = exampleTextInput.value;
+                        replayEffect(exampleDiv, currentText, conventionExamples.custom[i].effects);
+                    }
+                });
+            }
+        }
+        
+        // Add delete button handlers for built-in conventions
+        for (let i = 0; i < totalBuiltInConventions; i++) {
+            const deleteBtn = document.getElementById(`deleteBuiltIn_${i}`);
+            if (deleteBtn && conventionExamples.builtIn[i]) {
+                deleteBtn.addEventListener('click', () => {
+                    const key = conventionExamples.builtIn[i].key;
+                    const convention = MARKUP_CONVENTIONS[key];
+                    if (confirm(`Are you sure you want to hide the built-in markup convention "${convention.syntax}"? It will be hidden for this session only.`)) {
+                        // Hide from DOM (don't actually delete built-ins)
+                        const conventionDiv = document.getElementById(`builtInConvention_${i}`);
+                        if (conventionDiv) {
+                            conventionDiv.style.display = 'none';
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Add delete button handlers for custom conventions
+        for (let i = 0; i < totalCustomConventions; i++) {
+            const deleteBtn = document.getElementById(`deleteCustom_${i}`);
+            if (deleteBtn && conventionExamples.custom[i]) {
+                deleteBtn.addEventListener('click', async () => {
+                    const key = conventionExamples.custom[i].key;
+                    if (confirm(`Are you sure you want to delete the custom markup convention "${customMarkupConventions[key]?.syntax || key}"?`)) {
+                        try {
+                            // Extract convention ID from key (custom_<id>)
+                            const conventionId = parseInt(key.replace('custom_', ''));
+                            if (!isNaN(conventionId)) {
+                                await deleteCustomConvention(conventionId);
+                                // Remove from DOM
+                                const conventionDiv = document.getElementById(`customConvention_${i}`);
+                                if (conventionDiv) {
+                                    conventionDiv.remove();
+                                }
+                            } else {
+                                throw new Error('Invalid convention ID');
+                            }
+                        } catch (err) {
+                            console.error('Failed to delete custom convention:', err);
+                            alert('Failed to delete: ' + err.message);
+                        }
+                    }
+                });
+            }
+        }
+    }, 200); // Give DOM time to render
     
     // Add CSS animations if not already added
     if (!document.getElementById('markupAnimations')) {
@@ -466,15 +1404,58 @@ function showMarkupReference(editorName = 'Editor') {
     // Test input handler (live preview)
     const testInput = document.getElementById('markupTestInput');
     const testOutput = document.getElementById('markupTestOutput');
+    let previewTimeout = null;
+    
     testInput.addEventListener('input', () => {
         const testText = testInput.value;
-        if (testText.trim()) {
-            // Parse and render the markup
-            const parsed = parseMarkup(testText, '#00ffff');
-            testOutput.innerHTML = parsed;
-        } else {
-            testOutput.innerHTML = '<span style="color: #666;">Type markup above to see preview...</span>';
+        
+        // Clear any existing timeout
+        if (previewTimeout) {
+            clearTimeout(previewTimeout);
         }
+        
+        // Debounce the preview update slightly to avoid re-initializing during typing
+        previewTimeout = setTimeout(() => {
+            if (testText.trim()) {
+                // Stop any existing typewriter animations in the preview
+                const existingTypewriters = testOutput.querySelectorAll('[data-typewriter="true"]');
+                existingTypewriters.forEach(el => {
+                    const id = el.getAttribute('data-typewriter-id');
+                    if (id && activeTypewriterTimeouts.has(id)) {
+                        clearTimeout(activeTypewriterTimeouts.get(id));
+                        activeTypewriterTimeouts.delete(id);
+                    }
+                });
+                
+                // Parse and render the markup
+                const parsed = parseMarkup(testText, '#00ffff');
+                testOutput.innerHTML = parsed;
+                
+                // Initialize typewriter effects if any were created
+                // Use local function (defined in this file) or global if available
+                if (typeof initializeTypewriterEffects === 'function') {
+                    // Small delay to ensure DOM is updated
+                    setTimeout(() => {
+                        initializeTypewriterEffects(testOutput);
+                    }, 50);
+                } else if (typeof window !== 'undefined' && typeof window.initializeTypewriterEffects === 'function') {
+                    setTimeout(() => {
+                        window.initializeTypewriterEffects(testOutput);
+                    }, 50);
+                }
+            } else {
+                // Stop any existing animations when clearing
+                const existingTypewriters = testOutput.querySelectorAll('[data-typewriter="true"]');
+                existingTypewriters.forEach(el => {
+                    const id = el.getAttribute('data-typewriter-id');
+                    if (id && activeTypewriterTimeouts.has(id)) {
+                        clearTimeout(activeTypewriterTimeouts.get(id));
+                        activeTypewriterTimeouts.delete(id);
+                    }
+                });
+                testOutput.innerHTML = '<span style="color: #666;">Type markup above to see preview...</span>';
+            }
+        }, 300); // Debounce 300ms
     });
     
     // Initial preview message
@@ -506,6 +1487,15 @@ function showMarkupReference(editorName = 'Editor') {
         }
     });
     
+    // Typewriter checkbox handler - show/hide delay input
+    const typewriterCheckbox = document.getElementById('newMarkupTypewriter');
+    const typewriterDelayContainer = document.getElementById('typewriterDelayContainer');
+    if (typewriterCheckbox && typewriterDelayContainer) {
+        typewriterCheckbox.addEventListener('change', () => {
+            typewriterDelayContainer.style.display = typewriterCheckbox.checked ? 'block' : 'none';
+        });
+    }
+    
     // Edit conflict button
     document.getElementById('editConflictBtn').addEventListener('click', () => {
         if (currentConflict) {
@@ -517,6 +1507,12 @@ function showMarkupReference(editorName = 'Editor') {
             document.getElementById('newMarkupBold').checked = existing.effects?.bold || false;
             document.getElementById('newMarkupFlash').checked = existing.effects?.flash || false;
             document.getElementById('newMarkupPulse').checked = existing.effects?.pulse || false;
+            const typewriterChecked = existing.effects?.typewriter || false;
+            document.getElementById('newMarkupTypewriter').checked = typewriterChecked;
+            if (typewriterDelayContainer) {
+                typewriterDelayContainer.style.display = typewriterChecked ? 'block' : 'none';
+            }
+            document.getElementById('newMarkupTypewriterDelay').value = existing.effects?.typewriterDelay || 100;
             conflictWarning.style.display = 'none';
         }
     });
@@ -529,7 +1525,7 @@ function showMarkupReference(editorName = 'Editor') {
     });
     
     // Save markup button
-    document.getElementById('saveMarkupBtn').addEventListener('click', () => {
+    document.getElementById('saveMarkupBtn').addEventListener('click', async () => {
         const opening = openingInput.value.trim();
         if (!opening) {
             alert('Please enter an opening sequence.');
@@ -552,35 +1548,58 @@ function showMarkupReference(editorName = 'Editor') {
         }
         
         const color = document.getElementById('newMarkupColor').value;
+        const typewriterChecked = document.getElementById('newMarkupTypewriter').checked;
+        const typewriterDelay = parseInt(document.getElementById('newMarkupTypewriterDelay').value) || 100;
+        
         const effects = {
             glow: document.getElementById('newMarkupGlow').checked,
             bold: document.getElementById('newMarkupBold').checked,
             flash: document.getElementById('newMarkupFlash').checked,
-            pulse: document.getElementById('newMarkupPulse').checked
+            pulse: document.getElementById('newMarkupPulse').checked,
+            typewriter: typewriterChecked,
+            typewriterDelay: typewriterChecked ? typewriterDelay : undefined
         };
         
         // Generate syntax display
         const syntax = `${pattern.opening}text${pattern.closing}`;
         
         // Create convention object
-        const conventionKey = currentConflict ? currentConflict.key : `custom_${Date.now()}`;
+        const effectNames = Object.keys(effects).filter(k => effects[k] && k !== 'typewriterDelay');
+        const description = effectNames.length > 0 
+            ? `Custom markup with ${effectNames.join(', ')} effects`
+            : 'Custom markup with no effects';
         const convention = {
             syntax: syntax,
             opening: pattern.opening,
             closing: pattern.closing,
-            description: `Custom markup with ${Object.keys(effects).filter(k => effects[k]).join(', ') || 'no'} effects`,
+            description: description,
             example: `This is ${syntax.replace('text', 'custom text')} with effects.`,
             color: color,
             effects: effects
         };
         
-        // Save the convention
-        customMarkupConventions[conventionKey] = convention;
-        saveCustomConventions();
-        
-        // Refresh the modal to show new convention
-        modal.remove();
-        showMarkupReference(editorName);
+        // Save the convention to API
+        try {
+            if (currentConflict) {
+                // Update existing convention
+                const conventionId = parseInt(currentConflict.key.replace('custom_', ''));
+                if (!isNaN(conventionId)) {
+                    await saveCustomConvention(convention, conventionId);
+                } else {
+                    throw new Error('Invalid convention ID');
+                }
+            } else {
+                // Create new convention
+                await saveCustomConvention(convention);
+            }
+            
+            // Refresh the modal to show new convention
+            modal.remove();
+            showMarkupReference(editorName);
+        } catch (err) {
+            console.error('Failed to save custom convention:', err);
+            alert('Failed to save: ' + err.message);
+        }
     });
 }
 
@@ -629,8 +1648,8 @@ function createMarkupButton(editorName, closeButton) {
         markupBtn.style.borderColor = '#00ff00';
     });
     
-    markupBtn.addEventListener('click', () => {
-        showMarkupReference(editorName);
+    markupBtn.addEventListener('click', async () => {
+        await showMarkupReference(editorName);
     });
     
     const header = closeButton.parentNode;

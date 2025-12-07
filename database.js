@@ -2508,6 +2508,103 @@ async function updateHarvestFormulaConfig(configKey, updates) {
 }
 
 // ============================================================
+// Markup Functions
+// ============================================================
+
+/**
+ * Get all custom markup conventions
+ */
+async function getAllMarkupConventions() {
+  return getAll('SELECT * FROM markup_conventions ORDER BY created_at ASC');
+}
+
+/**
+ * Get a single markup convention by ID
+ */
+async function getMarkupConventionById(id) {
+  return getOne('SELECT * FROM markup_conventions WHERE id = $1', [id]);
+}
+
+/**
+ * Create a new markup convention
+ */
+async function createMarkupConvention(convention) {
+  const { syntax, opening, closing, description, example, color, effects } = convention;
+  const now = Date.now();
+  const result = await query(
+    `INSERT INTO markup_conventions (syntax, opening, closing, description, example, color, effects, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [syntax, opening, closing, description || null, example || null, color || null, JSON.stringify(effects || {}), now, now]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Update an existing markup convention
+ */
+async function updateMarkupConvention(id, convention) {
+  const { syntax, opening, closing, description, example, color, effects } = convention;
+  const now = Date.now();
+  const result = await query(
+    `UPDATE markup_conventions
+     SET syntax = $1,
+         opening = $2,
+         closing = $3,
+         description = $4,
+         example = $5,
+         color = $6,
+         effects = $7,
+         updated_at = $8
+     WHERE id = $9
+     RETURNING *`,
+    [syntax, opening, closing, description || null, example || null, color || null, JSON.stringify(effects || {}), now, id]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Delete a markup convention
+ */
+async function deleteMarkupConvention(id) {
+  await query('DELETE FROM markup_conventions WHERE id = $1', [id]);
+  return true;
+}
+
+/**
+ * Get all built-in convention edits
+ */
+async function getBuiltInConventionEdits() {
+  return getAll('SELECT * FROM markup_builtin_edits ORDER BY convention_key ASC');
+}
+
+/**
+ * Get edit for a specific built-in convention
+ */
+async function getBuiltInConventionEdit(conventionKey) {
+  return getOne('SELECT * FROM markup_builtin_edits WHERE convention_key = $1', [conventionKey]);
+}
+
+/**
+ * Update or insert a built-in convention edit
+ */
+async function upsertBuiltInConventionEdit(conventionKey, syntax, example) {
+  const now = Date.now();
+  const result = await query(
+    `INSERT INTO markup_builtin_edits (convention_key, syntax, example, updated_at)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (convention_key)
+     DO UPDATE SET
+       syntax = EXCLUDED.syntax,
+       example = EXCLUDED.example,
+       updated_at = EXCLUDED.updated_at
+     RETURNING *`,
+    [conventionKey, syntax || null, example || null, now]
+  );
+  return result.rows[0];
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -2678,6 +2775,16 @@ module.exports = {
   getHarvestFormulaConfig,
   getAllHarvestFormulaConfigs,
   updateHarvestFormulaConfig,
+  
+  // Markup
+  getAllMarkupConventions,
+  getMarkupConventionById,
+  createMarkupConvention,
+  updateMarkupConvention,
+  deleteMarkupConvention,
+  getBuiltInConventionEdits,
+  getBuiltInConventionEdit,
+  upsertBuiltInConventionEdit,
   
   // Widget Config
   getPlayerWidgetConfig,

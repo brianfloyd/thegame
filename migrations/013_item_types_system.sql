@@ -57,3 +57,4 @@ WHERE item_type NOT IN (SELECT item_type FROM item_types);
 
 
 
+
