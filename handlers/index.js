@@ -65,6 +65,10 @@ const handlerMap = {
   continuePathExecution: gameHandlers.continuePathExecution,
   getMapData: gameHandlers.getMapData,
   
+  // Debug observer handlers
+  observeBug: gameHandlers.observeBug,
+  clientDebugEvent: gameHandlers.clientDebugEvent,
+  
   // Map editor handlers
   getMapEditorData: mapEditorHandlers.getMapEditorData,
   createMap: mapEditorHandlers.createMap,

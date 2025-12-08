@@ -227,12 +227,12 @@ export default class CommsWidget extends Component {
             let displayText = '';
             if (this.commMode === 'telepath') {
                 if (msg.isReceived) {
-                    displayText = `[From ${msg.playerName}]: ${msg.message}`;
+                    displayText = `[From ${this.cleanPlayerName(msg.playerName)}]: ${msg.message}`;
                 } else {
-                    displayText = `[To ${msg.targetPlayer}]: ${msg.message}`;
+                    displayText = `[To ${this.cleanPlayerName(msg.targetPlayer)}]: ${msg.message}`;
                 }
             } else {
-                displayText = `${msg.playerName}: ${msg.message}`;
+                displayText = `${this.cleanPlayerName(msg.playerName)}: ${msg.message}`;
             }
 
             // CRITICAL: Parse markup in messages (especially for ZORK's responses)
@@ -241,6 +241,7 @@ export default class CommsWidget extends Component {
             if (parts.length > 1) {
                 const playerPart = parts[0] + ': ';
                 const messagePart = parts.slice(1).join(': ');
+                // Parse markup only (no markdown - use markup conventions instead)
                 msgDiv.innerHTML = this.escapeHtml(playerPart) + parseMarkup(messagePart, '#00ffff');
             } else {
                 // Fallback: parse entire text
@@ -264,6 +265,15 @@ export default class CommsWidget extends Component {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+    
+    /**
+     * Clean player name for display by stripping @ symbols
+     * Internal format: @PlayerName@ -> Display format: PlayerName
+     */
+    cleanPlayerName(name) {
+        if (!name) return name;
+        return name.replace(/^@|@$/g, '');
     }
     
     /**

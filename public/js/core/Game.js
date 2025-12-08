@@ -35,6 +35,11 @@ export default class Game {
         this.reconnectTimer = null;
         this.isReconnecting = false;
         
+        // Debug observer state
+        this.activeDebugSession = null;
+        this.debugHooksInitialized = false;
+        this.debugStateInterval = null;
+        
         // Initialize popup detection
         this.initPopupDetection();
         
@@ -601,6 +606,25 @@ export default class Game {
                 });
                 break;
                 
+            // Debug observer messages
+            case 'debugSessionStarted':
+                this.activeDebugSession = {
+                    id: data.sessionId,
+                    bugLabel: data.bugLabel
+                };
+                this.initDebugHooks();
+                this.messageBus.emit('system:message', {
+                    message: `Debug observation started: "${data.bugLabel}"`
+                });
+                break;
+                
+            case 'debugSessionEnded':
+                this.activeDebugSession = null;
+                this.messageBus.emit('system:message', {
+                    message: 'Debug observation ended.'
+                });
+                break;
+                
             // Default: emit raw message for components that need it
             default:
                 this.messageBus.emit('game:message', data);
@@ -646,6 +670,160 @@ export default class Game {
      */
     getRoomId() {
         return this.currentRoomId;
+    }
+    
+    // ========================================================================
+    // Debug Observer System
+    // ========================================================================
+    
+    /**
+     * Initialize debug hooks for telemetry streaming
+     * Called when a debug session starts
+     */
+    initDebugHooks() {
+        if (this.debugHooksInitialized) return;
+        this.debugHooksInitialized = true;
+        
+        const self = this;
+        
+        // Hook console.error
+        const originalError = console.error;
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            if (self.activeDebugSession) {
+                self.sendDebugEvent('consoleError', {
+                    args: args.map(a => {
+                        try {
+                            return String(a).substring(0, 500);
+                        } catch (e) {
+                            return '[unserializable]';
+                        }
+                    }).slice(0, 5),
+                    stack: new Error().stack?.substring(0, 1000) || null
+                });
+            }
+        };
+        
+        // Hook console.warn for additional context
+        const originalWarn = console.warn;
+        console.warn = function(...args) {
+            originalWarn.apply(console, args);
+            if (self.activeDebugSession) {
+                self.sendDebugEvent('consoleWarn', {
+                    args: args.map(a => {
+                        try {
+                            return String(a).substring(0, 500);
+                        } catch (e) {
+                            return '[unserializable]';
+                        }
+                    }).slice(0, 5)
+                });
+            }
+        };
+        
+        // Hook window.onerror
+        window.addEventListener('error', (event) => {
+            if (self.activeDebugSession) {
+                self.sendDebugEvent('windowError', {
+                    message: event.message,
+                    source: event.filename,
+                    line: event.lineno,
+                    col: event.colno
+                });
+            }
+        });
+        
+        // Hook unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            if (self.activeDebugSession) {
+                self.sendDebugEvent('unhandledRejection', {
+                    reason: String(event.reason).substring(0, 500)
+                });
+            }
+        });
+        
+        // Periodic state reporting (every 3 seconds)
+        this.debugStateInterval = setInterval(() => {
+            if (self.activeDebugSession) {
+                self.sendDebugEvent('clientState', self.getClientState());
+            }
+        }, 3000);
+        
+        console.log('[Debug] Debug hooks initialized for session:', this.activeDebugSession?.id);
+    }
+    
+    /**
+     * Send a debug event to the server
+     * @param {string} eventType - Type of event (consoleError, windowError, clientState)
+     * @param {object} payload - Event data
+     */
+    sendDebugEvent(eventType, payload) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (!this.activeDebugSession) return;
+        
+        this.ws.send(JSON.stringify({
+            type: 'clientDebugEvent',
+            sessionId: this.activeDebugSession.id,
+            eventType: eventType,
+            payload: payload
+        }));
+    }
+    
+    /**
+     * Get current client state for debug telemetry
+     * @returns {object} Current state snapshot
+     */
+    getClientState() {
+        return {
+            currentRoomId: this.currentRoomId,
+            currentPlayerName: this.currentPlayerName,
+            visibleWidgets: this.getVisibleWidgets(),
+            wsState: this.ws?.readyState,
+            isPopupWindow: this.isPopupWindow,
+            url: window.location.href,
+            timestamp: Date.now()
+        };
+    }
+    
+    /**
+     * Get list of currently visible widgets
+     * @returns {string[]} Array of widget class names
+     */
+    getVisibleWidgets() {
+        const widgets = [];
+        
+        // Check for common widget containers
+        const widgetSelectors = [
+            '.stats-widget',
+            '.map-widget', 
+            '.compass-widget',
+            '.comms-widget',
+            '.inventory-panel',
+            '.npc-widget',
+            '.scripting-widget',
+            '.factory-widget',
+            '.warehouse-widget',
+            '.rune-keeper-widget'
+        ];
+        
+        widgetSelectors.forEach(selector => {
+            const el = document.querySelector(selector);
+            if (el && el.offsetParent !== null) {
+                widgets.push(selector.replace('.', '').replace('-', '_'));
+            }
+        });
+        
+        // Also check for any element with 'widget' in class that's visible
+        document.querySelectorAll('[class*="widget"]').forEach(w => {
+            if (w.offsetParent !== null) {
+                const className = w.className;
+                if (!widgets.includes(className)) {
+                    widgets.push(className);
+                }
+            }
+        });
+        
+        return widgets;
     }
 }
 

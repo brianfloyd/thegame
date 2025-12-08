@@ -15,6 +15,10 @@ const fs = require('fs');
 // Load environment variables
 require('dotenv').config();
 
+// Import database and knowledge utilities
+const db = require('../database');
+const { generateEmbedding } = require('../utils/zorkKnowledge');
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -62,6 +66,9 @@ let lastSuccessfulConnectionTime = 0; // Track when we last successfully connect
 let isReconnecting = false; // Track if we're in the middle of a reconnection
 let currentWebSocket = null; // Track the current active WebSocket connection
 let followCheckIntervalId = null; // Track the follow check interval to prevent duplicates
+
+// Debug observer system
+const activeDebugSessions = new Map(); // sessionId -> {bugLabel, playerName, events, consoleErrors, clientStates, startTime}
 
 // ============================================================================
 // INITIALIZATION
@@ -453,6 +460,11 @@ function setupMessageHandlers() {
   client.onMessage('playerJoined', handlePlayerEvent);
   client.onMessage('playerLeft', handlePlayerEvent);
   
+  // Handle debug observer messages
+  client.onMessage('debugSessionStarted', handleDebugSessionStarted);
+  client.onMessage('debugEvent', handleDebugEvent);
+  client.onMessage('debugSessionEnded', handleDebugSessionEnded);
+  
   console.log('[ZORK] Message handlers registered');
 }
 
@@ -541,6 +553,216 @@ function handlePlayerEvent(message) {
   if (player.includes('Fliz')) {
     checkAndFollowFliz();
   }
+}
+
+// ============================================================================
+// DEBUG OBSERVER SYSTEM
+// ============================================================================
+
+/**
+ * Handle debug session started event
+ */
+async function handleDebugSessionStarted(message) {
+  const { sessionId, bugLabel, playerName, currentRoom, currentMap } = message;
+  
+  // Don't observe our own debug sessions
+  if (playerName === CONFIG.ZORK_NAME || playerName?.includes('ZORK')) return;
+  
+  activeDebugSessions.set(sessionId, {
+    bugLabel: bugLabel || 'Unnamed bug',
+    playerName: playerName || 'Unknown',
+    currentRoom: currentRoom,
+    currentMap: currentMap,
+    startTime: Date.now(),
+    events: [],
+    consoleErrors: [],
+    clientStates: [],
+    todoCreated: false
+  });
+  
+  console.log(`[ZORK] Debug session started: "${bugLabel}" for ${playerName} (session ${sessionId})`);
+}
+
+/**
+ * Handle debug event (telemetry from client)
+ */
+async function handleDebugEvent(message) {
+  const { sessionId, eventType, payload, playerName } = message;
+  
+  const session = activeDebugSessions.get(sessionId);
+  if (!session) {
+    console.log(`[ZORK] Received debug event for unknown session: ${sessionId}`);
+    return;
+  }
+  
+  // Store the event
+  session.events.push({ eventType, payload, timestamp: Date.now() });
+  
+  // Categorize events
+  if (eventType === 'consoleError' || eventType === 'windowError' || eventType === 'unhandledRejection') {
+    session.consoleErrors.push({ type: eventType, ...payload });
+    console.log(`[ZORK] Debug ${eventType}:`, payload?.args?.[0] || payload?.message || payload?.reason);
+  } else if (eventType === 'clientState') {
+    session.clientStates.push(payload);
+  } else if (eventType === 'consoleWarn') {
+    // Track warnings but don't treat as errors
+    session.events.push({ type: 'warn', ...payload });
+  }
+  
+  // Check if we should synthesize a todo
+  // Conditions: Have errors AND (5+ events OR 10 seconds elapsed OR have 2+ errors)
+  const elapsed = Date.now() - session.startTime;
+  const hasErrors = session.consoleErrors.length > 0;
+  const hasEnoughEvents = session.events.length >= 5;
+  const hasSufficientErrors = session.consoleErrors.length >= 2;
+  const enoughTimeElapsed = elapsed > 10000;
+  
+  if (!session.todoCreated && hasErrors && (hasEnoughEvents || enoughTimeElapsed || hasSufficientErrors)) {
+    await synthesizeDebugTodo(sessionId, session);
+  }
+}
+
+/**
+ * Handle debug session ended event
+ */
+async function handleDebugSessionEnded(message) {
+  const { sessionId } = message;
+  
+  const session = activeDebugSessions.get(sessionId);
+  if (session) {
+    // Create todo if we have any events and haven't created one yet
+    if (!session.todoCreated && session.events.length > 0) {
+      await synthesizeDebugTodo(sessionId, session);
+    }
+    activeDebugSessions.delete(sessionId);
+    console.log(`[ZORK] Debug session ended: ${sessionId}`);
+  }
+}
+
+/**
+ * Synthesize a debug todo from collected telemetry
+ */
+async function synthesizeDebugTodo(sessionId, session) {
+  if (session.todoCreated) return;
+  session.todoCreated = true;
+  
+  console.log(`[ZORK] Synthesizing debug todo for session ${sessionId}...`);
+  
+  try {
+    // Build a prompt to analyze the debug data
+    const analysisPrompt = `You are analyzing debug telemetry from a game client to create a bug report.
+
+**Bug Label (user description):** "${session.bugLabel}"
+**Player:** ${session.playerName}
+**Room:** ${session.currentRoom?.name || 'Unknown'} (ID: ${session.currentRoom?.id || 'N/A'})
+**Map:** ${session.currentMap || 'Unknown'}
+**Session Duration:** ${Math.round((Date.now() - session.startTime) / 1000)} seconds
+**Total Events:** ${session.events.length}
+**Console Errors:** ${session.consoleErrors.length}
+
+**Console Errors:**
+${JSON.stringify(session.consoleErrors.slice(0, 10), null, 2)}
+
+**Recent Client States (last 3):**
+${JSON.stringify(session.clientStates.slice(-3), null, 2)}
+
+Based on this telemetry, create a structured bug report. Respond with ONLY valid JSON in this exact format:
+{
+  "title": "Concise bug title (max 80 chars)",
+  "description": "Detailed description of what appears broken",
+  "reproSteps": "1. Step one\\n2. Step two\\n3. Step three",
+  "suspectedCause": "Brief technical hypothesis about the cause"
+}`;
+
+    // Use Claude to analyze
+    const response = await anthropic.messages.create({
+      model: CONFIG.MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: analysisPrompt }]
+    });
+    
+    const aiResponse = response.content[0].text;
+    console.log(`[ZORK] AI analysis response:`, aiResponse);
+    
+    // Parse the JSON response
+    let bugReport;
+    try {
+      // Try to extract JSON from response (handle markdown code blocks)
+      let jsonStr = aiResponse;
+      const jsonMatch = aiResponse.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1];
+      }
+      bugReport = JSON.parse(jsonStr.trim());
+    } catch (parseError) {
+      console.error(`[ZORK] Failed to parse AI response as JSON:`, parseError.message);
+      // Create a fallback bug report
+      bugReport = {
+        title: `Bug: ${session.bugLabel}`.substring(0, 80),
+        description: `Debug observation captured ${session.consoleErrors.length} error(s) during "${session.bugLabel}" for player ${session.playerName}.`,
+        reproSteps: `1. Log in as ${session.playerName}\n2. Navigate to ${session.currentRoom?.name || 'the reported location'}\n3. Observe the issue: ${session.bugLabel}`,
+        suspectedCause: 'See console errors for details'
+      };
+    }
+    
+    // Create the debug todo in the database
+    const todo = await db.createDebugTodo({
+      sessionId: sessionId,
+      title: bugReport.title || `Bug: ${session.bugLabel}`,
+      description: bugReport.description + (bugReport.suspectedCause ? `\n\n**Suspected Cause:** ${bugReport.suspectedCause}` : ''),
+      reproSteps: bugReport.reproSteps,
+      environment: {
+        playerName: session.playerName,
+        map: session.currentMap,
+        room: session.currentRoom,
+        sessionDuration: Date.now() - session.startTime,
+        eventCount: session.events.length,
+        errorCount: session.consoleErrors.length
+      },
+      logs: {
+        consoleErrors: session.consoleErrors.slice(0, 20),
+        clientStates: session.clientStates.slice(-5),
+        allEvents: session.events.slice(-30)
+      },
+      createdBy: 'zork'
+    });
+    
+    // Set ticket_type to 'debug' for telemetry-based tickets
+    await db.query(
+      'UPDATE debug_todos SET ticket_type = $1, priority = $2 WHERE id = $3',
+      ['debug', 3, todo.id] // Default to high priority for debug tickets
+    );
+    
+    // Get updated ticket
+    const updatedTodo = await db.getDebugTodo(todo.id);
+    
+    console.log(`[ZORK] Created debug ticket #${updatedTodo.id}: "${updatedTodo.title}"`);
+    
+    // Optionally notify the player
+    if (client && client.connected) {
+      try {
+        await sendTelepathToPlayer(session.playerName, `I've analyzed the debug session and created ticket #${updatedTodo.id}: "${bugReport.title}". Cursor can now pick this up and fix it.`);
+      } catch (notifyError) {
+        console.warn(`[ZORK] Failed to notify player:`, notifyError.message);
+      }
+    }
+    
+  } catch (error) {
+    console.error(`[ZORK] Error synthesizing debug todo:`, error.message);
+  }
+}
+
+/**
+ * Send a telepath message to a specific player
+ */
+async function sendTelepathToPlayer(playerName, message) {
+  if (!client || !client.ws) return;
+  
+  client.ws.send(JSON.stringify({
+    type: 'telepath',
+    target: playerName,
+    message: message
+  }));
 }
 
 // ============================================================================
@@ -662,9 +884,194 @@ async function processAndRespond(speaker, message, method) {
 }
 
 /**
+ * Get relevant knowledge from the knowledge base
+ */
+async function getRelevantKnowledge(message, speakerIsGod) {
+  try {
+    const knowledgeChunks = [];
+    
+    // 1. Always load priority 2 (always-include) knowledge first
+    const alwaysInclude = await db.getAlwaysIncludeKnowledge();
+    for (const chunk of alwaysInclude) {
+      knowledgeChunks.push({
+        title: chunk.title,
+        content: chunk.content,
+        category: chunk.category,
+        priority: chunk.priority
+      });
+    }
+    
+    // 2. Generate embedding for the message and do semantic search
+    let queryEmbedding = null;
+    try {
+      queryEmbedding = await generateEmbedding(message);
+    } catch (error) {
+      console.warn('[ZORK] Failed to generate embedding for knowledge search:', error.message);
+      // Continue without semantic search - will use category-based retrieval
+    }
+    
+    // 3. Perform semantic search for contextual knowledge (priority 0)
+    if (queryEmbedding) {
+      const contextualKnowledge = await db.searchZorkKnowledge(
+        queryEmbedding,
+        5, // limit
+        0.7, // threshold
+        null, // category (all)
+        0 // priority 0 only
+      );
+      
+      for (const chunk of contextualKnowledge) {
+        // Avoid duplicates
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // 4. Load category-relevant knowledge (priority 1) based on message content
+    const lowerMessage = message.toLowerCase();
+    
+    // Check for command-related keywords
+    if (lowerMessage.includes('action') || lowerMessage.includes('command') || 
+        lowerMessage.includes('god mode') || lowerMessage.includes('execute')) {
+      const commandKnowledge = await db.getZorkKnowledgeByCategory('command_knowledge', 1);
+      for (const chunk of commandKnowledge) {
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // Check for system docs keywords (email, railway, database, deployment, etc.)
+    if (lowerMessage.includes('email') || lowerMessage.includes('smtp') || 
+        lowerMessage.includes('railway') || lowerMessage.includes('deployment') ||
+        lowerMessage.includes('database') || lowerMessage.includes('dbeaver') ||
+        lowerMessage.includes('sync') || lowerMessage.includes('production')) {
+      const systemDocs = await db.getZorkKnowledgeByCategory('system_docs', null);
+      for (const chunk of systemDocs) {
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // Check for game design/technical keywords
+    if (lowerMessage.includes('game') || lowerMessage.includes('player') ||
+        lowerMessage.includes('npc') || lowerMessage.includes('item') ||
+        lowerMessage.includes('room') || lowerMessage.includes('map')) {
+      // Get relevant chunks from game_design and technical
+      const gameDesign = await db.getZorkKnowledgeByCategory('game_design', 1);
+      const technical = await db.getZorkKnowledgeByCategory('technical', 1);
+      for (const chunk of [...gameDesign, ...technical]) {
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // 5. Search learned_context semantically (for all players, not just god-mode)
+    // This allows ZORK to remember things like player names, preferences, etc.
+    if (queryEmbedding) {
+      const learnedKnowledge = await db.searchZorkKnowledge(
+        queryEmbedding,
+        3, // limit
+        0.6, // lower threshold for learned context (more permissive)
+        'learned_context', // category
+        null // any priority
+      );
+      
+      for (const chunk of learnedKnowledge) {
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // 6. Also load all learned_context for god-mode players (always include)
+    if (speakerIsGod) {
+      const learnedContext = await db.getZorkKnowledgeByCategory('learned_context', 1);
+      for (const chunk of learnedContext) {
+        if (!knowledgeChunks.find(k => k.title === chunk.title)) {
+          knowledgeChunks.push({
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            priority: chunk.priority
+          });
+        }
+      }
+    }
+    
+    // Format knowledge chunks for context
+    if (knowledgeChunks.length === 0) {
+      return ''; // No knowledge available
+    }
+    
+    // Format knowledge chunks for context
+    // IMPORTANT: Include content as-is (plain text) - don't process markup here
+    // Markup will be processed when ZORK's response is rendered, not in the context
+    // If content contains markup placeholders (__MARKUP_X__), they're artifacts from
+    // a previous incomplete parse - we need to clean them up
+    const formattedChunks = knowledgeChunks.map(chunk => {
+      let content = chunk.content;
+      
+      // Clean up any markup placeholders that might have been created during storage
+      // These placeholders should never appear in the knowledge base, but if they do,
+      // replace them with a generic placeholder to avoid confusion
+      if (content.includes('__MARKUP_')) {
+        console.warn(`[ZORK] Warning: Knowledge chunk "${chunk.title}" contains markup placeholders - cleaning up`);
+        // Replace placeholders with a generic marker - but try to preserve the original intent
+        // If we can't determine the original markup, just use a generic placeholder
+        content = content.replace(/__MARKUP_\d+__/g, '[markup example]');
+      }
+      
+      return `[${chunk.category.toUpperCase()}] ${chunk.title}\n${content}`;
+    });
+    
+    // Add a note to clarify that markup syntax in knowledge is for reference only
+    const knowledgeBase = `\n[KNOWLEDGE BASE]\n${formattedChunks.join('\n\n')}\n[/KNOWLEDGE BASE]\n`;
+    
+    // Add instruction to prevent AI from including placeholder text in responses
+    return knowledgeBase + '\nNOTE: Any markup syntax (like <text>, [text], !text!) in the knowledge base above is for reference only. When you use markup in your responses, use the actual syntax directly, not placeholders or examples. Never include __MARKUP_X__ or similar placeholder text in your responses.\n';
+    
+  } catch (error) {
+    console.error('[ZORK] Error retrieving knowledge:', error.message);
+    return ''; // Return empty string on error - don't break context building
+  }
+}
+
+/**
  * Build context string for the AI
  */
 async function buildContext(speaker, speakerIsGod, message, method) {
+  // Get relevant knowledge from knowledge base
+  const knowledgeBase = await getRelevantKnowledge(message, speakerIsGod);
+  
   const roomInfo = currentRoom ? {
     name: currentRoom.name,
     description: currentRoom.description,
@@ -854,6 +1261,8 @@ ${puzzleInfo ? `\n⚠️ GOD-MODE ONLY: Lore Keeper Puzzle Information for ${puz
   `\nIMPORTANT: This puzzle information is ONLY visible to god-mode players. You should provide the solution when asked by god-mode players (for testing/debugging), but NEVER reveal it to regular players - they must solve it themselves.\n` : ''}
 
 Recent Events: ${recentEvents.slice(-5).join(' | ') || 'None'}
+
+${knowledgeBase}
 
 CRITICAL: Use ONLY the information provided above. Do NOT make up or guess details about NPCs, items, or game mechanics. If you don't know something, say so rather than inventing it.
 
@@ -1973,6 +2382,93 @@ async function executeAction(action, speakerName = null) {
     }
     
     // Handle markup commands (direct database operations - return early, don't send via WebSocket)
+    // Knowledge management actions
+    if (type === 'learnKnowledge' || type === 'addZorkKnowledge') {
+      try {
+        const { category = 'learned_context', subcategory = null, title, content, priority = 1, source = 'zork', addedBy = speakerName } = params;
+        
+        if (!title || !content) {
+          throw new Error('title and content are required');
+        }
+        
+        // Import the knowledge utility
+        const { storeKnowledgeWithEmbedding } = require('../utils/zorkKnowledge');
+        
+        // Store knowledge with embedding
+        // Note: storeKnowledgeWithEmbedding expects db as first param, then category, subcategory, title, content, priority, source, addedBy
+        const knowledge = await storeKnowledgeWithEmbedding(
+          db, // database module
+          category,
+          subcategory,
+          title,
+          content,
+          priority,
+          source,
+          addedBy
+        );
+        
+        console.log(`[ZORK] Learned new knowledge: "${title}" (ID: ${knowledge.id}, Category: ${category})`);
+        
+        return knowledge;
+      } catch (error) {
+        console.error(`[ZORK] Error learning knowledge:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Create ticket for Cursor to fix
+    if (type === 'createTicket') {
+      try {
+        const {
+          title,
+          description,
+          reproSteps = null,
+          priority = 2, // Default to medium priority
+          ticketType = 'manual', // 'debug' (from telemetry), 'manual' (ZORK direct), 'user'
+          estimatedEffort = null,
+          tags = [],
+          environment = null,
+          logs = null
+        } = params;
+        
+        if (!title || !description) {
+          throw new Error('title and description are required');
+        }
+        
+        // Validate priority
+        if (priority < 1 || priority > 4) {
+          throw new Error('priority must be between 1 and 4');
+        }
+        
+        // Create ticket in database
+        const ticket = await db.createDebugTodo({
+          sessionId: null, // Manual tickets don't have a session
+          title: title,
+          description: description,
+          reproSteps: reproSteps,
+          environment: environment || {},
+          logs: logs || {},
+          createdBy: 'zork'
+        });
+        
+        // Update ticket-specific fields
+        await db.query(
+          'UPDATE debug_todos SET ticket_type = $1, priority = $2, estimated_effort = $3, tags = $4 WHERE id = $5',
+          [ticketType, priority, estimatedEffort, JSON.stringify(tags), ticket.id]
+        );
+        
+        // Get updated ticket
+        const updatedTicket = await db.getDebugTodo(ticket.id);
+        
+        console.log(`[ZORK] Created ticket #${updatedTicket.id}: "${title}" (Priority: ${priority}, Type: ${ticketType})`);
+        
+        return updatedTicket;
+      } catch (error) {
+        console.error(`[ZORK] Error creating ticket:`, error.message);
+        throw error;
+      }
+    }
+    
     if (type === 'getMarkupConventions') {
       try {
         const conventions = await verifier.query(

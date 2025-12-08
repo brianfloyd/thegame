@@ -92,7 +92,7 @@ export default class Terminal extends Component {
             }
         } else {
             // Client-generated message (e.g., user input, local notifications)
-            // Parse markup client-side for these cases
+            // Parse markup only (no markdown - use markup conventions instead)
             msgDiv.innerHTML = parseMarkup(message, '#00ffff');
         }
         
@@ -581,7 +581,7 @@ export default class Terminal extends Component {
             this.addMessage(message, 'info', true);
         } else if (playerName) {
             const dirText = direction ? ` from the ${direction}` : '';
-            this.addMessage(`${playerName} enters${dirText}.`, 'info', true);
+            this.addMessage(`${this.cleanPlayerName(playerName)} enters${dirText}.`, 'info', true);
         }
     }
     
@@ -594,7 +594,7 @@ export default class Terminal extends Component {
             this.addMessage(message, 'info', true);
         } else if (playerName) {
             const dirText = direction ? ` to the ${direction}` : '';
-            this.addMessage(`${playerName} left${dirText}.`, 'info', true);
+            this.addMessage(`${this.cleanPlayerName(playerName)} left${dirText}.`, 'info', true);
         }
     }
     
@@ -606,10 +606,10 @@ export default class Terminal extends Component {
         if (playerName && message) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'resonated-message';
-            messageDiv.innerHTML = `<span class="resonated-player">${this.escapeHtml(playerName)}</span> resonated <span class="resonated-text">${this.escapeHtml(message)}</span>!`;
+            messageDiv.innerHTML = `<span class="resonated-player">${this.escapeHtml(this.cleanPlayerName(playerName))}</span> resonated <span class="resonated-text">${this.escapeHtml(message)}</span>!`;
             this.terminalContent.appendChild(messageDiv);
             this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
-            this.saveTerminalMessage(`${playerName} resonated ${message}!`, 'info');
+            this.saveTerminalMessage(`${this.cleanPlayerName(playerName)} resonated ${message}!`, 'info');
         }
     }
     
@@ -682,8 +682,39 @@ export default class Terminal extends Component {
     handleTalked(data) {
         const { playerName, message } = data;
         if (playerName && message) {
-            this.addMessage(`${playerName} says "${message}"`, 'info', true);
+            // Parse markup only (no markdown - use markup conventions instead)
+            const formattedHtml = parseMarkup(message, '#00ffff');
+            
+            // DEBUG: Log markup parsing results
+            console.log('[Terminal] handleTalked - message:', message);
+            console.log('[Terminal] handleTalked - formattedHtml:', formattedHtml);
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'talked-message';
+            msgDiv.innerHTML = `<span class="talked-player">${this.escapeHtml(this.cleanPlayerName(playerName))}</span> says: <span class="talked-text">${formattedHtml}</span>`;
+            this.terminalContent.appendChild(msgDiv);
+            this.scrollToBottom();
+            this.saveTerminalMessage(`${this.cleanPlayerName(playerName)} says "${message}"`, 'info', msgDiv.innerHTML);
         }
+    }
+    
+    /**
+     * Escape HTML to prevent XSS
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    /**
+     * Clean player name for display by stripping @ symbols
+     * Internal format: @PlayerName@ -> Display format: PlayerName
+     */
+    cleanPlayerName(name) {
+        if (!name) return name;
+        // Strip @ symbols from beginning and end
+        return name.replace(/^@|@$/g, '');
     }
     
     /**
@@ -692,7 +723,15 @@ export default class Terminal extends Component {
     handleTelepath(data) {
         const { fromPlayer, message } = data;
         if (fromPlayer && message) {
-            this.addMessage(`[Telepath from ${fromPlayer}]: ${message}`, 'info', true);
+            // Parse markup only (no markdown - use markup conventions instead)
+            const formattedHtml = parseMarkup(message, '#00ffff');
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'telepath-message';
+            msgDiv.innerHTML = `<span class="telepath-label">[Telepath from</span> <span class="telepath-player">${this.escapeHtml(this.cleanPlayerName(fromPlayer))}</span><span class="telepath-label">]:</span> <span class="telepath-text">${formattedHtml}</span>`;
+            this.terminalContent.appendChild(msgDiv);
+            this.scrollToBottom();
+            this.saveTerminalMessage(`[Telepath from ${this.cleanPlayerName(fromPlayer)}]: ${message}`, 'info', msgDiv.innerHTML);
         }
     }
     
@@ -702,7 +741,7 @@ export default class Terminal extends Component {
     handleTelepathSent(data) {
         const { toPlayer, message } = data;
         if (toPlayer && message) {
-            this.addMessage(`[Telepath to ${toPlayer}]: ${message}`, 'info', true);
+            this.addMessage(`[Telepath to ${this.cleanPlayerName(toPlayer)}]: ${message}`, 'info', true);
         }
     }
     

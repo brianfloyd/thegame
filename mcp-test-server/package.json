@@ -12,7 +12,9 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.14.2",
     "pg": "^8.11.3",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "openai": "^4.20.0",
+    "dotenv": "^16.3.1"
   }
 }
 

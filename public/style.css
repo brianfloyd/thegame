@@ -479,6 +479,60 @@ body {
     color: #00ff00;
 }
 
+/* Markdown list styling in terminal messages */
+.talked-message ul,
+.talked-message ol,
+.info-message ul,
+.info-message ol,
+.telepath-message ul,
+.telepath-message ol {
+    margin: 8px 0;
+    padding-left: 25px;
+    color: #00ff00;
+}
+
+.talked-message li,
+.info-message li,
+.telepath-message li {
+    margin: 4px 0;
+    line-height: 1.4;
+}
+
+.talked-message ul li,
+.info-message ul li,
+.telepath-message ul li {
+    list-style-type: disc;
+}
+
+.talked-message ol li,
+.info-message ol li,
+.telepath-message ol li {
+    list-style-type: decimal;
+}
+
+.talked-message strong,
+.info-message strong,
+.telepath-message strong {
+    font-weight: bold;
+    color: #ffff00;
+}
+
+.talked-message em,
+.info-message em,
+.telepath-message em {
+    font-style: italic;
+}
+
+.talked-message code,
+.info-message code,
+.telepath-message code {
+    background: rgba(0, 255, 255, 0.2);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    color: #00ffff;
+}
+
 /* Telepath message styling (private messages) */
 .telepath-message {
     color: #ff00ff;

@@ -1242,6 +1242,127 @@ updateItem(item)                       // Now includes encumbrance
 { type: 'jumpToRoom', roomId }
 ```
 
+## ZORK THE AI LORD
+
+### Overview
+ZORK is an autonomous AI agent powered by Claude (Anthropic) that lives in the game world as a real player character. It has god-mode capabilities and can modify the game world.
+
+### Dual Persona
+- **Chuck Mode**: When @Fliz@ talks to ZORK, it switches to "cofounder mode" - warm, collaborative, bro-style
+- **ZORK Mode**: For all other players, mystical wizard persona with archaic speech
+
+### Technical Implementation
+- **Agent**: `scripts/zork-ai-agent.cjs` - Autonomous WebSocket client
+- **System Prompt**: `scripts/zork-system-prompt.md` - Persona, capabilities, action formats
+- **Actions**: `[ACTION: type]{"params": "..."}[/ACTION]` blocks for game modifications
+
+### Capabilities
+- See room updates, respond to telepath/talk
+- Execute god-mode commands (create rooms, NPCs, items)
+- Direct database access via SQL queries
+- Learn and remember information via RAG system
+
+## RAG Knowledge System
+
+### Overview
+Retrieval-Augmented Generation system using OpenAI embeddings for semantic search over stored knowledge.
+
+### Database Schema
+```sql
+CREATE TABLE zork_knowledge (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL,
+  subcategory TEXT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  embedding VECTOR(1536),  -- pgvector extension
+  priority INTEGER DEFAULT 0,
+  source TEXT DEFAULT 'system',
+  added_by TEXT,
+  active BOOLEAN DEFAULT TRUE
+);
+```
+
+### Knowledge Categories
+| Category | Priority | Description |
+|----------|----------|-------------|
+| core_identity | 2 | Always loaded - ZORK persona |
+| command_knowledge | 1 | God-mode actions, syntax |
+| world_lore | 0 | Game mechanics |
+| interaction_patterns | 0 | Example conversations |
+| learned_context | 1 | Runtime learning |
+
+### Database Functions
+```javascript
+addZorkKnowledge(category, subcategory, title, content, embedding, priority, source, addedBy)
+searchZorkKnowledge(queryEmbedding, limit, threshold, category, priority)
+getZorkKnowledgeByCategory(category, priority)
+getAlwaysIncludeKnowledge()
+deleteZorkKnowledge(id)
+```
+
+### Embedding Utils (`utils/zorkKnowledge.js`)
+```javascript
+generateEmbedding(text)           // OpenAI text-embedding-3-small
+generateEmbeddingBatch(texts)     // Batch embeddings
+storeKnowledgeWithEmbedding(db, category, subcategory, title, content, priority, source, addedBy)
+```
+
+## Markup System
+
+### Overview
+Customizable text styling for game terminal with database-stored conventions.
+
+### Built-in Conventions
+| Syntax | Style | Use Case |
+|--------|-------|----------|
+| `<text>` | Cyan, glow | Keywords, items, NPCs |
+| `[text]` | Inherited, italic | Subtle emphasis |
+| `!text!` | Red, pulse | Alerts, warnings |
+| `{{typewriter:ms}}text{{/typewriter}}` | Animated | Dramatic reveals |
+
+### Custom Conventions (Database)
+```sql
+-- markup_conventions table
+INSERT INTO markup_conventions (syntax, opening, closing, color, effects)
+VALUES ('**text**', '**', '**', 'inherit', '{"bold": true}');
+```
+
+### Database Tables
+- `markup_conventions` - Custom markup definitions
+- `markup_builtin_edits` - Overrides for built-in conventions
+
+### Technical Implementation
+- **Client**: `public/js/utils/Markup.js` - parseMarkup()
+- **Server**: `utils/markupService.js` - Server-side parsing
+- **Migration**: `migrations/059_create_markup_tables.sql`
+
+## Database Sync (Dev to Prod)
+
+### Quick Commands
+```bash
+npm run sync-dev-to-prod:dry-run  # Preview changes
+npm run sync-dev-to-prod          # Sync (requires "SYNC PROD" confirmation)
+npm run test-sync-safety          # Test scenario
+```
+
+### Environment Variables
+```env
+DEV_DATABASE_URL=postgresql://...   # Local dev database
+PROD_DATABASE_URL=postgresql://...  # Railway production
+SYNC_PLAYERS=true                   # Optional: include players table
+```
+
+### Protected Tables (Never Synced)
+- accounts, player_items, player_bank
+- terminal_history, email tokens
+- warehouse_contents
+
+### Implementation
+- `scripts/sync-dev-to-prod.js` - Main sync script
+- `scripts/test-sync-safety.js` - Test scenario
+- `docs/database-sync.md` - Full documentation
+
 ## Future Enhancements (Prepared)
 
 - Vertical movement (Up/Down) - requires z-coordinate in database

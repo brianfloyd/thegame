@@ -1834,3 +1834,161 @@ The Auto-Pathing feature allows players to select a destination room and automat
 - **Server Handlers**: `handlers/game.js` - Handles map/room requests, path calculation, and auto-navigation execution
 - **Client UI**: `public/client.js` - Manages auto-path panel, map rendering, and movement blocking
 - **Database**: Migration `034_add_auto_navigation_time.sql` adds the `auto_navigation_time_ms` column
+
+## ZORK THE AI LORD
+
+### Overview
+ZORK is an autonomous AI agent that lives in the game world as a real player. It's powered by Claude (Anthropic) and has full god-mode capabilities. ZORK has a dual persona: "Chuck" when talking to @Fliz@ (cofounder mode), and "ZORK THE AI LORD" for all other players.
+
+### Features
+- **Autonomous Agent**: Connects to the game as a player, sees room updates, responds to messages
+- **Dual Persona**: Chuck (warm, collaborative) for @Fliz@, ZORK (mystical wizard) for others
+- **God-Mode Powers**: Can modify the game world, update players, execute SQL queries
+- **Custom Markup**: Uses game's markup system (`<text>`, `[text]`, `!text!`) for styled responses
+- **RAG Knowledge System**: Semantic search over stored knowledge for contextual responses
+- **Learning Capability**: Can store new knowledge via `learnKnowledge` action
+
+### Technical Implementation
+- **Agent Script**: `scripts/zork-ai-agent.cjs` - Main autonomous agent
+- **System Prompt**: `scripts/zork-system-prompt.md` - Defines persona, capabilities, actions
+- **Knowledge Utils**: `utils/zorkKnowledge.js` - Embedding generation and storage
+
+### Communication
+- **Telepath**: Direct private messages to/from ZORK
+- **Talk**: Room-based conversation with ZORK
+- **Actions**: ZORK can execute actions via `[ACTION: type]...[/ACTION]` blocks in responses
+
+## RAG Knowledge System
+
+### Overview
+A Retrieval-Augmented Generation (RAG) system that provides ZORK (and Cursor via MCP) with semantic search over a knowledge base. Uses OpenAI embeddings for semantic similarity.
+
+### Database Schema (`zork_knowledge` table)
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Primary key |
+| `category` | TEXT | Knowledge category (core_identity, command_knowledge, etc.) |
+| `subcategory` | TEXT | Optional subcategory |
+| `title` | TEXT | Knowledge chunk title |
+| `content` | TEXT | Knowledge content |
+| `embedding` | VECTOR(1536) | OpenAI embedding (optional, for semantic search) |
+| `priority` | INTEGER | 0=contextual, 1=important, 2=always-include |
+| `source` | TEXT | 'system', 'zork', or 'cursor' |
+| `added_by` | TEXT | Who added this knowledge |
+| `active` | BOOLEAN | Soft delete flag |
+
+### Knowledge Categories
+- **core_identity** (priority 2): Always loaded - ZORK persona, AI identity
+- **command_knowledge** (priority 1): God-mode actions, JSON syntax
+- **world_lore** (priority 0): Game mechanics, world facts
+- **interaction_patterns** (priority 0): Example conversations, tone
+- **learned_context** (priority 1): Runtime learning from players
+
+### Retrieval Flow
+1. Priority 2 knowledge always loaded
+2. Message embedded via OpenAI `text-embedding-3-small`
+3. Semantic search for priority 0 chunks (contextual)
+4. Category-based retrieval for priority 1 (keywords trigger)
+5. Combined context sent to Claude
+
+### Technical Implementation
+- **Database Functions**: `database.js` - addZorkKnowledge, searchZorkKnowledge, etc.
+- **Embedding Utils**: `utils/zorkKnowledge.js` - generateEmbedding, storeKnowledgeWithEmbedding
+- **ZORK Integration**: `scripts/zork-ai-agent.cjs` - getRelevantKnowledge()
+- **Migration**: `migrations/060_zork_knowledge_system.sql`
+
+### Learning
+ZORK can learn new knowledge via the `learnKnowledge` action:
+```
+[ACTION: learnKnowledge]
+{"title": "...", "content": "...", "category": "learned_context", "addedBy": "@Fliz@"}
+[/ACTION]
+```
+
+## Markup System
+
+### Overview
+A customizable text styling system that allows colored, glowing, and animated text in the game terminal. Conventions are stored in the database and can be created/modified via ZORK or direct SQL.
+
+### Built-in Conventions
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `<text>` | Keywords (cyan, glow) | `<Harvester Rune>` |
+| `[text]` | Subtle (inherited color, italic) | `[mysterious undertones]` |
+| `!text!` | Alerts (red, pulse) | `!danger ahead!` |
+| `{{typewriter:delay}}text{{/typewriter}}` | Animated typing | `{{typewriter:50}}Loading...{{/typewriter}}` |
+
+### Custom Conventions
+Additional conventions can be added to `markup_conventions` table:
+- `**text**` - Bold
+- `*text*` - Italic
+- `##text##` - H2 Header
+- `^- text` - Bullet list item
+- `^\d+\. text` - Numbered list item
+
+### Database Tables
+- **markup_conventions**: Custom markup definitions
+- **markup_builtin_edits**: Overrides for built-in conventions
+
+### Technical Implementation
+- **Client Parser**: `public/js/utils/Markup.js` - parseMarkup()
+- **Server Service**: `utils/markupService.js` - Server-side parsing
+- **Migration**: `migrations/059_create_markup_tables.sql`
+
+## Automatic Knowledge Storage System
+
+### Overview
+The RAG knowledge system allows both ZORK and Cursor to share knowledge seamlessly. When implementing features, knowledge is automatically stored so both AI systems have immediate access.
+
+### Workflow
+1. **Implement Feature** - Code, database, documentation
+2. **Automatically Store Knowledge** - Cursor uses `knowledge_add` MCP tool
+3. **Immediate Access** - Both ZORK and Cursor can retrieve knowledge
+
+### Knowledge Categories
+- **game_design**: Player-facing features, gameplay mechanics
+- **technical**: Implementation details, code patterns
+- **command_knowledge**: God-mode commands, admin tools
+- **world_lore**: Story elements, in-game lore
+- **system_docs**: Deployment, configuration, operations
+- **learned_context**: Player preferences, custom rules
+
+### Storage Methods
+1. **MCP Tool** (Recommended): `knowledge_add` tool via MCP
+2. **Helper Script**: `node scripts/add-feature-knowledge.js "Title" "category" "Content..."`
+3. **ZORK Action**: ZORK can learn via `learnKnowledge` action
+
+### Documentation
+- **Workflow Guide**: `docs/cursor-workflow.md`
+- **Feature Template**: `docs/feature-template.md`
+- **Helper Script**: `scripts/add-feature-knowledge.js`
+
+## Database Sync (Dev to Prod)
+
+### Overview
+Safe sync of game content from development to production while protecting all player data.
+
+### What Gets Synced
+- Maps, Rooms, NPCs, Items
+- Merchant configurations
+- Room type colors
+- Item types
+
+### What's Protected (Never Synced)
+- Accounts
+- Player items (inventory)
+- Player bank
+- Terminal history
+- Email/password tokens
+
+### Commands
+```bash
+npm run sync-dev-to-prod:dry-run  # Preview
+npm run sync-dev-to-prod          # Actual sync (requires confirmation)
+npm run test-sync-safety          # Test scenario
+```
+
+### Technical Implementation
+- **Sync Script**: `scripts/sync-dev-to-prod.js`
+- **Test Script**: `scripts/test-sync-safety.js`
+- **Documentation**: `docs/database-sync.md`

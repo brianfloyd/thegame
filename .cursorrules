@@ -1,0 +1,200 @@
+# Cursor Rules for The Game
+
+## Automatic Knowledge Storage
+
+**CRITICAL**: After implementing any feature, automatically store knowledge in the RAG system using the `knowledge_add` MCP tool.
+
+### When to Store Knowledge
+
+**Always store knowledge for:**
+- New player commands or features
+- Major gameplay mechanics
+- New database tables/schema
+- God-mode commands or tools
+- Significant architectural changes
+- New systems (harvest, crafting, combat, etc.)
+
+### How to Store Knowledge
+
+After completing a feature implementation:
+
+1. **Determine category:**
+   - `game_design` - Player-facing features, gameplay
+   - `technical` - Implementation details, code patterns
+   - `command_knowledge` - God-mode commands
+   - `world_lore` - Story/lore elements
+   - `system_docs` - Deployment/operations
+
+2. **Set priority:**
+   - `1` - Major features (keyword-triggered)
+   - `0` - Standard features (contextual, most common)
+
+3. **Call knowledge_add MCP tool:**
+   ```
+   Use knowledge_add tool with:
+   - title: Feature name
+   - category: Appropriate category
+   - content: Comprehensive description including:
+     * What it does
+     * How to use it
+     * Technical details
+     * Player impact
+   - priority: 0 or 1
+   ```
+
+### Example
+
+After implementing "Crafting System":
+```
+Use knowledge_add({
+  title: "Crafting System",
+  category: "game_design",
+  content: "Players can craft items using materials. Commands: craft [item], craft list. Requires crafting ability and materials in inventory. Implementation: handlers/game.js, crafting_recipes table.",
+  priority: 1
+})
+```
+
+### Pattern Detection
+
+Automatically detect these patterns and store knowledge:
+- New command handler → Store as game_design
+- New database table → Store as technical
+- New WebSocket message → Store as game_design
+- Major feature (multiple files) → Store comprehensive knowledge
+
+### Documentation
+
+See `docs/cursor-workflow.md` for complete workflow details.
+
+## Code Style
+
+- Use ES6 modules in `public/js/`
+- Use CommonJS in `scripts/` and server files
+- Follow existing patterns in codebase
+- Update documentation when adding features
+
+## Testing
+
+- Test features before storing knowledge
+- Verify knowledge is accessible after storage
+- Use `scripts/test-rag-knowledge.js` to verify RAG system
+
+## Debug Todo Workflow
+
+ZORK can observe bugs in-game and create rich debug todos. Use these when working on bug fixes.
+
+### Checking for Debug Todos
+
+When starting work or asked to fix bugs:
+
+1. **List open debug todos:**
+   ```
+   Call debug_list_todos with status: "open"
+   ```
+
+2. **Get full todo details:**
+   ```
+   Call debug_get_todo with the id from the list
+   ```
+
+### Fixing a Debug Todo
+
+For each todo:
+
+1. **Read the context:**
+   - `reproSteps` - Steps to reproduce the bug
+   - `environment` - Map, room, widgets, player context
+   - `logs` - Console errors with stack traces
+
+2. **Locate the code:**
+   - Use stack traces from `logs.consoleErrors`
+   - Search for widget/file names mentioned
+   - Check the relevant handler or component
+
+3. **Reproduce (optional):**
+   - Use game MCP tools to connect as test player
+   - Follow the repro steps
+   - Verify the bug exists
+
+4. **Implement the fix:**
+   - Fix the underlying issue
+   - Test locally
+
+### After Fixing
+
+1. **Mark todo as resolved:**
+   ```
+   Call debug_update_todo with:
+   - id: the todo id
+   - status: "resolved"
+   - resolutionNotes: "Brief description of the fix"
+   ```
+
+2. **Store knowledge about the fix:**
+   ```
+   Call knowledge_add with:
+   - title: "Bug Fix: [brief description]"
+   - category: "technical"
+   - content: What was broken, why, how it was fixed, and how to avoid in future
+   - priority: 0
+   ```
+
+### Debug MCP Tools
+
+- `debug_list_todos` - List todos (filter by status)
+- `debug_get_todo` - Get full todo details by ID
+- `debug_update_todo` - Update status/resolution notes
+- `debug_add_todo` - Create a new debug todo (usually done by ZORK)
+- `debug_start_session` - Start a debug observation session
+- `debug_end_session` - End a debug session
+- `debug_get_session` - Get session details
+
+## Work Tickets Command
+
+When user says "work tickets", "debug tickets", "process tickets", "fix tickets", or "handle tickets":
+
+1. **Call `work_tickets_start` MCP tool** to get list of open tickets
+   - This will return formatted list of tickets and structured data
+   - Display the ticket list to user first to confirm understanding
+
+2. **Process tickets sequentially** (one at a time, highest priority first):
+   - For each ticket in the returned list:
+     a. Call `debug_get_todo` with the ticket ID to get full details
+     b. Read full context:
+        - `title` - Brief summary
+        - `description` - Detailed explanation
+        - `reproSteps` - Steps to reproduce (if available)
+        - `environment` - Map, room, widgets, player context
+        - `logs` - Console errors with stack traces
+        - `priority` - 1 (low) to 4 (critical)
+        - `ticket_type` - 'debug' (telemetry), 'manual' (ZORK direct), 'user'
+     c. Create an internal todo item for this ticket
+     d. Work on the fix:
+        - Use stack traces from `logs.consoleErrors` to locate code
+        - Search for widget/file names mentioned
+        - Check relevant handler or component
+        - Implement the fix
+        - Test locally if possible
+     e. Mark ticket as resolved:
+        - Call `debug_update_todo` with:
+          - `id`: the ticket ID
+          - `status`: "resolved"
+          - `resolutionNotes`: "Brief description of the fix"
+     f. Store knowledge about the fix:
+        - Call `knowledge_add` with:
+          - `title`: "Bug Fix: [brief description]"
+          - `category`: "technical"
+          - `content`: What was broken, why, how it was fixed, and how to avoid in future
+          - `priority`: 0
+
+3. **After all tickets processed**, provide a summary:
+   - List of tickets fixed
+   - Brief description of each fix
+   - Any remaining open tickets
+
+**Important:**
+- Always display tickets to user BEFORE starting work
+- Process one ticket at a time completely before moving to next
+- Highest priority tickets (4=critical) are processed first
+- If a ticket cannot be fixed immediately, mark it as "in_progress" and note why
+

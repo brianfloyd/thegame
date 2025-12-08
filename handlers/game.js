@@ -5469,6 +5469,133 @@ async function continuePathExecution(ctx, data) {
   }));
 }
 
+// ============================================================================
+// Debug Observer System
+// ============================================================================
+
+/**
+ * Start or stop a debug observation session
+ * Client will stream telemetry when session is active
+ */
+async function observeBug(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { action, bugLabel } = data;
+  const playerId = playerData.playerId;
+  const playerName = playerData.playerName;
+  
+  // Get current room info for context
+  const player = await db.getPlayerById(playerId);
+  const room = player ? await db.getRoomById(player.current_room_id) : null;
+  const map = room ? await db.getMapById(room.map_id) : null;
+  
+  if (action === 'stop') {
+    // End active session
+    const session = await db.getActiveDebugSession(playerId);
+    if (session) {
+      await db.endDebugSession(session.id);
+      
+      ws.send(JSON.stringify({ 
+        type: 'debugSessionEnded',
+        sessionId: session.id
+      }));
+      
+      // Notify ZORK via broadcast to connected players
+      broadcastToAll(connectedPlayers, {
+        type: 'debugSessionEnded',
+        playerName: playerName,
+        playerId: playerId,
+        sessionId: session.id
+      });
+      
+      ws.send(JSON.stringify({ 
+        type: 'systemMessage', 
+        message: `Debug observation session ended.` 
+      }));
+    } else {
+      ws.send(JSON.stringify({ 
+        type: 'systemMessage', 
+        message: 'No active debug session to end.' 
+      }));
+    }
+    return;
+  }
+  
+  // Start new session
+  if (!bugLabel) {
+    ws.send(JSON.stringify({ 
+      type: 'error', 
+      message: 'Bug description required. Usage: observe bug [description]' 
+    }));
+    return;
+  }
+  
+  const sessionId = await db.startDebugSession(playerId, bugLabel);
+  
+  ws.send(JSON.stringify({ 
+    type: 'debugSessionStarted',
+    sessionId: sessionId,
+    bugLabel: bugLabel
+  }));
+  
+  // Notify ZORK via broadcast
+  broadcastToAll(connectedPlayers, {
+    type: 'debugSessionStarted',
+    playerName: playerName,
+    playerId: playerId,
+    sessionId: sessionId,
+    bugLabel: bugLabel,
+    currentRoom: room ? { id: room.id, name: room.name, x: room.x, y: room.y } : null,
+    currentMap: map ? map.name : null
+  });
+  
+  ws.send(JSON.stringify({ 
+    type: 'systemMessage', 
+    message: `Debug observation started: "${bugLabel}"\nYour browser will now stream telemetry to ZORK.\nUse "observe stop" when done.` 
+  }));
+}
+
+/**
+ * Handle client debug event (console errors, state snapshots, etc.)
+ * Forwarded from client to ZORK for analysis
+ */
+async function clientDebugEvent(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData || !playerData.playerId) {
+    // Silently ignore - not authenticated
+    return;
+  }
+  
+  const playerId = playerData.playerId;
+  const playerName = playerData.playerName;
+  
+  // Check for active debug session
+  const session = await db.getActiveDebugSession(playerId);
+  if (!session) {
+    // No active session - ignore debug events
+    return;
+  }
+  
+  // Forward to ZORK (and any other listeners)
+  broadcastToAll(connectedPlayers, {
+    type: 'debugEvent',
+    sessionId: session.id,
+    playerName: playerName,
+    playerId: playerId,
+    eventType: data.eventType,
+    payload: data.payload,
+    timestamp: Date.now()
+  });
+}
+
 module.exports = {
   authenticateSession,
   getWidgetConfig,
@@ -5520,6 +5647,8 @@ module.exports = {
   getAutoPathMaps,
   getAutoPathRooms,
   calculateAutoPath,
-  startAutoNavigation
+  startAutoNavigation,
+  observeBug,
+  clientDebugEvent
 };
 

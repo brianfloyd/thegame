@@ -2605,6 +2605,477 @@ async function upsertBuiltInConventionEdit(conventionKey, syntax, example) {
 }
 
 // ============================================================
+// ZORK Knowledge Base Functions
+// ============================================================
+
+/**
+ * Add a new knowledge chunk to the ZORK knowledge base
+ */
+async function addZorkKnowledge(category, subcategory, title, content, embedding, priority = 0, source = 'system', addedBy = null) {
+  // Check if embedding column exists
+  const columnCheck = await query(
+    `SELECT column_name, data_type FROM information_schema.columns 
+     WHERE table_name = 'zork_knowledge' AND column_name = 'embedding'`
+  );
+  
+  const hasEmbeddingColumn = columnCheck.rows.length > 0;
+  const isVectorType = hasEmbeddingColumn && columnCheck.rows[0].data_type === 'USER-DEFINED';
+  
+  // Format embedding for PostgreSQL vector type
+  let embeddingValue = null;
+  if (embedding && hasEmbeddingColumn) {
+    if (Array.isArray(embedding)) {
+      if (isVectorType) {
+        // Convert array to PostgreSQL vector format: '[0.1,0.2,0.3,...]'
+        embeddingValue = `[${embedding.join(',')}]`;
+      } else {
+        // Text column - store as JSON
+        embeddingValue = JSON.stringify(embedding);
+      }
+    } else {
+      embeddingValue = embedding;
+    }
+  }
+  
+  // Build INSERT query based on whether embedding column exists
+  let sql;
+  const params = [category, subcategory, title, content, priority, source, addedBy];
+  
+  if (hasEmbeddingColumn && embeddingValue) {
+    if (isVectorType) {
+      sql = `INSERT INTO zork_knowledge (category, subcategory, title, content, embedding, priority, source, added_by, active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, TRUE, EXTRACT(EPOCH FROM NOW()) * 1000, EXTRACT(EPOCH FROM NOW()) * 1000)
+             RETURNING *`;
+      params.splice(4, 0, embeddingValue); // Insert embedding at position 4
+    } else {
+      sql = `INSERT INTO zork_knowledge (category, subcategory, title, content, embedding, priority, source, added_by, active, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, EXTRACT(EPOCH FROM NOW()) * 1000, EXTRACT(EPOCH FROM NOW()) * 1000)
+             RETURNING *`;
+      params.splice(4, 0, embeddingValue); // Insert embedding at position 4
+    }
+  } else {
+    sql = `INSERT INTO zork_knowledge (category, subcategory, title, content, priority, source, added_by, active, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, EXTRACT(EPOCH FROM NOW()) * 1000, EXTRACT(EPOCH FROM NOW()) * 1000)
+           RETURNING *`;
+  }
+  
+  const result = await query(sql, params);
+  return result.rows[0];
+}
+
+/**
+ * Update an existing knowledge chunk
+ */
+async function updateZorkKnowledge(id, updates) {
+  const fields = [];
+  const values = [];
+  let paramIndex = 1;
+  
+  if (updates.category !== undefined) {
+    fields.push(`category = $${paramIndex++}`);
+    values.push(updates.category);
+  }
+  if (updates.subcategory !== undefined) {
+    fields.push(`subcategory = $${paramIndex++}`);
+    values.push(updates.subcategory);
+  }
+  if (updates.title !== undefined) {
+    fields.push(`title = $${paramIndex++}`);
+    values.push(updates.title);
+  }
+  if (updates.content !== undefined) {
+    fields.push(`content = $${paramIndex++}`);
+    values.push(updates.content);
+  }
+  if (updates.embedding !== undefined) {
+    fields.push(`embedding = $${paramIndex++}`);
+    values.push(updates.embedding);
+  }
+  if (updates.priority !== undefined) {
+    fields.push(`priority = $${paramIndex++}`);
+    values.push(updates.priority);
+  }
+  if (updates.source !== undefined) {
+    fields.push(`source = $${paramIndex++}`);
+    values.push(updates.source);
+  }
+  if (updates.active !== undefined) {
+    fields.push(`active = $${paramIndex++}`);
+    values.push(updates.active);
+  }
+  
+  // Always update updated_at
+  fields.push(`updated_at = EXTRACT(EPOCH FROM NOW()) * 1000`);
+  
+  values.push(id);
+  
+  const result = await query(
+    `UPDATE zork_knowledge SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+    values
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Search knowledge base using vector similarity (if pgvector available) or keyword search (fallback)
+ */
+async function searchZorkKnowledge(queryEmbedding, limit = 10, threshold = 0.7, category = null, priority = null) {
+  // Check if embedding column exists (pgvector available)
+  const columnCheck = await query(
+    `SELECT column_name FROM information_schema.columns 
+     WHERE table_name = 'zork_knowledge' AND column_name = 'embedding'`
+  );
+  
+  const hasVectorColumn = columnCheck.rows.length > 0;
+  
+  if (hasVectorColumn && queryEmbedding) {
+    // Vector similarity search
+    let sql = `
+      SELECT *, embedding <=> $1::vector AS distance
+      FROM zork_knowledge
+      WHERE active = TRUE
+    `;
+    const params = [queryEmbedding];
+    let paramIndex = 2;
+    
+    if (category) {
+      sql += ` AND category = $${paramIndex++}`;
+      params.push(category);
+    }
+    
+    if (priority !== null) {
+      sql += ` AND priority >= $${paramIndex++}`;
+      params.push(priority);
+    }
+    
+    sql += ` ORDER BY embedding <=> $1::vector LIMIT $${paramIndex}`;
+    params.push(limit);
+    
+    const result = await query(sql, params);
+    // Filter by threshold (distance is cosine distance, lower is better)
+    return result.rows.filter(row => row.distance <= (1 - threshold));
+  } else {
+    // Fallback: keyword-based search on title and content
+    // This is a simple fallback - for better results, use full-text search
+    const sql = `
+      SELECT *
+      FROM zork_knowledge
+      WHERE active = TRUE
+        ${category ? 'AND category = $1' : ''}
+        ${priority !== null ? `AND priority >= ${category ? '$2' : '$1'}` : ''}
+      ORDER BY priority DESC, created_at DESC
+      LIMIT ${category && priority !== null ? '$3' : category || priority !== null ? '$2' : '$1'}
+    `;
+    
+    const params = [];
+    if (category) params.push(category);
+    if (priority !== null) params.push(priority);
+    params.push(limit);
+    
+    return getAll(sql, params);
+  }
+}
+
+/**
+ * Get knowledge by category and priority
+ */
+async function getZorkKnowledgeByCategory(category, priority = null) {
+  let sql = 'SELECT * FROM zork_knowledge WHERE active = TRUE AND category = $1';
+  const params = [category];
+  
+  if (priority !== null) {
+    sql += ' AND priority = $2';
+    params.push(priority);
+  }
+  
+  sql += ' ORDER BY priority DESC, created_at DESC';
+  
+  return getAll(sql, params);
+}
+
+/**
+ * Get a specific knowledge chunk by ID
+ */
+async function getZorkKnowledgeById(id) {
+  return getOne('SELECT * FROM zork_knowledge WHERE id = $1', [id]);
+}
+
+/**
+ * Get all always-include knowledge (priority = 2)
+ */
+async function getAlwaysIncludeKnowledge() {
+  return getAll(
+    'SELECT * FROM zork_knowledge WHERE active = TRUE AND priority = 2 ORDER BY category, created_at DESC'
+  );
+}
+
+/**
+ * Soft delete a knowledge chunk (set active = false)
+ */
+async function deleteZorkKnowledge(id) {
+  const result = await query(
+    'UPDATE zork_knowledge SET active = FALSE, updated_at = EXTRACT(EPOCH FROM NOW()) * 1000 WHERE id = $1 RETURNING *',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+// ============================================================
+// Debug Observer System
+// ============================================================
+
+/**
+ * Start a debug observation session for a player
+ * @param {number} playerId - The player's ID
+ * @param {string} bugLabel - Short description of the bug being observed
+ * @returns {Promise<number>} The session ID
+ */
+async function startDebugSession(playerId, bugLabel) {
+  // End any active sessions for this player first
+  await query(
+    'UPDATE debug_sessions SET active = FALSE, ended_at = NOW() WHERE player_id = $1 AND active = TRUE',
+    [playerId]
+  );
+  
+  const result = await query(
+    'INSERT INTO debug_sessions (player_id, bug_label) VALUES ($1, $2) RETURNING id',
+    [playerId, bugLabel]
+  );
+  return result.rows[0].id;
+}
+
+/**
+ * End an active debug session
+ * @param {number} sessionId - The session ID to end
+ */
+async function endDebugSession(sessionId) {
+  await query(
+    'UPDATE debug_sessions SET active = FALSE, ended_at = NOW() WHERE id = $1',
+    [sessionId]
+  );
+}
+
+/**
+ * Get the active debug session for a player
+ * @param {number} playerId - The player's ID
+ * @returns {Promise<object|null>} The active session or null
+ */
+async function getActiveDebugSession(playerId) {
+  return getOne(
+    'SELECT * FROM debug_sessions WHERE player_id = $1 AND active = TRUE ORDER BY started_at DESC LIMIT 1',
+    [playerId]
+  );
+}
+
+/**
+ * Get a debug session by ID
+ * @param {number} sessionId - The session ID
+ * @returns {Promise<object|null>} The session or null
+ */
+async function getDebugSessionById(sessionId) {
+  return getOne('SELECT * FROM debug_sessions WHERE id = $1', [sessionId]);
+}
+
+/**
+ * Create a debug todo from ZORK's bug analysis
+ * @param {object} params - Todo parameters
+ * @returns {Promise<object>} The created todo
+ */
+async function createDebugTodo({ sessionId, title, description, reproSteps, environment, logs, createdBy = 'zork' }) {
+  const result = await query(
+    `INSERT INTO debug_todos 
+     (session_id, title, description, repro_steps, environment, logs, created_by) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7) 
+     RETURNING *`,
+    [sessionId, title, description, reproSteps, JSON.stringify(environment || {}), JSON.stringify(logs || {}), createdBy]
+  );
+  return result.rows[0];
+}
+
+/**
+ * List debug todos filtered by status
+ * @param {object} options - Filter options
+ * @returns {Promise<Array>} List of todos
+ */
+async function listDebugTodos({ status = null, limit = 50 } = {}) {
+  let sql = 'SELECT * FROM debug_todos';
+  const params = [];
+  
+  if (status) {
+    sql += ' WHERE status = $1';
+    params.push(status);
+  }
+  
+  sql += ' ORDER BY created_at DESC';
+  
+  if (limit) {
+    sql += ` LIMIT $${params.length + 1}`;
+    params.push(limit);
+  }
+  
+  return getAll(sql, params);
+}
+
+/**
+ * Get a debug todo by ID
+ * @param {number} id - The todo ID
+ * @returns {Promise<object|null>} The todo or null
+ */
+async function getDebugTodo(id) {
+  return getOne('SELECT * FROM debug_todos WHERE id = $1', [id]);
+}
+
+/**
+ * Update a debug todo (status, resolution notes)
+ * @param {number} id - The todo ID
+ * @param {object} updates - Fields to update
+ * @returns {Promise<object|null>} The updated todo
+ */
+async function updateDebugTodo(id, { status, resolutionNotes }) {
+  const updates = [];
+  const params = [];
+  let paramIndex = 1;
+  
+  if (status) {
+    updates.push(`status = $${paramIndex++}`);
+    params.push(status);
+  }
+  
+  if (resolutionNotes !== undefined) {
+    updates.push(`resolution_notes = $${paramIndex++}`);
+    params.push(resolutionNotes);
+  }
+  
+  updates.push(`updated_at = NOW()`);
+  
+  if (updates.length === 1) {
+    // Only updated_at, nothing else to update
+    return getDebugTodo(id);
+  }
+  
+  params.push(id);
+  const sql = `UPDATE debug_todos SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+  
+  const result = await query(sql, params);
+  return result.rows[0] || null;
+}
+
+/**
+ * Get debug todos with session info (joined)
+ * @param {object} options - Filter options
+ * @returns {Promise<Array>} List of todos with session info
+ */
+async function getDebugTodosWithSession({ status = null, limit = 50 } = {}) {
+  let sql = `
+    SELECT dt.*, ds.player_id, ds.bug_label, ds.started_at as session_started, p.name as player_name
+    FROM debug_todos dt
+    LEFT JOIN debug_sessions ds ON dt.session_id = ds.id
+    LEFT JOIN players p ON ds.player_id = p.id
+  `;
+  const params = [];
+  
+  if (status) {
+    sql += ' WHERE dt.status = $1';
+    params.push(status);
+  }
+  
+  sql += ' ORDER BY dt.created_at DESC';
+  
+  if (limit) {
+    sql += ` LIMIT $${params.length + 1}`;
+    params.push(limit);
+  }
+  
+  return getAll(sql, params);
+}
+
+/**
+ * Get open tickets ordered by priority
+ * @param {object} options - Filter options
+ * @returns {Promise<Array>} List of open tickets
+ */
+async function getOpenTickets({ limit = 50, priority = null, ticketType = null } = {}) {
+  let sql = `
+    SELECT dt.*, ds.player_id, ds.bug_label, p.name as player_name
+    FROM debug_todos dt
+    LEFT JOIN debug_sessions ds ON dt.session_id = ds.id
+    LEFT JOIN players p ON ds.player_id = p.id
+    WHERE dt.status = 'open'
+  `;
+  const params = [];
+  let paramIndex = 1;
+  
+  if (priority !== null) {
+    sql += ` AND dt.priority = $${paramIndex++}`;
+    params.push(priority);
+  }
+  
+  if (ticketType) {
+    sql += ` AND dt.ticket_type = $${paramIndex++}`;
+    params.push(ticketType);
+  }
+  
+  sql += ' ORDER BY dt.priority DESC, dt.created_at ASC';
+  
+  if (limit) {
+    sql += ` LIMIT $${paramIndex++}`;
+    params.push(limit);
+  }
+  
+  return getAll(sql, params);
+}
+
+/**
+ * Update ticket priority
+ * @param {number} id - Ticket ID
+ * @param {number} priority - New priority (1-4)
+ * @returns {Promise<object|null>} Updated ticket
+ */
+async function updateTicketPriority(id, priority) {
+  if (priority < 1 || priority > 4) {
+    throw new Error('Priority must be between 1 and 4');
+  }
+  
+  const result = await query(
+    'UPDATE debug_todos SET priority = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [priority, id]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Add tag to ticket
+ * @param {number} id - Ticket ID
+ * @param {string} tag - Tag to add
+ * @returns {Promise<object|null>} Updated ticket
+ */
+async function addTicketTag(id, tag) {
+  // Get current tags
+  const ticket = await getDebugTodo(id);
+  if (!ticket) {
+    throw new Error('Ticket not found');
+  }
+  
+  const currentTags = ticket.tags || [];
+  if (!Array.isArray(currentTags)) {
+    // Handle case where tags might be stored as string
+    const parsed = currentTags.length > 0 ? JSON.parse(currentTags) : [];
+    currentTags = parsed;
+  }
+  
+  // Add tag if not already present
+  if (!currentTags.includes(tag)) {
+    currentTags.push(tag);
+  }
+  
+  const result = await query(
+    'UPDATE debug_todos SET tags = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [JSON.stringify(currentTags), id]
+  );
+  return result.rows[0] || null;
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -2801,5 +3272,30 @@ module.exports = {
   // Game Messages
   getGameMessage,
   getAllGameMessages,
-  updateGameMessage
+  updateGameMessage,
+  
+  // ZORK Knowledge Base
+  addZorkKnowledge,
+  updateZorkKnowledge,
+  searchZorkKnowledge,
+  getZorkKnowledgeByCategory,
+  getZorkKnowledgeById,
+  getAlwaysIncludeKnowledge,
+  deleteZorkKnowledge,
+  
+  // Debug Observer System
+  startDebugSession,
+  endDebugSession,
+  getActiveDebugSession,
+  getDebugSessionById,
+  createDebugTodo,
+  listDebugTodos,
+  getDebugTodo,
+  updateDebugTodo,
+  getDebugTodosWithSession,
+  
+  // Ticket System
+  getOpenTickets,
+  updateTicketPriority,
+  addTicketTag
 };

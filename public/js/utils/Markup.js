@@ -286,6 +286,14 @@ function generateMarkupCSS(effects, color) {
         css += `display: inline-block; transform-origin: center; vertical-align: baseline; animation: markup-pulse 2s ease 3;`;
     }
     
+    if (effects.italic) {
+        css += `font-style: italic;`;
+    }
+    
+    if (effects.fontSize) {
+        css += `font-size: ${effects.fontSize};`;
+    }
+    
     return css;
 }
 
@@ -320,15 +328,54 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
     // Combine built-in and custom conventions
     const allConventions = { ...MARKUP_CONVENTIONS, ...customMarkupConventions };
     
+    // Separate line-start patterns from regular patterns
+    const lineStartConventions = [];
+    const regularConventions = [];
+    
+    for (const [key, convention] of Object.entries(allConventions)) {
+        if (convention.opening.startsWith('^') || convention.closing === '' || convention.closing === '$') {
+            lineStartConventions.push([key, convention]);
+        } else {
+            regularConventions.push([key, convention]);
+        }
+    }
+    
     // Sort by opening length (longest first) to handle nested/consecutive patterns
-    const sortedConventions = Object.entries(allConventions).sort((a, b) => 
+    const sortedLineStartConventions = lineStartConventions.sort((a, b) => 
         b[1].opening.length - a[1].opening.length
     );
+    const sortedRegularConventions = regularConventions.sort((a, b) => 
+        b[1].opening.length - a[1].opening.length
+    );
+    
+    // CRITICAL: Check if input contains markdown HTML tags BEFORE processing
+    // If so, we need to protect them from being processed as markup
+    const markdownTagPattern = /<\/?(ul|ol|li|br|strong|em|code|p)\b[^>]*>/i;
+    const hasMarkdownHtml = markdownTagPattern.test(text);
+    
+    // If markdown HTML is present, protect HTML tags by replacing them with placeholders
+    const htmlTagPlaceholders = [];
+    let htmlTagIndex = 0;
+    let result = text;
+    
+    if (hasMarkdownHtml) {
+        // Replace HTML tags with placeholders to protect them
+        result = result.replace(/<([^>]+)>/g, (match, tagContent) => {
+            // Check if it's a markdown HTML tag
+            if (markdownTagPattern.test(match)) {
+                const placeholder = `__HTMLTAG_${htmlTagIndex}__`;
+                htmlTagPlaceholders[htmlTagIndex] = match;
+                htmlTagIndex++;
+                return placeholder;
+            }
+            // Not a markdown tag, keep as-is (might be from markup placeholders)
+            return match;
+        });
+    }
     
     // Use a placeholder system to avoid double-escaping
     const placeholders = [];
     let placeholderIndex = 0;
-    let result = text;
     
     // First, extract typewriter blocks and replace with placeholders
     // Typewriter pattern: {{typewriter:delay}}content{{/typewriter}}
@@ -345,7 +392,7 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         let processedContent = content;
         
         // Process other markup conventions inside typewriter content
-        for (const [key, convention] of sortedConventions) {
+        for (const [key, convention] of sortedRegularConventions) {
             const opening = convention.opening;
             const closing = convention.closing;
             const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -386,8 +433,9 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         return placeholder;
     });
     
-    // Process each convention BEFORE escaping HTML
-    for (const [key, convention] of sortedConventions) {
+    // FIRST: Process regular conventions (standard opening/closing patterns)
+    // This processes all markup including any that might be inside line-start patterns
+    for (const [key, convention] of sortedRegularConventions) {
         const opening = convention.opening;
         const closing = convention.closing;
         
@@ -397,6 +445,7 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         const escapedClosing = escapeRegex(closing);
         
         // Create regex pattern - match content between opening and closing
+        // Standard pattern for regular conventions
         const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
         
         result = result.replace(pattern, (match, content) => {
@@ -431,20 +480,153 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         });
     }
     
-    // Now escape any remaining HTML that wasn't part of markup
-    result = escapeHtml(result);
+    // Now handle escaping - if we protected HTML tags, restore them first
+    if (hasMarkdownHtml && htmlTagPlaceholders.length > 0) {
+        // Restore HTML tag placeholders
+        htmlTagPlaceholders.forEach((tag, index) => {
+            result = result.replace(`__HTMLTAG_${index}__`, tag);
+        });
+        
+        // Now escape only text content, preserving HTML tags
+        const parts = result.split(/(<[^>]*>)/);
+        let processed = '';
+        
+        for (const part of parts) {
+            if (part.startsWith('<') && part.endsWith('>')) {
+                // HTML tag - preserve it (already safe)
+                processed += part;
+            } else if (part) {
+                // Text content - escape it to prevent XSS
+                // But preserve placeholders that will be replaced later
+                if (part.includes('__MARKUP_') || part.includes('__TYPEWRITER_')) {
+                    // Contains placeholders - split and preserve them
+                    const placeholderParts = part.split(/(__(?:MARKUP|TYPEWRITER)_\d+__)/);
+                    for (const placeholderPart of placeholderParts) {
+                        if (placeholderPart.match(/^__(?:MARKUP|TYPEWRITER)_\d+__$/)) {
+                            // Placeholder - keep as-is
+                            processed += placeholderPart;
+                        } else if (placeholderPart) {
+                            // Text - escape it
+                            processed += escapeHtml(placeholderPart);
+                        }
+                    }
+                } else {
+                    // Plain text - escape it
+                    processed += escapeHtml(part);
+                }
+            }
+        }
+        result = processed;
+    } else {
+        // No markdown HTML - escape everything as before
+        result = escapeHtml(result);
+    }
     
     // Replace typewriter placeholders with actual spans (they're already safe HTML)
     typewriterBlocks.forEach((span, index) => {
         result = result.replace(`__TYPEWRITER_${index}__`, span);
     });
     
-    // Replace placeholders with actual spans (they're already safe HTML)
+    // SECOND: Process line-start patterns (after regular markup is processed)
+    // These match entire lines and wrap content that may already have markup placeholders
+    for (const [key, convention] of sortedLineStartConventions) {
+        const opening = convention.opening;
+        const closing = convention.closing;
+        
+        // For line-start patterns, handle the regex properly
+        let cleanOpening = opening.replace(/^\^/, ''); // Remove ^ for matching
+        // Unescape double backslashes that might be in the database
+        cleanOpening = cleanOpening.replace(/\\\\/g, '\\');
+        
+        // Build regex pattern - escape special chars but preserve regex patterns like \d+
+        // We need to be careful: if cleanOpening contains \d, we want to keep it as \d in the regex
+        let escapedCleanOpening = '';
+        for (let i = 0; i < cleanOpening.length; i++) {
+            const char = cleanOpening[i];
+            if (char === '\\' && i + 1 < cleanOpening.length) {
+                // Escape sequence like \d, \., etc. - keep as-is
+                escapedCleanOpening += char + cleanOpening[i + 1];
+                i++; // Skip next char
+            } else if (/[.*+?${}()|[\]\\]/.test(char)) {
+                // Escape regex special chars
+                escapedCleanOpening += '\\' + char;
+            } else {
+                escapedCleanOpening += char;
+            }
+        }
+        
+        let pattern;
+        if (closing === '' || closing === '$') {
+            // Line-end pattern - match from opening to end of line
+            pattern = new RegExp(`^${escapedCleanOpening}(.+?)$`, 'gm');
+        } else {
+            // Line-start pattern with closing
+            const escapedCleanClosing = escapeRegex(closing);
+            pattern = new RegExp(`^${escapedCleanOpening}(.+?)${escapedCleanClosing}`, 'gm');
+        }
+        
+        result = result.replace(pattern, (match, content) => {
+            // Content may already have placeholders from regular markup - replace them first
+            let processedContent = content;
+            let hasPlaceholders = false;
+            
+            placeholders.forEach((span, index) => {
+                if (processedContent.includes(`__MARKUP_${index}__`)) {
+                    hasPlaceholders = true;
+                    processedContent = processedContent.replace(`__MARKUP_${index}__`, span);
+                }
+            });
+            
+            // If content had placeholders (which are already safe HTML), don't escape
+            // Otherwise, escape the text content
+            let finalContent;
+            if (hasPlaceholders) {
+                // Content already contains HTML spans from placeholders - use directly
+                finalContent = processedContent;
+            } else {
+                // Plain text content - escape it
+                finalContent = escapeHtml(processedContent);
+            }
+            
+            // Determine color
+            let color = convention.color;
+            if (color === 'keyword') {
+                color = glowColor;
+            } else if (color === 'inherit') {
+                color = 'inherit';
+            }
+            
+            // Generate CSS
+            const css = generateMarkupCSS(convention.effects || {}, color);
+            const className = `markup-${key}`;
+            
+            // Create the span
+            const span = `<span class="${className}" style="${css}">${finalContent}</span>`;
+            
+            return span;
+        });
+    }
+    
+    // Replace regular markup placeholders with actual spans (they're already safe HTML)
     placeholders.forEach((span, index) => {
         result = result.replace(`__MARKUP_${index}__`, span);
     });
     
-    return result;
+    // Convert line breaks to <br> tags (but preserve existing HTML structure)
+    // Split by HTML tags to avoid breaking them
+    const htmlParts = result.split(/(<[^>]+>)/);
+    let finalResult = '';
+    for (const part of htmlParts) {
+        if (part.startsWith('<') && part.endsWith('>')) {
+            // HTML tag - keep as-is
+            finalResult += part;
+        } else {
+            // Text content - convert line breaks to <br>
+            finalResult += part.replace(/\n/g, '<br>');
+        }
+    }
+    
+    return finalResult;
 }
 
 // Make initializeTypewriterEffects available globally for markup-helper.js
