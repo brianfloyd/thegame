@@ -1220,8 +1220,19 @@ async function inventory(ctx, data) {
   }
   
   const items = await db.getPlayerItems(player.id);
+  
+  // Enrich items with item_type and rune_color for display
+  const enrichedItems = await Promise.all(items.map(async (item) => {
+    const itemData = await db.getItemByName(item.item_name);
+    return {
+      ...item,
+      item_type: itemData?.item_type || null,
+      rune_color: itemData?.rune_color || null
+    };
+  }));
+  
   const hasWarehouseDeed = await db.hasPlayerWarehouseDeed(player.id);
-  ws.send(JSON.stringify({ type: 'inventoryList', items, hasWarehouseDeed }));
+  ws.send(JSON.stringify({ type: 'inventoryList', items: enrichedItems, hasWarehouseDeed }));
 }
 
 /**
@@ -1328,8 +1339,8 @@ async function take(ctx, data) {
     
     ws.send(JSON.stringify({ type: 'message', message }));
     
-    // Send updated room to player to refresh items on ground
-    await sendRoomUpdate(connectedPlayers, factoryWidgetState, db, connectionId, currentRoom);
+    // Send updated room to player to refresh items on ground (immediate, no delay)
+    await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom);
     
     // Send updated player stats (encumbrance changed)
     await sendPlayerStats(connectedPlayers, db, connectionId);
@@ -1423,6 +1434,36 @@ async function drop(ctx, data) {
 async function factoryWidgetAddItem(ctx, data) {
   const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
   
+  // Comprehensive defensive logging
+  console.log('[factoryWidgetAddItem] Called with data:', {
+    dataType: typeof data,
+    dataValue: data,
+    hasSlotIndex: data ? ('slotIndex' in data) : false,
+    hasItemName: data ? ('itemName' in data) : false,
+    slotIndexValue: data ? data.slotIndex : 'N/A',
+    itemNameValue: data ? data.itemName : 'N/A'
+  });
+  
+  // Defensive null check
+  if (!data || typeof data !== 'object') {
+    console.error('[factoryWidgetAddItem] Invalid data - not an object:', data);
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid data received for factoryWidgetAddItem' }));
+    return;
+  }
+  
+  // Check required fields BEFORE accessing them
+  if (!('slotIndex' in data)) {
+    console.error('[factoryWidgetAddItem] Missing slotIndex in data:', data);
+    ws.send(JSON.stringify({ type: 'error', message: 'slotIndex is required' }));
+    return;
+  }
+  
+  if (!('itemName' in data)) {
+    console.error('[factoryWidgetAddItem] Missing itemName in data:', data);
+    ws.send(JSON.stringify({ type: 'error', message: 'itemName is required' }));
+    return;
+  }
+  
   const player = await db.getPlayerByName(playerName);
   if (!player) {
     ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
@@ -1441,15 +1482,37 @@ async function factoryWidgetAddItem(ctx, data) {
     return;
   }
   
-  const slotIndex = data.slotIndex;
-  if (slotIndex !== 0 && slotIndex !== 1 && slotIndex !== 2 && slotIndex !== 3 && slotIndex !== 4) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index. Must be 0, 1, 2, 3, or 4.' }));
+  // Parse slot index - accept both string and number
+  const slotIndex = parseInt(data.slotIndex, 10);
+  console.log('[factoryWidgetAddItem] Parsed slotIndex:', slotIndex, 'from raw value:', data.slotIndex);
+  
+  if (isNaN(slotIndex) || slotIndex < 0 || slotIndex > 4) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid slot index. Must be 0-4. Received: ${data.slotIndex}` }));
     return;
   }
   
   const itemName = data.itemName;
   if (!itemName) {
     ws.send(JSON.stringify({ type: 'error', message: 'Item name required.' }));
+    return;
+  }
+  
+  // Parse quantity (default to 1 if not provided)
+  const requestedQuantity = parseInt(data.quantity, 10) || 1;
+  if (isNaN(requestedQuantity) || requestedQuantity < 1) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid quantity. Must be 1 or more.' }));
+    return;
+  }
+  
+  // Validate item type for slot
+  // Slots 0, 1 are ingredient slots - only accept items with item_type === 'ingredient'
+  // Slots 2, 3, 4 are rune slots - only accept items with item_type === 'rune'
+  const isIngredientSlot = slotIndex >= 0 && slotIndex <= 1;
+  const isRuneSlot = slotIndex >= 2 && slotIndex <= 4;
+  
+  // Rune slots only accept single items (quantity must be 1)
+  if (isRuneSlot && requestedQuantity > 1) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Rune slots only accept one item at a time. Quantity must be 1.' }));
     return;
   }
   
@@ -1462,10 +1525,84 @@ async function factoryWidgetAddItem(ctx, data) {
     return;
   }
   
-  // Get full item data (including item_type and rune_color)
-  const itemData = await db.getItemByName(itemName);
+  // Use the canonical item name from inventory (might differ from client-sent name)
+  const canonicalItemName = inventoryItem.item_name;
+  
+  console.log(`[factoryWidgetAddItem] Looking up item - canonicalName: "${canonicalItemName}", originalName: "${itemName}"`);
+  
+  // Ensure requested quantity doesn't exceed available inventory
+  const actualQuantity = Math.min(requestedQuantity, inventoryItem.quantity);
+  if (actualQuantity < requestedQuantity) {
+    ws.send(JSON.stringify({ type: 'error', message: `You only have ${inventoryItem.quantity} "${canonicalItemName}". Requested ${requestedQuantity}.` }));
+    return;
+  }
+  
+  // Get full item data (including item_type and rune_color) - use canonical name from inventory
+  let itemData = await db.getItemByName(canonicalItemName);
+  console.log(`[factoryWidgetAddItem] First lookup result for "${canonicalItemName}":`, itemData ? `Found (id: ${itemData.id}, name: "${itemData.name}")` : 'Not found');
+  
   if (!itemData) {
-    ws.send(JSON.stringify({ type: 'error', message: `Item "${itemName}" not found in database.` }));
+    // Try with the original itemName as fallback
+    itemData = await db.getItemByName(itemName);
+    console.log(`[factoryWidgetAddItem] Fallback lookup result for "${itemName}":`, itemData ? `Found (id: ${itemData.id}, name: "${itemData.name}")` : 'Not found');
+    
+    if (!itemData) {
+      // Try a case-insensitive search directly in the database
+      try {
+        const caseInsensitiveResult = await db.query(
+          `SELECT * FROM items WHERE LOWER(REPLACE(name, ' ', '_')) = LOWER(REPLACE($1, ' ', '_')) OR LOWER(name) = LOWER($1) LIMIT 1`,
+          [canonicalItemName]
+        );
+        if (caseInsensitiveResult && caseInsensitiveResult.rows && caseInsensitiveResult.rows.length > 0) {
+          itemData = caseInsensitiveResult.rows[0];
+          console.log(`[factoryWidgetAddItem] Case-insensitive lookup found:`, itemData.name);
+        }
+      } catch (dbError) {
+        console.error(`[factoryWidgetAddItem] Database query error:`, dbError);
+      }
+      
+      if (!itemData) {
+        // Item doesn't exist in items table - create it with defaults
+        // This can happen if items were added to inventory directly
+        console.warn(`[factoryWidgetAddItem] Item "${canonicalItemName}" not found in items table, creating it with defaults`);
+        try {
+          // Determine item_type based on slot or default to 'sundries'
+          let defaultItemType = 'sundries';
+          if (isRuneSlot) {
+            defaultItemType = 'rune';
+          } else if (isIngredientSlot) {
+            defaultItemType = 'ingredient';
+          }
+          
+          // Create the item in the database
+          itemData = await db.createItem({
+            name: canonicalItemName,
+            description: `${canonicalItemName} (auto-created)`,
+            item_type: defaultItemType,
+            active: true,
+            poofable: false,
+            encumbrance: 1,
+            rune_color: defaultItemType === 'rune' ? '#0000FF' : null
+          });
+          console.log(`[factoryWidgetAddItem] Created item "${canonicalItemName}" with type "${defaultItemType}"`);
+        } catch (createError) {
+          console.error(`[factoryWidgetAddItem] Failed to create item "${canonicalItemName}":`, createError);
+          ws.send(JSON.stringify({ type: 'error', message: `Item "${canonicalItemName}" not found in database and could not be created. Please contact an administrator.` }));
+          return;
+        }
+      }
+    }
+  }
+  const isIngredient = itemData.item_type === 'ingredient';
+  const isRune = itemData.item_type === 'rune';
+  
+  if (isIngredientSlot && !isIngredient) {
+    ws.send(JSON.stringify({ type: 'error', message: `Ingredient slots only accept ingredients. "${itemName}" is a ${itemData.item_type || 'unknown type'}.` }));
+    return;
+  }
+  
+  if (isRuneSlot && !isRune) {
+    ws.send(JSON.stringify({ type: 'error', message: `Rune slots only accept runes. "${itemName}" is a ${itemData.item_type || 'unknown type'}.` }));
     return;
   }
   
@@ -1481,9 +1618,10 @@ async function factoryWidgetAddItem(ctx, data) {
   
   // Check if slot can accept this item
   const currentSlot = factoryState.slots[slotIndex];
-  if (currentSlot !== null) {
+  if (currentSlot !== null && currentSlot && currentSlot.itemName) {
     // Slot is occupied - check if it's the same item type
-    if (currentSlot.itemName.toLowerCase() !== itemData.item_name.toLowerCase()) {
+    // Use canonicalItemName for comparison
+    if (currentSlot.itemName.toLowerCase() !== canonicalItemName.toLowerCase()) {
       ws.send(JSON.stringify({ type: 'error', message: 'That slot already contains a different item type.' }));
       return;
     }
@@ -1491,21 +1629,22 @@ async function factoryWidgetAddItem(ctx, data) {
   }
   
   // Add item to slot (stack if same type, or create new entry)
-  if (currentSlot && currentSlot.itemName.toLowerCase() === inventoryItem.item_name.toLowerCase()) {
-    // Stack: increase quantity
-    currentSlot.quantity += 1;
+  // Use canonicalItemName for consistency
+  if (currentSlot && currentSlot.itemName && currentSlot.itemName.toLowerCase() === canonicalItemName.toLowerCase()) {
+    // Stack: increase quantity by actualQuantity
+    currentSlot.quantity += actualQuantity;
   } else {
     // New item in slot - include item_type and rune_color for display
     factoryState.slots[slotIndex] = {
-      itemName: inventoryItem.item_name,
-      quantity: 1,
+      itemName: canonicalItemName,
+      quantity: actualQuantity,
       itemType: itemData.item_type,
       runeColor: itemData.rune_color || null
     };
   }
   
-  // Remove 1 item from player inventory
-  await db.removePlayerItem(player.id, inventoryItem.item_name, 1);
+  // Remove actualQuantity items from player inventory using canonical name
+  await db.removePlayerItem(player.id, canonicalItemName, actualQuantity);
   
   // Send updated factory widget state
   ws.send(JSON.stringify({
@@ -1547,9 +1686,10 @@ async function factoryWidgetRemoveItem(ctx, data) {
     return;
   }
   
-  const slotIndex = data.slotIndex;
-  if (slotIndex !== 0 && slotIndex !== 1 && slotIndex !== 2 && slotIndex !== 3 && slotIndex !== 4) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index. Must be 0, 1, 2, 3, or 4.' }));
+  // Parse slot index - accept both string and number
+  const slotIndex = parseInt(data.slotIndex, 10);
+  if (isNaN(slotIndex) || slotIndex < 0 || slotIndex > 4) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid slot index. Must be 0-4. Received: ${data.slotIndex}` }));
     return;
   }
   
@@ -5569,21 +5709,38 @@ async function createZorkTicket(ctx, data) {
     return;
   }
   
-  const { title, description, priority = 2, ticketType = 'user' } = data;
+  const { title, description, priority = 2, ticketType = 'bug' } = data;
   
   if (!title || !title.trim()) {
     ws.send(JSON.stringify({ type: 'error', message: 'Ticket title is required' }));
     return;
   }
   
+  // Validate priority
+  if (priority < 1 || priority > 4) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Priority must be between 1 (low) and 4 (critical)' }));
+    return;
+  }
+  
+  // Validate ticket type
+  const validTypes = ['bug', 'feature', 'debug'];
+  if (!validTypes.includes(ticketType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Ticket type must be one of: ${validTypes.join(', ')}` }));
+    return;
+  }
+  
   try {
+    // Only use 'zork' as created_by if this is actually from ZORK AI
+    // For user-created tickets, use the actual player name
+    const createdBy = data.fromZork === true ? 'zork' : playerData.playerName;
+    
     const ticket = await db.createDebugTodo({
       title: title.trim(),
       description: description ? description.trim() : '',
       priority: priority,
       ticket_type: ticketType,
       status: 'open',
-      created_by: playerData.playerName, // Use actual player name, not 'user'
+      created_by: createdBy,
       player_id: playerData.playerId,
       player_name: playerData.playerName
     });
@@ -5682,16 +5839,46 @@ async function updateTicket(ctx, data) {
     return;
   }
   
-  const { ticketId, status, feedback, resolutionNotes } = data;
+  const { ticketId, status, feedback, resolutionNotes, priority, ticketType, deleted, title, description } = data;
   
   if (!ticketId) {
     ws.send(JSON.stringify({ type: 'error', message: 'Ticket ID is required' }));
     return;
   }
   
+  // Validate status if provided
+  if (status) {
+    const validStatuses = ['open', 'backlog', 'in_progress', 'resolved', 'deleted'];
+    if (!validStatuses.includes(status)) {
+      ws.send(JSON.stringify({ type: 'error', message: `Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}` }));
+      return;
+    }
+  }
+  
+  // Validate priority if provided
+  if (priority !== undefined) {
+    if (priority < 1 || priority > 4) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Priority must be between 1 (low) and 4 (critical)' }));
+      return;
+    }
+  }
+  
+  // Validate ticket type if provided
+  if (ticketType) {
+    const validTypes = ['bug', 'feature', 'debug'];
+    if (!validTypes.includes(ticketType)) {
+      ws.send(JSON.stringify({ type: 'error', message: `Invalid ticket type: ${ticketType}. Must be one of: ${validTypes.join(', ')}` }));
+      return;
+    }
+  }
+  
   try {
     const updates = {};
     if (status) updates.status = status;
+    if (priority !== undefined) updates.priority = priority;
+    if (ticketType) updates.ticketType = ticketType; // database.js expects ticketType, maps to ticket_type column
+    if (title !== undefined) updates.title = title;
+    if (description !== undefined) updates.description = description;
     if (feedback) {
       // Append feedback to resolution notes
       const ticket = await db.getDebugTodo(ticketId);
@@ -5747,9 +5934,14 @@ async function addTicketFeedback(ctx, data) {
       return;
     }
     
+    // Append feedback to BOTH description and resolution_notes
+    // Description is what Cursor reads when processing tickets
+    // Resolution notes tracks the history
+    const existingDescription = ticket.description || '';
     const existingNotes = ticket.resolution_notes || '';
     const feedbackText = `\n\n[Feedback from ${playerData.playerName} at ${new Date().toISOString()}]:\n${feedback}`;
     const updated = await db.updateDebugTodo(ticketId, {
+      description: existingDescription + feedbackText,
       resolutionNotes: existingNotes + feedbackText
     });
     

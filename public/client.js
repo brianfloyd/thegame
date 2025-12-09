@@ -6493,55 +6493,9 @@ function handleFactoryWidgetState(state) {
     updateFactoryWidgetSlots(factoryWidgetState);
 }
 
-// Initialize factory widget drag and drop handlers
-function initFactoryWidgetDragDrop() {
-    // All 3 slots support drag and drop (2 resource slots + 1 rune slot)
-    for (let i = 0; i < 3; i++) {
-        const slot = document.getElementById(`factory-slot-${i}`);
-        if (!slot) continue;
-        
-        // Allow drop
-        slot.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            slot.classList.add('drag-over');
-        });
-        
-        slot.addEventListener('dragleave', (e) => {
-            slot.classList.remove('drag-over');
-        });
-        
-        slot.addEventListener('drop', (e) => {
-            e.preventDefault();
-            slot.classList.remove('drag-over');
-            
-            try {
-                const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-                const itemName = data.itemName;
-                
-                if (!itemName) return;
-                
-                // Send message to server to add item to slot
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'factoryWidgetAddItem',
-                        slotIndex: i,
-                        itemName: itemName
-                    }));
-                }
-            } catch (err) {
-                console.error('Error parsing drag data:', err);
-            }
-        });
-    }
-}
-
-// Initialize factory widget drag and drop when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initFactoryWidgetDragDrop);
-} else {
-    initFactoryWidgetDragDrop();
-}
+// Factory widget drag and drop is now handled by FactoryWidget.js component
+// This old function is disabled to prevent conflicts with the component-based implementation
+// which supports all 5 slots (2 supply + 3 rune slots)
 
 // Handle factory widget state message
 function handleFactoryWidgetState(state) {

@@ -15,7 +15,7 @@ export default class TicketsWidget extends Component {
         this.showResolved = false;
         this.lastSuccessfulLoad = null; // Track last successful ticket load
         this.isLoading = false; // Prevent concurrent loads
-        this.currentTab = 'openPending'; // 'openPending' or 'testing'
+        this.currentTab = 'openPending'; // 'openPending', 'backlog', or 'testing'
         this.godMode = false; // Track god mode status
     }
     
@@ -81,6 +81,23 @@ export default class TicketsWidget extends Component {
             } else if (target.id === 'ticketsRefresh') {
                 e.preventDefault();
                 this.loadTickets();
+            } else if (target.id === 'ticketsCreateNew') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.openCreateTicketDialog();
+            } else if (target.closest('.ticket-item')) {
+                // Handle ticket item clicks
+                const ticketItem = target.closest('.ticket-item');
+                if (ticketItem) {
+                    const ticketId = parseInt(ticketItem.dataset.ticketId);
+                    if (ticketId && !isNaN(ticketId)) {
+                        // Only trigger if not clicking on action buttons or their children
+                        if (!target.closest('.ticket-actions-compact') && !target.closest('button')) {
+                            console.log('[TicketsWidget] Ticket item clicked, opening ticket #' + ticketId);
+                            this.viewTicket(ticketId);
+                        }
+                    }
+                }
             }
         };
         
@@ -210,15 +227,49 @@ export default class TicketsWidget extends Component {
     }
     
     handleTicketUpdated(data) {
+        console.log('[TicketsWidget] Ticket updated:', data);
+        
         // If ticket was deleted, immediately remove it from local array to prevent stale display
         if (data.ticket && data.ticket.status === 'deleted') {
             console.log(`[TicketsWidget] Ticket #${data.ticketId} was deleted, removing from local array immediately`);
             this.tickets = this.tickets.filter(t => t && t.id !== data.ticketId);
             // Re-render immediately to reflect deletion
             this.render();
+            
+            // Close modal if it's open for this ticket
+            const dialog = document.getElementById('ticketDetailsDialog');
+            if (dialog && !dialog.classList.contains('hidden')) {
+                dialog.classList.add('hidden');
+            }
+            return;
         }
         
-        // Reload tickets after update to get fresh data from server
+        // Update local ticket data immediately
+        if (data.ticket && data.ticketId) {
+            const ticketIndex = this.tickets.findIndex(t => t.id === data.ticketId);
+            if (ticketIndex >= 0) {
+                this.tickets[ticketIndex] = data.ticket;
+                console.log(`[TicketsWidget] Updated local ticket #${data.ticketId} with status: ${data.ticket.status}`);
+            } else {
+                // Ticket not in local array, add it
+                this.tickets.push(data.ticket);
+            }
+        }
+        
+        // If modal is open for this ticket, refresh it
+        const dialog = document.getElementById('ticketDetailsDialog');
+        if (dialog && !dialog.classList.contains('hidden') && data.ticketId) {
+            console.log('[TicketsWidget] Refreshing open modal for updated ticket #' + data.ticketId);
+            // Use the updated ticket data from the response
+            if (data.ticket) {
+                this.showTicketDetails(data.ticketId);
+            }
+        }
+        
+        // Re-render widget to show updated status
+        this.render();
+        
+        // Reload tickets after update to get fresh data from server (but don't wait for it)
         this.loadTickets();
     }
     
@@ -254,64 +305,32 @@ export default class TicketsWidget extends Component {
         
         console.log(`[TicketsWidget] Rendering with ${this.tickets.length} total tickets, filter: "${this.filterStatus}"`);
         
-        // CRITICAL: Filter tickets and store result
-        let filtered = this.filterTickets();
-        console.log(`[TicketsWidget] After filtering: ${filtered.length} tickets shown`);
-        console.log(`[TicketsWidget] Filtered array reference:`, filtered);
-        console.log(`[TicketsWidget] Filtered array length:`, filtered.length);
+        // Filter out deleted tickets first
+        let filtered = this.tickets.filter(t => t && t.status !== 'deleted');
+        console.log(`[TicketsWidget] After removing deleted: ${filtered.length} tickets`);
         
-        // Verify filter wasn't changed during filtering
-        if (this.filterStatus !== filterBeforeRender) {
-            console.error(`[TicketsWidget] FILTER WAS CHANGED DURING RENDER! Was "${filterBeforeRender}", now "${this.filterStatus}"`);
-            this.filterStatus = filterBeforeRender; // Restore it
-            // Re-filter with correct filter
-            filtered = this.filterTickets();
-            console.log(`[TicketsWidget] Re-filtered with restored filter: ${filtered.length} tickets`);
-        }
-        
-        // Final verification - log what we're about to display
-        console.log(`[TicketsWidget] FINAL - Displaying ${filtered.length} tickets with filter "${this.filterStatus}"`);
-        if (filtered.length > 0) {
-            filtered.forEach(t => {
-                console.log(`[TicketsWidget]   - Ticket #${t.id}: status="${t.status}"`);
-            });
-        } else {
-            console.log(`[TicketsWidget]   - No tickets to display (filter: "${this.filterStatus}")`);
-        }
-        
-        // CRITICAL SAFETY CHECK: Double-verify filtered array matches filter
-        if (this.filterStatus !== 'all') {
-            const invalidTickets = filtered.filter(t => t && t.status !== this.filterStatus);
-            if (invalidTickets.length > 0) {
-                console.error(`[TicketsWidget] CRITICAL ERROR: Filtered array contains ${invalidTickets.length} tickets that don't match filter "${this.filterStatus}"!`);
-                invalidTickets.forEach(t => {
-                    console.error(`[TicketsWidget]   - Invalid ticket #${t.id}: status="${t.status}" (expected "${this.filterStatus}")`);
-                });
-                // Re-filter to fix it - create a NEW array
-                filtered = this.tickets.filter(t => t && t.status === this.filterStatus);
-                console.log(`[TicketsWidget] Re-filtered: ${filtered.length} tickets now match filter "${this.filterStatus}"`);
-            }
-        }
-        
-        // CRITICAL: Create a new const to ensure we use the filtered array
-        const ticketsToDisplay = [...filtered]; // Create a copy to prevent any reference issues
-        console.log(`[TicketsWidget] Created ticketsToDisplay array with ${ticketsToDisplay.length} tickets`);
-        
-        // Filter tickets based on current tab
+        // Filter tickets based on current tab (tabs work independently of filterStatus)
         let tabTickets = [];
         let tabTitle = '';
         let tabCount = 0;
         
         if (this.currentTab === 'openPending') {
             // Tab 1: Open and Pending tickets (open status)
-            tabTickets = ticketsToDisplay.filter(t => t.status === 'open');
+            tabTickets = filtered.filter(t => t.status === 'open');
             tabTitle = 'Open/Pending';
             tabCount = tabTickets.length;
+            console.log(`[TicketsWidget] Open/Pending tab: ${tabTickets.length} tickets`);
         } else if (this.currentTab === 'testing') {
-            // Tab 2: Testing - in_progress tickets with AC
-            tabTickets = ticketsToDisplay.filter(t => t.status === 'in_progress' && t.resolution_notes);
+            // Tab 2: Testing - ALL in_progress tickets
+            tabTickets = filtered.filter(t => t.status === 'in_progress');
             tabTitle = 'Testing';
             tabCount = tabTickets.length;
+            console.log(`[TicketsWidget] Testing tab: ${tabTickets.length} in_progress tickets`);
+            if (tabTickets.length > 0) {
+                tabTickets.forEach(t => {
+                    console.log(`[TicketsWidget]   - Ticket #${t.id}: status="${t.status}", title="${t.title}"`);
+                });
+            }
         }
         
         let html = `
@@ -320,6 +339,7 @@ export default class TicketsWidget extends Component {
                 <div class="tickets-tabs">
                     <button class="ticket-tab-btn ${this.currentTab === 'openPending' ? 'active' : ''}" id="ticketsTabOpenPending" data-tab="openPending">Open/Pending</button>
                     <button class="ticket-tab-btn ${this.currentTab === 'testing' ? 'active' : ''}" id="ticketsTabTesting" data-tab="testing">Testing</button>
+                    <button class="ticket-action-btn" id="ticketsCreateNew" style="margin-left: auto;">+ New Ticket</button>
                     <button class="ticket-filter-btn" id="ticketsRefresh">Refresh</button>
                 </div>
             </div>
@@ -334,52 +354,35 @@ export default class TicketsWidget extends Component {
             html += `<div class="tickets-empty">No ${tabTitle.toLowerCase()} tickets found.</div>`;
         } else {
             tabTickets.forEach(ticket => {
-                const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'in_progress' ? '🟡' : '✅';
+                const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'backlog' ? '📋' : ticket.status === 'in_progress' ? '🟡' : '✅';
                 const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
+                const ticketTypeText = ticket.ticket_type === 'bug' ? '🐛 Bug' : ticket.ticket_type === 'feature' ? '✨ Feature' : '🔍 Debug';
                 
                 // Check if Cursor is working on this (in_progress status means Cursor is working)
                 const cursorWorking = ticket.status === 'in_progress';
                 const cursorIndicator = cursorWorking ? '<span class="cursor-working-indicator" title="Cursor is working on this ticket">🤖 Cursor Working...</span>' : '';
                 
-                // Tab-specific actions
+                // Only show Resolve button on testing tab
                 let actionButtons = '';
-                if (this.currentTab === 'openPending') {
-                    // Tab 1: Open/Pending - can move to pending, send to cursor, delete
+                if (this.currentTab === 'testing') {
                     actionButtons = `
-                        <button class="ticket-action-btn" onclick="ticketsWidget.viewTicket(${ticket.id})">View</button>
-                        <button class="ticket-action-btn" onclick="ticketsWidget.sendToCursor(${ticket.id})">Send to Cursor</button>
-                        <button class="ticket-action-btn" onclick="ticketsWidget.deleteTicket(${ticket.id})">Delete</button>
-                    `;
-                } else if (this.currentTab === 'testing') {
-                    // Tab 2: Testing - can resolve, add context (resubmits to cursor), delete
-                    actionButtons = `
-                        <button class="ticket-action-btn" onclick="ticketsWidget.viewTicket(${ticket.id})">View</button>
-                        <button class="ticket-action-btn" onclick="ticketsWidget.resolveTicket(${ticket.id})">Resolve</button>
-                        <button class="ticket-action-btn" onclick="ticketsWidget.addContext(${ticket.id})">Add Context</button>
-                        <button class="ticket-action-btn" onclick="ticketsWidget.deleteTicket(${ticket.id})">Delete</button>
+                        <button class="ticket-action-btn" onclick="event.stopPropagation(); ticketsWidget.resolveTicket(${ticket.id})">Resolve</button>
                     `;
                 }
                 
                 html += `
                     <div class="ticket-item ${cursorWorking ? 'cursor-working' : ''}" data-ticket-id="${ticket.id}">
-                        <div class="ticket-header">
+                        <div class="ticket-header-compact">
                             <span class="ticket-status">${statusEmoji}</span>
                             <span class="ticket-id">#${ticket.id}</span>
-                            <span class="ticket-title">${this.escapeHtml(ticket.title)}</span>
-                            <span class="ticket-priority">${priorityText}</span>
+                            <span class="ticket-title-compact">${this.escapeHtml(ticket.title)}</span>
                             ${cursorIndicator}
                         </div>
-                        <div class="ticket-meta">
-                            <span class="ticket-type">${ticket.ticket_type || 'debug'}</span>
-                            <span class="ticket-created">${new Date(ticket.created_at).toLocaleDateString()}</span>
-                            ${ticket.created_by ? `<span class="ticket-creator">by ${this.escapeHtml(ticket.created_by)}</span>` : ''}
-                            ${ticket.updated_at && ticket.updated_at !== ticket.created_at ? `<span class="ticket-updated">Updated: ${new Date(ticket.updated_at).toLocaleString()}</span>` : ''}
+                        <div class="ticket-meta-compact">
+                            <span class="ticket-type-compact">${ticketTypeText}</span>
+                            <span class="ticket-priority-badge priority-${ticket.priority || 2}">${priorityText}</span>
                         </div>
-                        ${ticket.description ? `<div class="ticket-description">${this.escapeHtml(ticket.description.substring(0, 100))}${ticket.description.length > 100 ? '...' : ''}</div>` : ''}
-                        ${cursorWorking && ticket.resolution_notes ? `<div class="ticket-resolution-preview">${this.escapeHtml(ticket.resolution_notes.substring(0, 150))}${ticket.resolution_notes.length > 150 ? '...' : ''}</div>` : ''}
-                        <div class="ticket-actions">
-                            ${actionButtons}
-                        </div>
+                        ${actionButtons ? `<div class="ticket-actions-compact">${actionButtons}</div>` : ''}
                     </div>
                 `;
             });
@@ -479,68 +482,351 @@ export default class TicketsWidget extends Component {
     }
     
     setupTicketActionListeners() {
-        // Event listeners are set via onclick in the HTML for simplicity
+        // Event listeners are set via onclick/onchange in the HTML for simplicity
         // Store reference for global access
         if (typeof window !== 'undefined') {
             window.ticketsWidget = this;
         }
     }
     
-    viewTicket(ticketId) {
-        const ticket = this.tickets.find(t => t.id === ticketId);
-        if (!ticket) return;
+    handleStatusChange(selectElement) {
+        const ticketId = parseInt(selectElement.dataset.ticketId);
+        const newStatus = selectElement.value;
+        console.log('[TicketsWidget] Status change requested:', newStatus, 'ticketId:', ticketId);
         
-        // Show ticket details in a dialog
-        this.showTicketDetails(ticket);
+        // Update local ticket data immediately (optimistic update)
+        const ticket = this.tickets.find(t => t.id === ticketId);
+        if (ticket) {
+            const oldStatus = ticket.status;
+            ticket.status = newStatus;
+            ticket.updated_at = new Date().toISOString();
+            console.log(`[TicketsWidget] Updated local ticket #${ticketId} status from "${oldStatus}" to "${newStatus}"`);
+        } else {
+            console.error(`[TicketsWidget] Ticket #${ticketId} not found in local tickets array`);
+        }
+        
+        // Find the dialog to update UI
+        const dialog = document.getElementById('ticketDetailsDialog');
+        const actualDialog = dialog ? dialog.querySelector('.ticket-details-dialog') : null;
+        
+        if (actualDialog) {
+            // Update the displayed status badge immediately
+            const statusBadge = actualDialog.querySelector('.ticket-status-badge');
+            if (statusBadge) {
+                statusBadge.textContent = newStatus;
+                statusBadge.className = `ticket-status-badge ticket-status-${newStatus}`;
+                console.log(`[TicketsWidget] Updated status badge to "${newStatus}"`);
+            }
+            
+            // Update status emoji in header
+            const statusEmoji = newStatus === 'open' ? '🔴' : newStatus === 'in_progress' ? '🟡' : '✅';
+            const statusEmojiEl = actualDialog.querySelector('.ticket-details-status');
+            if (statusEmojiEl) {
+                statusEmojiEl.textContent = statusEmoji;
+            }
+        }
+        
+        // Save to server immediately - don't wait for user to close window
+        console.log(`[TicketsWidget] Sending status update to server: ticketId=${ticketId}, status=${newStatus}`);
+        this.updateTicketStatus(ticketId, newStatus, null);
+        
+        // The handleTicketUpdated will refresh the modal automatically when server responds
     }
     
-    showTicketDetails(ticket) {
+    viewTicket(ticketId) {
+        console.log('[TicketsWidget] viewTicket called with ticketId:', ticketId);
+        const ticket = this.tickets.find(t => t.id === ticketId);
+        if (!ticket) {
+            console.error(`[TicketsWidget] Ticket #${ticketId} not found in tickets array (${this.tickets.length} tickets)`);
+            return;
+        }
+        
+        console.log('[TicketsWidget] Found ticket:', ticket.title);
+        // Show ticket details in a dialog
+        this.showTicketDetails(ticketId);
+    }
+    
+    showTicketDetails(ticketId) {
+        console.log('[TicketsWidget] showTicketDetails called with ticketId:', ticketId);
+        // Find ticket in current list
+        let ticket = this.tickets.find(t => t.id === ticketId);
+        if (!ticket) {
+            console.warn(`[TicketsWidget] Ticket #${ticketId} not found in tickets array (${this.tickets.length} tickets)`);
+            console.log('[TicketsWidget] Available ticket IDs:', this.tickets.map(t => t.id).join(', '));
+            // Try to reload tickets to get the latest data
+            this.loadTickets();
+            // Wait a bit and try again
+            setTimeout(() => {
+                ticket = this.tickets.find(t => t.id === ticketId);
+                if (!ticket) {
+                    console.error(`[TicketsWidget] Ticket #${ticketId} still not found after reload`);
+                    return;
+                }
+                this.showTicketDetails(ticketId);
+            }, 500);
+            return;
+        }
+        
+        console.log('[TicketsWidget] Found ticket:', ticket.title, 'status:', ticket.status);
+        
         // Create or get details dialog
         let dialog = document.getElementById('ticketDetailsDialog');
         if (!dialog) {
+            console.log('[TicketsWidget] Creating new ticket details dialog');
             dialog = this.createTicketDetailsDialog();
+        } else {
+            console.log('[TicketsWidget] Using existing ticket details dialog');
         }
+        
+        const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'in_progress' ? '🟡' : '✅';
+        const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
         
         const content = dialog.querySelector('.ticket-details-content');
         content.innerHTML = `
             <div class="ticket-details-header">
-                <h3>Ticket #${ticket.id}: ${this.escapeHtml(ticket.title)}</h3>
+                <div class="ticket-details-title-row">
+                    <span class="ticket-details-status">${statusEmoji}</span>
+                    <h3>#${ticket.id}: ${this.escapeHtml(ticket.title)}</h3>
+                </div>
+                <div class="ticket-details-actions">
+                    <select class="ticket-status-select" data-ticket-id="${ticket.id}" data-action="change-status" onchange="ticketsWidget.handleStatusChange(this)">
+                        <option value="open" ${ticket.status === 'open' ? 'selected' : ''}>Open</option>
+                        <option value="backlog" ${ticket.status === 'backlog' ? 'selected' : ''}>Backlog</option>
+                        <option value="in_progress" ${ticket.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
+                        <option value="resolved" ${ticket.status === 'resolved' ? 'selected' : ''}>Resolved</option>
+                    </select>
+                    ${ticket.status === 'open' || ticket.status === 'backlog' ? `<button class="ticket-action-btn" data-action="edit" data-ticket-id="${ticket.id}">Edit</button>` : ''}
+                    ${ticket.status === 'in_progress' || ticket.status === 'resolved' ? `<button class="ticket-action-btn" data-action="add-context" data-ticket-id="${ticket.id}">Add Context</button>` : ''}
+                    ${ticket.status !== 'deleted' ? `<button class="ticket-action-btn ticket-action-delete" data-action="delete" data-ticket-id="${ticket.id}">Delete</button>` : ''}
+                </div>
                 <button class="ticket-details-close" onclick="document.getElementById('ticketDetailsDialog').classList.add('hidden')">×</button>
             </div>
             <div class="ticket-details-body">
-                <div class="ticket-detail-row">
-                    <strong>Status:</strong> ${ticket.status}
+                <div class="ticket-details-section">
+                    <div class="ticket-detail-row">
+                        <strong>Status:</strong> <span class="ticket-status-badge ticket-status-${ticket.status}">${ticket.status}</span>
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Priority:</strong> <span class="ticket-priority-badge ticket-priority-${ticket.priority || 2}">${priorityText}</span>
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Type:</strong> ${ticket.ticket_type || 'debug'}
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Created:</strong> ${new Date(ticket.created_at).toLocaleString()}
+                    </div>
+                    ${ticket.created_by ? `<div class="ticket-detail-row"><strong>Created by:</strong> ${this.escapeHtml(ticket.created_by)}</div>` : ''}
+                    ${ticket.player_name ? `<div class="ticket-detail-row"><strong>Player:</strong> ${this.escapeHtml(ticket.player_name)}</div>` : ''}
                 </div>
-                <div class="ticket-detail-row">
-                    <strong>Priority:</strong> ${['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2]}
-                </div>
-                <div class="ticket-detail-row">
-                    <strong>Type:</strong> ${ticket.ticket_type || 'debug'}
-                </div>
-                <div class="ticket-detail-row">
-                    <strong>Created:</strong> ${new Date(ticket.created_at).toLocaleString()}
-                </div>
-                ${ticket.created_by ? `<div class="ticket-detail-row"><strong>Created by:</strong> ${this.escapeHtml(ticket.created_by)}</div>` : ''}
-                ${ticket.description ? `<div class="ticket-detail-section"><strong>Description:</strong><div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.description)}</div></div>` : ''}
-                ${ticket.repro_steps ? `<div class="ticket-detail-section"><strong>Repro Steps:</strong><div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.repro_steps)}</div></div>` : ''}
-                ${ticket.resolution_notes ? `<div class="ticket-detail-section"><strong>Resolution Notes:</strong><div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.resolution_notes)}</div></div>` : ''}
+                ${ticket.description ? `
+                    <div class="ticket-details-section">
+                        <strong>Description:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.description)}</div>
+                    </div>
+                ` : ''}
+                ${ticket.repro_steps ? `
+                    <div class="ticket-details-section">
+                        <strong>Reproduction Steps:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.repro_steps)}</div>
+                    </div>
+                ` : ''}
+                ${ticket.resolution_notes ? `
+                    <div class="ticket-details-section">
+                        <strong>Resolution Notes & Context:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.resolution_notes)}</div>
+                    </div>
+                ` : ''}
             </div>
         `;
         
+        // Setup event handlers
+        this.setupTicketDetailsHandlers(dialog, ticket.id);
+        
+        // Setup drag handler for header (header is recreated in innerHTML)
+        const actualDialog = dialog.querySelector('.ticket-details-dialog');
+        if (actualDialog && dialog._setupDrag) {
+            // Wait a moment for DOM to update, then setup drag
+            setTimeout(() => {
+                dialog._setupDrag();
+            }, 50);
+        }
+        
+        console.log('[TicketsWidget] Showing ticket details dialog');
         dialog.classList.remove('hidden');
+        console.log('[TicketsWidget] Dialog hidden class removed, dialog should be visible');
+    }
+    
+    setupTicketDetailsHandlers(dialog, ticketId) {
+        // Find the actual dialog content element (not the overlay)
+        const actualDialog = dialog.querySelector('.ticket-details-dialog');
+        if (!actualDialog) {
+            console.error('[TicketsWidget] Could not find .ticket-details-dialog element');
+            return;
+        }
+        
+        // Status change is now handled via inline onchange attribute in the HTML
+        // No need to attach event listeners here - the onchange="ticketsWidget.handleStatusChange(this)" handles it
+        
+        // Action buttons - search within the actual dialog content
+        actualDialog.querySelectorAll('[data-action]').forEach(btn => {
+            // Remove old listeners by cloning
+            const newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+            
+            newBtn.addEventListener('click', (e) => {
+                const action = e.target.dataset.action;
+                const ticketId = parseInt(e.target.dataset.ticketId);
+                console.log('[TicketsWidget] Ticket action clicked:', action, 'ticketId:', ticketId);
+                
+                if (action === 'edit') {
+                    this.editTicket(ticketId);
+                } else if (action === 'add-context') {
+                    this.addContext(ticketId);
+                } else if (action === 'delete') {
+                    this.deleteTicket(ticketId);
+                }
+            });
+        });
     }
     
     createTicketDetailsDialog() {
+        const overlay = document.createElement('div');
+        overlay.id = 'ticketDetailsDialog';
+        overlay.className = 'ticket-details-dialog-overlay hidden';
+        
         const dialog = document.createElement('div');
-        dialog.id = 'ticketDetailsDialog';
-        dialog.className = 'ticket-details-dialog-overlay hidden';
-        dialog.innerHTML = `
-            <div class="ticket-details-dialog">
-                <div class="ticket-details-content"></div>
-            </div>
-        `;
-        document.body.appendChild(dialog);
-        return dialog;
+        dialog.className = 'ticket-details-dialog';
+        dialog.innerHTML = `<div class="ticket-details-content"></div>`;
+        
+        overlay.appendChild(dialog);
+        
+        // Make dialog draggable
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        
+        const startDrag = (e) => {
+            // Only drag from header area, not from buttons/inputs
+            if (e.target.closest('button') || e.target.closest('select') || e.target.closest('input')) {
+                return;
+            }
+            const headerEl = dialog.querySelector('.ticket-details-header');
+            if (!headerEl || !headerEl.contains(e.target)) {
+                return;
+            }
+            isDragging = true;
+            const rect = dialog.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+            dialog.style.cursor = 'grabbing';
+            e.preventDefault();
+        };
+        
+        const drag = (e) => {
+            if (!isDragging) return;
+            const x = e.clientX - dragOffset.x;
+            const y = e.clientY - dragOffset.y;
+            
+            // Keep dialog within viewport
+            const maxX = window.innerWidth - dialog.offsetWidth;
+            const maxY = window.innerHeight - dialog.offsetHeight;
+            
+            dialog.style.left = Math.max(0, Math.min(x, maxX)) + 'px';
+            dialog.style.top = Math.max(0, Math.min(y, maxY)) + 'px';
+            dialog.style.transform = 'none';
+        };
+        
+        const stopDrag = () => {
+            isDragging = false;
+            dialog.style.cursor = '';
+        };
+        
+        // Make resizable
+        let isResizing = false;
+        let resizeStart = { x: 0, y: 0, width: 0, height: 0 };
+        
+        // startResize is now handled directly in resizeHandle mousedown
+        
+        const doResize = (e) => {
+            if (!isResizing) return;
+            const deltaX = e.clientX - resizeStart.x;
+            const deltaY = e.clientY - resizeStart.y;
+            
+            const newWidth = Math.max(400, Math.min(resizeStart.width + deltaX, window.innerWidth - 20));
+            const newHeight = Math.max(300, Math.min(resizeStart.height + deltaY, window.innerHeight - 20));
+            
+            dialog.style.width = newWidth + 'px';
+            dialog.style.height = newHeight + 'px';
+        };
+        
+        const stopResize = () => {
+            isResizing = false;
+        };
+        
+        // Setup drag on header (will be set up when header is added)
+        const setupDragOnHeader = () => {
+            const headerEl = dialog.querySelector('.ticket-details-header');
+            if (headerEl) {
+                // Remove old listener if exists
+                if (headerEl._dragHandler) {
+                    headerEl.removeEventListener('mousedown', headerEl._dragHandler);
+                }
+                headerEl._dragHandler = startDrag;
+                headerEl.addEventListener('mousedown', startDrag);
+                console.log('[TicketsWidget] Drag handler attached to header');
+            } else {
+                console.warn('[TicketsWidget] Header not found for drag setup');
+            }
+        };
+        
+        // Setup resize on dialog - use a dedicated resize handle
+        const resizeHandle = document.createElement('div');
+        resizeHandle.style.cssText = 'position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 1000; background: linear-gradient(135deg, transparent 0%, transparent 40%, #00ff00 40%, #00ff00 60%, transparent 60%, transparent 100%); pointer-events: auto;';
+        dialog.appendChild(resizeHandle);
+        
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            const rect = dialog.getBoundingClientRect();
+            resizeStart.x = e.clientX;
+            resizeStart.y = e.clientY;
+            resizeStart.width = rect.width;
+            resizeStart.height = rect.height;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        
+        // Setup document-level listeners
+        const mouseMoveHandler = (e) => {
+            drag(e);
+            doResize(e);
+        };
+        
+        const mouseUpHandler = () => {
+            stopDrag();
+            stopResize();
+        };
+        
+        document.addEventListener('mousemove', mouseMoveHandler);
+        document.addEventListener('mouseup', mouseUpHandler);
+        
+        // Store cleanup
+        overlay._cleanup = () => {
+            document.removeEventListener('mousemove', mouseMoveHandler);
+            document.removeEventListener('mouseup', mouseUpHandler);
+        };
+        
+        // Close on Escape key
+        const escapeHandler = (e) => {
+            if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+                overlay.classList.add('hidden');
+            }
+        };
+        document.addEventListener('keydown', escapeHandler);
+        
+        // Setup header drag after dialog is shown (header is added dynamically)
+        overlay._setupDrag = setupDragOnHeader;
+        
+        document.body.appendChild(overlay);
+        return overlay;
     }
     
     closeTicket(ticketId) {
@@ -780,8 +1066,11 @@ export default class TicketsWidget extends Component {
         const ws = this.game.getWebSocket();
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             console.error('[TicketsWidget] Not connected');
+            this.game?.messageBus?.emit('terminal:error', { message: 'Not connected to server. Cannot update ticket status.' });
             return;
         }
+        
+        console.log('[TicketsWidget] Sending status update:', { ticketId, status, resolutionNotes: resolutionNotes ? 'yes' : 'no' });
         
         ws.send(JSON.stringify({
             type: 'updateTicket',
@@ -789,6 +1078,12 @@ export default class TicketsWidget extends Component {
             status: status,
             resolutionNotes: resolutionNotes
         }));
+        
+        // Show feedback
+        this.game?.messageBus?.emit('terminal:message', {
+            message: `Ticket #${ticketId} status updated to ${status}.`,
+            type: 'info'
+        });
     }
     
     submitFeedback(ticketId, feedback) {
@@ -847,6 +1142,16 @@ export default class TicketsWidget extends Component {
         this.updateTicketStatus(ticketId, 'in_progress', null);
     }
     
+    changeStatus(ticketId, newStatus) {
+        // Change ticket status (open, backlog, in_progress, resolved)
+        const validStatuses = ['open', 'backlog', 'in_progress', 'resolved'];
+        if (!validStatuses.includes(newStatus)) {
+            console.error(`[TicketsWidget] Invalid status: ${newStatus}`);
+            return;
+        }
+        this.updateTicketStatus(ticketId, newStatus, null);
+    }
+    
     deleteTicket(ticketId) {
         // Use bespoke dialog instead of confirm
         this.showDeleteTicketDialog(ticketId);
@@ -875,6 +1180,208 @@ export default class TicketsWidget extends Component {
     resolveTicket(ticketId) {
         // Resolve ticket (mark as resolved)
         this.showCloseTicketDialog(ticketId);
+    }
+    
+    editTicket(ticketId) {
+        const ticket = this.tickets.find(t => t.id === ticketId);
+        if (!ticket) {
+            console.error('[TicketsWidget] Ticket not found:', ticketId);
+            return;
+        }
+        
+        // Only allow editing open/backlog tickets
+        if (ticket.status !== 'open' && ticket.status !== 'backlog') {
+            console.warn('[TicketsWidget] Cannot edit ticket that is not open or backlog');
+            return;
+        }
+        
+        this.showEditTicketDialog(ticket);
+    }
+    
+    showEditTicketDialog(ticket) {
+        // Create or get edit dialog
+        let dialog = document.getElementById('editTicketDialog');
+        if (!dialog) {
+            dialog = this.createEditTicketDialog();
+        }
+        
+        // Populate form with current ticket data
+        const titleInput = dialog.querySelector('#editTicketTitle');
+        const descriptionInput = dialog.querySelector('#editTicketDescription');
+        const prioritySelect = dialog.querySelector('#editTicketPriority');
+        const typeSelect = dialog.querySelector('#editTicketType');
+        const errorDiv = dialog.querySelector('#editTicketError');
+        
+        if (titleInput) titleInput.value = ticket.title || '';
+        if (descriptionInput) descriptionInput.value = ticket.description || '';
+        if (prioritySelect) prioritySelect.value = ticket.priority || 2;
+        if (typeSelect) typeSelect.value = ticket.ticket_type || 'bug';
+        if (errorDiv) {
+            errorDiv.textContent = '';
+            errorDiv.classList.add('hidden');
+        }
+        
+        // Store ticket ID on dialog
+        dialog._ticketId = ticket.id;
+        
+        // Setup handlers
+        this.setupEditTicketDialogHandlers();
+        
+        // Show dialog
+        dialog.classList.remove('hidden');
+        
+        // Focus title input
+        setTimeout(() => {
+            if (titleInput) titleInput.focus();
+        }, 100);
+    }
+    
+    createEditTicketDialog() {
+        const overlay = document.createElement('div');
+        overlay.id = 'editTicketDialog';
+        overlay.className = 'zork-ticket-dialog-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zork-ticket-dialog">
+                <div class="zork-ticket-dialog-header">
+                    <h3>Edit Ticket</h3>
+                    <button id="closeEditTicketDialog" class="zork-ticket-dialog-close">×</button>
+                </div>
+                <div class="zork-ticket-dialog-content">
+                    <label for="editTicketTitle">Title:</label>
+                    <input type="text" id="editTicketTitle" class="zork-ticket-input" placeholder="Ticket title" maxlength="200">
+                    
+                    <label for="editTicketDescription">Description:</label>
+                    <textarea id="editTicketDescription" class="zork-ticket-textarea" placeholder="Ticket description" rows="8"></textarea>
+                    
+                    <div style="display: flex; gap: 16px; margin-top: 12px;">
+                        <div style="flex: 1;">
+                            <label for="editTicketPriority">Priority:</label>
+                            <select id="editTicketPriority" class="zork-ticket-input">
+                                <option value="1">Low</option>
+                                <option value="2" selected>Medium</option>
+                                <option value="3">High</option>
+                                <option value="4">Critical</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="editTicketType">Type:</label>
+                            <select id="editTicketType" class="zork-ticket-input">
+                                <option value="bug" selected>Bug</option>
+                                <option value="feature">Feature</option>
+                                <option value="debug">Debug</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="editTicketError" class="zork-ticket-error hidden"></div>
+                </div>
+                <div class="zork-ticket-dialog-buttons">
+                    <button id="editTicketSubmit" class="zork-ticket-btn zork-ticket-btn-primary">Save Changes</button>
+                    <button id="editTicketCancel" class="zork-ticket-btn zork-ticket-btn-secondary">Cancel</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+    
+    setupEditTicketDialogHandlers() {
+        const dialog = document.getElementById('editTicketDialog');
+        const submitBtn = document.getElementById('editTicketSubmit');
+        const cancelBtn = document.getElementById('editTicketCancel');
+        const closeBtn = document.getElementById('closeEditTicketDialog');
+        const errorDiv = document.getElementById('editTicketError');
+        const titleInput = document.getElementById('editTicketTitle');
+        const descriptionInput = document.getElementById('editTicketDescription');
+        
+        if (!dialog || !submitBtn || !cancelBtn || !closeBtn) {
+            console.error('[TicketsWidget] Edit ticket dialog elements not found');
+            return;
+        }
+        
+        // Remove old handlers if they exist
+        if (dialog._handlersSetup) {
+            return; // Already setup
+        }
+        
+        const closeDialog = () => {
+            dialog.classList.add('hidden');
+            if (errorDiv) {
+                errorDiv.textContent = '';
+                errorDiv.classList.add('hidden');
+            }
+        };
+        
+        const handleSubmit = () => {
+            const ticketId = dialog._ticketId;
+            if (!ticketId) {
+                console.error('[TicketsWidget] No ticket ID on edit dialog');
+                return;
+            }
+            
+            const title = titleInput ? titleInput.value.trim() : '';
+            const description = descriptionInput ? descriptionInput.value.trim() : '';
+            const priority = parseInt(document.getElementById('editTicketPriority')?.value || '2', 10);
+            const ticketType = document.getElementById('editTicketType')?.value || 'bug';
+            
+            if (!title) {
+                if (errorDiv) {
+                    errorDiv.textContent = 'Title is required.';
+                    errorDiv.classList.remove('hidden');
+                }
+                return;
+            }
+            
+            // Send update to server
+            const ws = this.game.getWebSocket();
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.error('[TicketsWidget] Not connected');
+                if (errorDiv) {
+                    errorDiv.textContent = 'Not connected to server.';
+                    errorDiv.classList.remove('hidden');
+                }
+                return;
+            }
+            
+            ws.send(JSON.stringify({
+                type: 'updateTicket',
+                ticketId: ticketId,
+                title: title,
+                description: description,
+                priority: priority,
+                ticketType: ticketType
+            }));
+            
+            closeDialog();
+            
+            // The handleTicketUpdated will refresh the modal automatically when server responds
+            // Just reload tickets to get fresh data
+            setTimeout(() => {
+                this.loadTickets();
+            }, 300);
+        };
+        
+        submitBtn.addEventListener('click', handleSubmit);
+        cancelBtn.addEventListener('click', closeDialog);
+        closeBtn.addEventListener('click', closeDialog);
+        
+        // Close on overlay click
+        dialog.addEventListener('click', (e) => {
+            if (e.target === dialog) {
+                closeDialog();
+            }
+        });
+        
+        // Submit on Enter in title (but not in description)
+        if (titleInput) {
+            titleInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    descriptionInput?.focus();
+                }
+            });
+        }
+        
+        dialog._handlersSetup = true;
     }
     
     addContext(ticketId) {
@@ -1064,6 +1571,54 @@ export default class TicketsWidget extends Component {
         
         // Mark handlers as set up
         dialog._handlersSetup = true;
+    }
+    
+    openCreateTicketDialog() {
+        console.log('[TicketsWidget] openCreateTicketDialog called');
+        // Open the ZORK ticket creation dialog (reuse Terminal's dialog)
+        // Try multiple ways to access terminal component
+        let terminal = null;
+        
+        // Method 1: Check if terminal is stored globally
+        if (typeof window !== 'undefined' && window.terminal) {
+            terminal = window.terminal;
+            console.log('[TicketsWidget] Found terminal via window.terminal');
+        }
+        
+        // Method 2: Try to get from game object
+        if (!terminal && this.game && this.game.terminal) {
+            terminal = this.game.terminal;
+            console.log('[TicketsWidget] Found terminal via game.terminal');
+        }
+        
+        if (terminal && typeof terminal.openZorkTicketDialog === 'function') {
+            console.log('[TicketsWidget] Calling terminal.openZorkTicketDialog()');
+            terminal.openZorkTicketDialog();
+        } else {
+            console.warn('[TicketsWidget] Terminal not found or openZorkTicketDialog not available, trying direct dialog access');
+            // Fallback: try to find and open the dialog directly
+            const dialog = document.getElementById('zorkTicketDialog');
+            if (dialog) {
+                console.log('[TicketsWidget] Found zorkTicketDialog, opening directly');
+                dialog.classList.remove('hidden');
+                const titleInput = document.getElementById('zorkTicketTitle');
+                if (titleInput) {
+                    setTimeout(() => titleInput.focus(), 100);
+                }
+                // Also try to setup handlers if dialog exists
+                if (terminal && typeof terminal.setupZorkTicketDialogHandlers === 'function') {
+                    terminal.setupZorkTicketDialogHandlers();
+                }
+            } else {
+                console.error('[TicketsWidget] Could not find ticket creation dialog');
+                // Use bespoke dialog instead of alert
+                if (this.game && this.game.messageBus) {
+                    this.game.messageBus.emit('terminal:error', { message: 'Ticket creation dialog not available. Please use the Z button in the command line.' });
+                } else {
+                    alert('Ticket creation dialog not available. Please use the Z button in the command line.');
+                }
+            }
+        }
     }
 }
 

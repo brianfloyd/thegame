@@ -1,10 +1,10 @@
 # Cursor Rules for The Game
 
-## Automatic Knowledge Storage
+## Automatic Knowledge Storage and Refinement
 
-**CRITICAL**: After implementing any feature, automatically store knowledge in the RAG system using the `knowledge_add` MCP tool.
+**CRITICAL**: After implementing any feature or changing workflows, automatically store or update knowledge in the RAG system using knowledge MCP tools.
 
-### When to Store Knowledge
+### When to Store/Update Knowledge
 
 **Always store knowledge for:**
 - New player commands or features
@@ -13,23 +13,37 @@
 - God-mode commands or tools
 - Significant architectural changes
 - New systems (harvest, crafting, combat, etc.)
+- Workflow changes or process updates
+
+**Always update existing knowledge when:**
+- Workflows change (e.g., ticket processing workflow)
+- Implementation details change
+- Best practices evolve
+- You discover existing knowledge is inaccurate or incomplete
 
 ### How to Store Knowledge
 
 After completing a feature implementation:
 
-1. **Determine category:**
-   - `game_design` - Player-facing features, gameplay
-   - `technical` - Implementation details, code patterns
-   - `command_knowledge` - God-mode commands
-   - `world_lore` - Story/lore elements
-   - `system_docs` - Deployment/operations
+1. **Check if knowledge already exists:**
+   ```
+   Use knowledge_search tool to find existing knowledge:
+   - query: Brief description of the feature/workflow
+   - category: Filter by category if known
+   - limit: 5 (to see if it exists)
+   ```
 
-2. **Set priority:**
-   - `1` - Major features (keyword-triggered)
-   - `0` - Standard features (contextual, most common)
+2. **If knowledge exists, update it:**
+   ```
+   Use knowledge_update tool with:
+   - id: The existing knowledge chunk ID
+   - content: Updated comprehensive description
+   - title: Updated title if needed
+   - category: Update category if needed
+   - priority: Update priority if needed
+   ```
 
-3. **Call knowledge_add MCP tool:**
+3. **If knowledge doesn't exist, add it:**
    ```
    Use knowledge_add tool with:
    - title: Feature name
@@ -42,15 +56,39 @@ After completing a feature implementation:
    - priority: 0 or 1
    ```
 
-### Example
+4. **Determine category:**
+   - `game_design` - Player-facing features, gameplay
+   - `technical` - Implementation details, code patterns, workflows
+   - `command_knowledge` - God-mode commands
+   - `world_lore` - Story/lore elements
+   - `system_docs` - Deployment/operations
 
+5. **Set priority:**
+   - `1` - Major features (keyword-triggered)
+   - `0` - Standard features (contextual, most common)
+
+### Examples
+
+**Adding new knowledge:**
 After implementing "Crafting System":
 ```
-Use knowledge_add({
+1. First search: knowledge_search({ query: "crafting system", category: "game_design" })
+2. If not found, add: knowledge_add({
   title: "Crafting System",
   category: "game_design",
   content: "Players can craft items using materials. Commands: craft [item], craft list. Requires crafting ability and materials in inventory. Implementation: handlers/game.js, crafting_recipes table.",
   priority: 1
+})
+```
+
+**Updating existing knowledge:**
+When ticket workflow changes:
+```
+1. Search for existing: knowledge_search({ query: "ticket workflow", category: "technical" })
+2. Update the found knowledge: knowledge_update({
+  id: 275,
+  content: "Updated workflow description with new status flow...",
+  title: "Ticket Workflow: In-Progress Status with Implementation Complete"
 })
 ```
 
@@ -122,14 +160,20 @@ For each todo:
 
 ### After Fixing
 
-1. **Mark todo as in_progress with AC (Acceptance Criteria):**
+1. **When implementation is complete, update ticket with AC (Acceptance Criteria):**
    ```
    Use MCP tool: mcp_game-tests_work_tickets_update
    Parameters:
    - id: the todo id
-   - status: "in_progress"
+   - status: "in_progress" (KEEP as in_progress - do NOT change to resolved)
    - resolutionNotes: "IMPLEMENTATION COMPLETE - Ready for Testing\n\n[Brief description of the fix]\n\nACCEPTANCE CRITERIA:\n- [ ] [Test step 1]\n- [ ] [Test step 2]\n- [ ] [Test step 3]\n\n[Additional context or notes]"
    ```
+   **CRITICAL WORKFLOW:**
+   - Ticket starts as "open"
+   - When Cursor starts working, mark as "in_progress"
+   - When implementation is complete, add "IMPLEMENTATION COMPLETE" message but KEEP status as "in_progress"
+   - Ticket stays "in_progress" with "IMPLEMENTATION COMPLETE" message for user testing
+   - User tests and resolves it after verification
    **Note:** If the MCP tool is not available, use a temporary script with `database.js` to update the ticket, then delete the script.
    **DO NOT mark as "resolved"** - the user will test and close it after verification.
 
@@ -175,7 +219,9 @@ Parameters:
 
 **When new tickets are detected:**
 - Automatically start processing them (don't wait for user command)
-- Process in priority order (Critical → High → Medium → Low)
+- **CRITICAL PRIORITY HANDLING**: If ANY ticket has priority=4 (critical), process ONLY that ticket. Skip all other tickets until critical is resolved.
+- Process in priority order: Critical (4) → High (3) → Medium (2) → Low (1)
+- Skip backlog tickets (status='backlog') - they're filed but not actively worked on
 - Follow the standard ticket workflow below
 
 **Manual Processing:**
@@ -185,41 +231,58 @@ If you need to manually trigger ticket processing, use the "work tickets" comman
 
 When user says "work tickets", "debug tickets", "process tickets", "fix tickets", or "handle tickets":
 
-1. **Call `work_tickets_start` MCP tool** to get list of open tickets
+1. **Call `work_tickets_start` MCP tool** to get list of tickets to work on
+   - This returns both "open" tickets (new) AND "in_progress" tickets that don't have "IMPLEMENTATION COMPLETE" yet (still being worked on)
    - This will return formatted list of tickets and structured data
    - Display the ticket list to user first to confirm understanding
 
 2. **Process tickets sequentially** (one at a time, highest priority first):
    - For each ticket in the returned list:
-     a. Call `debug_get_todo` with the ticket ID to get full details
-     b. Read full context:
+     a. If ticket status is "open", mark it as "in_progress" first (this indicates Cursor is working on it)
+     b. Call `debug_get_todo` with the ticket ID to get full details
+     c. Read full context:
         - `title` - Brief summary
         - `description` - Detailed explanation
         - `reproSteps` - Steps to reproduce (if available)
         - `environment` - Map, room, widgets, player context
         - `logs` - Console errors with stack traces
-        - `priority` - 1 (low) to 4 (critical)
-        - `ticket_type` - 'debug' (telemetry), 'manual' (ZORK direct), 'user'
-     c. Create an internal todo item for this ticket
-     d. Work on the fix:
+        - `priority` - 1 (low), 2 (medium), 3 (high), 4 (critical)
+        - `ticket_type` - 'bug' (fixing broken functionality), 'feature' (new enhancement), 'debug' (from telemetry/ZORK)
+     d. Create an internal todo item for this ticket
+     e. Work on the fix:
         - Use stack traces from `logs.consoleErrors` to locate code
         - Search for widget/file names mentioned
         - Check relevant handler or component
         - Implement the fix
         - Test locally if possible
-     e. Mark ticket as in_progress with AC (Acceptance Criteria):
+     f. When implementation is complete, update ticket with AC (Acceptance Criteria):
         - Use MCP tool: `mcp_game-tests_work_tickets_update` with:
           - `id`: the ticket ID
-          - `status`: "in_progress"
+          - `status`: "in_progress" (KEEP as in_progress, do NOT change to resolved)
           - `resolutionNotes`: "IMPLEMENTATION COMPLETE - Ready for Testing\n\n[Brief description of the fix]\n\nACCEPTANCE CRITERIA:\n- [ ] [Test step 1]\n- [ ] [Test step 2]\n- [ ] [Test step 3]\n\n[Additional context or notes]"
+        - **CRITICAL**: Keep status as "in_progress" - the ticket stays in "in_progress" with "IMPLEMENTATION COMPLETE" message for user testing
         - **If MCP tool unavailable:** Create temporary script using `database.js` to update ticket, then delete script
-        - DO NOT mark as "resolved" - let the user test and close it
-     f. Store knowledge about the fix:
-        - Call `knowledge_add` with:
-          - `title`: "Bug Fix: [brief description]"
-          - `category`: "technical"
-          - `content`: What was broken, why, how it was fixed, and how to avoid in future
-          - `priority`: 0
+        - **DO NOT mark as "resolved"** - the user will test and resolve it after verification
+     f. Store or update knowledge about the fix (based on ticket type):
+        - **First, search for existing knowledge:**
+          - Use `knowledge_search` to find related knowledge entries
+          - If found, use `knowledge_update` to refine existing knowledge
+          - If not found, use `knowledge_add` to create new knowledge
+        - **Bug tickets**: Light RAG knowledge logging
+          - Search: `knowledge_search({ query: "bug fix [brief description]", category: "technical" })`
+          - If found: `knowledge_update({ id: found_id, content: "Updated description..." })`
+          - If not: `knowledge_add({ title: "Bug Fix: [brief description]", category: "technical", content: "What was broken, why, how it was fixed, and how to avoid in future", priority: 0 })`
+        - **Feature tickets**: Comprehensive RAG knowledge logging
+          - Search: `knowledge_search({ query: "[feature name]", category: "game_design" })`
+          - If found: `knowledge_update({ id: found_id, content: "Updated comprehensive description..." })`
+          - If not: `knowledge_add({ title: "Feature: [feature name]", category: "game_design", content: "Comprehensive description including what it does, how to use it, technical details, player impact", priority: 1 })`
+        - **Debug tickets**: Standard logging
+          - Search: `knowledge_search({ query: "debug fix [brief description]", category: "technical" })`
+          - If found: `knowledge_update({ id: found_id, content: "Updated description..." })`
+          - If not: `knowledge_add({ title: "Debug Fix: [brief description]", category: "technical", content: "What was broken, why, how it was fixed", priority: 0 })`
+        - **Workflow changes**: Always update existing knowledge
+          - Search: `knowledge_search({ query: "[workflow name] workflow", category: "technical" })`
+          - Update: `knowledge_update({ id: found_id, content: "Updated workflow with current implementation..." })`
 
 3. **After all tickets processed**, provide a summary:
    - List of tickets fixed
@@ -229,6 +292,16 @@ When user says "work tickets", "debug tickets", "process tickets", "fix tickets"
 **Important:**
 - Always display tickets to user BEFORE starting work
 - Process one ticket at a time completely before moving to next
-- Highest priority tickets (4=critical) are processed first
+- **CRITICAL TICKETS (priority=4)**: If any critical ticket exists, work ONLY that ticket until resolved. Skip all other tickets.
+- Process tickets in priority order: Critical (4) → High (3) → Medium (2) → Low (1)
+- Skip backlog tickets (status='backlog') unless explicitly requested
 - If a ticket cannot be fixed immediately, mark it as "in_progress" and note why
+- When marking ticket "in_progress", ALWAYS include "IMPLEMENTATION COMPLETE - Ready for Testing" in resolution_notes with Acceptance Criteria
+
+**Knowledge Refinement:**
+- After completing ticket work, search for and update any related knowledge entries
+- Use `knowledge_search` to find existing knowledge about workflows, features, or systems you modified
+- Use `knowledge_update` to refine existing knowledge when workflows change
+- Keep knowledge accurate and up-to-date with current implementation
+- When workflows change (like ticket processing), update the related knowledge entry immediately
 

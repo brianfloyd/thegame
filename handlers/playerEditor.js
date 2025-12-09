@@ -223,6 +223,16 @@ async function addPlayerInventoryItem(ctx, data) {
 
   const { playerId, itemName, quantity } = data;
   
+  // Validate item exists in items table before granting
+  const itemData = await db.getItemByName(itemName);
+  if (!itemData) {
+    ws.send(JSON.stringify({ type: 'error', message: `Item "${itemName}" does not exist in the items table. Only items that exist in the database can be granted to players.` }));
+    return;
+  }
+  
+  // Use the canonical item name from the database (in case of name mismatch)
+  const canonicalItemName = itemData.name;
+  
   // Check encumbrance
   const targetPlayer = await db.getPlayerById(playerId);
   if (!targetPlayer) {
@@ -232,7 +242,7 @@ async function addPlayerInventoryItem(ctx, data) {
   
   const currentEnc = await db.getPlayerCurrentEncumbrance(playerId);
   const maxEnc = targetPlayer.resource_max_encumbrance || 100;
-  const itemEnc = await db.getItemEncumbrance(itemName);
+  const itemEnc = await db.getItemEncumbrance(canonicalItemName);
   const totalNewEnc = itemEnc * quantity;
   
   if (currentEnc + totalNewEnc > maxEnc) {
@@ -240,7 +250,8 @@ async function addPlayerInventoryItem(ctx, data) {
     return;
   }
   
-  await db.addPlayerItem(playerId, itemName, quantity);
+  // Use canonical name to ensure consistency
+  await db.addPlayerItem(playerId, canonicalItemName, quantity);
   
   const inventory = await db.getPlayerItems(playerId);
   const newEncumbrance = await db.getPlayerCurrentEncumbrance(playerId);

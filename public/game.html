@@ -165,6 +165,10 @@
                         <div class="widget hidden" id="widget-factory" data-widget="factory">
                             <div class="widget-header">Factory Machine</div>
                             <div class="widget-content">
+                                <div class="factory-quantity-control">
+                                    <label for="factory-quantity-input">Move Quantity:</label>
+                                    <input type="number" id="factory-quantity-input" min="1" value="1" title="Number of items to move when dragging">
+                                </div>
                                 <div class="factory-slot-container">
                                     <!-- Supply Slots (Ingredient) - 2 rectangular slots -->
                                     <div class="factory-slot factory-slot-supply" id="factory-slot-0" data-slot="0">
@@ -431,6 +435,25 @@
                 <input type="text" id="zorkTicketTitle" class="zork-ticket-input" placeholder="Enter ticket title..." autocomplete="off">
                 <label for="zorkTicketDescription">Description (optional):</label>
                 <textarea id="zorkTicketDescription" class="zork-ticket-textarea" placeholder="Enter ticket description... (Paste screenshots with Ctrl+V)" rows="4"></textarea>
+                <div style="display: flex; gap: 15px; margin-top: 10px;">
+                    <div style="flex: 1;">
+                        <label for="zorkTicketType">Type:</label>
+                        <select id="zorkTicketType" class="zork-ticket-input">
+                            <option value="bug">🐛 Bug</option>
+                            <option value="feature">✨ Feature</option>
+                            <option value="debug">🔍 Debug</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label for="zorkTicketPriority">Priority:</label>
+                        <select id="zorkTicketPriority" class="zork-ticket-input">
+                            <option value="1">Low</option>
+                            <option value="2" selected>Medium</option>
+                            <option value="3">High</option>
+                            <option value="4">Critical</option>
+                        </select>
+                    </div>
+                </div>
                 <div id="zorkTicketError" class="zork-ticket-error hidden"></div>
             </div>
             <div class="zork-ticket-dialog-buttons">

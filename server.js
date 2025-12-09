@@ -230,8 +230,10 @@ wss.on('connection', (ws, req) => {
       
     } catch (error) {
       console.error('Error handling message:', error);
+      console.error('Error stack:', error.stack);
+      console.error('Message that caused error:', message.toString().substring(0, 500));
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format: ' + error.message }));
       }
     }
   });

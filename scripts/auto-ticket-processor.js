@@ -55,15 +55,33 @@ async function processTicket(ticketId) {
       return false;
     }
     
-        // Only process open tickets (skip deleted tickets)
-        if (ticket.status !== 'open') {
-            console.log(`[Auto-Ticket] Ticket #${ticketId} is not open (status: ${ticket.status}), skipping`);
-            return false;
-        }
-        
         // Skip deleted tickets
         if (ticket.status === 'deleted') {
             console.log(`[Auto-Ticket] Ticket #${ticketId} is deleted, skipping`);
+            return false;
+        }
+        
+        // Skip backlog tickets (they're filed but not actively worked on)
+        if (ticket.status === 'backlog') {
+            console.log(`[Auto-Ticket] Ticket #${ticketId} is in backlog, skipping`);
+            return false;
+        }
+        
+        // Skip resolved tickets
+        if (ticket.status === 'resolved') {
+            console.log(`[Auto-Ticket] Ticket #${ticketId} is resolved, skipping`);
+            return false;
+        }
+        
+        // Skip in_progress tickets that already have "IMPLEMENTATION COMPLETE" (waiting for user testing)
+        if (ticket.status === 'in_progress' && ticket.resolution_notes && ticket.resolution_notes.includes('IMPLEMENTATION COMPLETE')) {
+            console.log(`[Auto-Ticket] Ticket #${ticketId} is in_progress with IMPLEMENTATION COMPLETE, waiting for user testing - skipping`);
+            return false;
+        }
+        
+        // Process open tickets OR in_progress tickets that don't have IMPLEMENTATION COMPLETE yet
+        if (ticket.status !== 'open' && ticket.status !== 'in_progress') {
+            console.log(`[Auto-Ticket] Ticket #${ticketId} is not open or in_progress (status: ${ticket.status}), skipping`);
             return false;
         }
     
@@ -119,11 +137,36 @@ async function processTicket(ticketId) {
  */
 async function checkForNewTickets() {
   try {
-    // Get open tickets created after last processed
+    // First, check for critical tickets (priority = 4)
+    // If any critical tickets exist, process ONLY those
+    const criticalTickets = await db.query(
+      `SELECT id, title, status, priority, ticket_type, created_at, created_by 
+       FROM debug_todos 
+       WHERE status = 'open' 
+       AND status != 'deleted' 
+       AND status != 'backlog'
+       AND priority = 4
+       AND id > $1 
+       ORDER BY created_at ASC 
+       LIMIT 1`,
+      [lastProcessedId]
+    );
+    
+    if (criticalTickets.rows && criticalTickets.rows.length > 0) {
+      console.log(`[Auto-Ticket] Found ${criticalTickets.rows.length} CRITICAL ticket(s) - processing ONLY critical tickets`);
+      for (const ticket of criticalTickets.rows) {
+        await processTicket(ticket.id);
+      }
+      return; // Don't process other tickets if critical exists
+    }
+    
+    // No critical tickets - get open tickets in priority order (skip backlog)
     const tickets = await db.query(
       `SELECT id, title, status, priority, ticket_type, created_at, created_by 
        FROM debug_todos 
        WHERE status = 'open' 
+       AND status != 'deleted' 
+       AND status != 'backlog'
        AND id > $1 
        ORDER BY priority DESC, created_at ASC 
        LIMIT 10`,
@@ -131,7 +174,7 @@ async function checkForNewTickets() {
     );
     
     if (tickets.rows.length > 0) {
-      console.log(`[Auto-Ticket] Found ${tickets.rows.length} new ticket(s)`);
+      console.log(`[Auto-Ticket] Found ${tickets.rows.length} new ticket(s) (priority order)`);
       
       // Process tickets in priority order
       for (const ticket of tickets.rows) {

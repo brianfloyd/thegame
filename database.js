@@ -2885,7 +2885,18 @@ async function getDebugSessionById(sessionId) {
  * @param {object} params - Todo parameters
  * @returns {Promise<object>} The created todo
  */
-async function createDebugTodo({ sessionId, title, description, reproSteps, environment, logs, createdBy = 'zork', ticketType = 'debug', priority = 2, playerId = null, playerName = null }) {
+async function createDebugTodo({ sessionId, title, description, reproSteps, environment, logs, createdBy = 'zork', ticketType = 'bug', priority = 2, playerId = null, playerName = null }) {
+  // Validate priority
+  if (priority < 1 || priority > 4) {
+    throw new Error(`Invalid priority: ${priority}. Must be between 1 and 4.`);
+  }
+  
+  // Validate ticket type
+  const validTypes = ['bug', 'feature', 'debug'];
+  if (!validTypes.includes(ticketType)) {
+    throw new Error(`Invalid ticket_type: ${ticketType}. Must be one of: ${validTypes.join(', ')}`);
+  }
+  
   const result = await query(
     `INSERT INTO debug_todos 
      (session_id, title, description, repro_steps, environment, logs, created_by, ticket_type, priority, player_id, player_name) 
@@ -2945,12 +2956,17 @@ async function getDebugTodo(id) {
  * @param {object} updates - Fields to update
  * @returns {Promise<object|null>} The updated todo
  */
-async function updateDebugTodo(id, { status, resolutionNotes, title, description, priority, tags }) {
+async function updateDebugTodo(id, { status, resolutionNotes, title, description, priority, tags, ticketType }) {
   const updates = [];
   const params = [];
   let paramIndex = 1;
   
   if (status) {
+    // Validate status
+    const validStatuses = ['open', 'backlog', 'in_progress', 'resolved', 'deleted'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+    }
     updates.push(`status = $${paramIndex++}`);
     params.push(status);
   }
@@ -2971,6 +2987,10 @@ async function updateDebugTodo(id, { status, resolutionNotes, title, description
   }
   
   if (priority !== undefined) {
+    // Validate priority (1-4)
+    if (priority < 1 || priority > 4) {
+      throw new Error(`Invalid priority: ${priority}. Must be between 1 and 4.`);
+    }
     updates.push(`priority = $${paramIndex++}`);
     params.push(priority);
   }
@@ -2978,6 +2998,16 @@ async function updateDebugTodo(id, { status, resolutionNotes, title, description
   if (tags !== undefined) {
     updates.push(`tags = $${paramIndex++}`);
     params.push(JSON.stringify(tags));
+  }
+  
+  if (ticketType !== undefined) {
+    // Validate ticket type
+    const validTypes = ['bug', 'feature', 'debug'];
+    if (!validTypes.includes(ticketType)) {
+      throw new Error(`Invalid ticket_type: ${ticketType}. Must be one of: ${validTypes.join(', ')}`);
+    }
+    updates.push(`ticket_type = $${paramIndex++}`);
+    params.push(ticketType);
   }
   
   updates.push(`updated_at = NOW()`);

@@ -12,6 +12,7 @@ export default class FactoryWidget extends Component {
         super(game);
         this.isVisible = false;
         this.currentState = null;
+        this.delegationSetup = false;
     }
     
     init() {
@@ -24,8 +25,8 @@ export default class FactoryWidget extends Component {
         // Subscribe to factoryWidgetState messages for direct state updates
         this.subscribe('factoryWidgetState', (data) => this.handleFactoryWidgetState(data));
         
-        // Initialize drag and drop handlers
-        this.initDragDrop();
+        // Initialize drag and drop using event delegation
+        this.initDragDropDelegation();
         
         // Initialize empty slot button handlers
         this.initEmptyButtons();
@@ -34,65 +35,141 @@ export default class FactoryWidget extends Component {
     }
     
     /**
-     * Initialize drag and drop handlers for factory slots
+     * Initialize drag and drop - attach handlers directly to each slot
      */
-    initDragDrop() {
-        // Wait for DOM to be ready
+    initDragDropDelegation() {
+        // Wait for DOM to be ready, then setup
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => this.setupDragDrop());
+            document.addEventListener('DOMContentLoaded', () => this.attachSlotHandlers());
         } else {
-            this.setupDragDrop();
+            this.attachSlotHandlers();
         }
     }
     
     /**
-     * Setup drag and drop event listeners
+     * Attach drag-drop handlers DIRECTLY to each factory slot element
      */
-    setupDragDrop() {
-        // All 5 slots support drag and drop (2 supply slots + 3 rune slots)
+    attachSlotHandlers() {
+        console.log('[FactoryWidget] Attaching handlers to all 5 slots');
+        
         for (let i = 0; i < 5; i++) {
-            const slot = document.getElementById(`factory-slot-${i}`);
-            if (!slot) {
-                console.warn(`[FactoryWidget] Slot ${i} not found`);
-                continue;
-            }
-            
-            // Allow drop
-            slot.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                slot.classList.add('drag-over');
-            });
-            
-            slot.addEventListener('dragleave', (e) => {
-                slot.classList.remove('drag-over');
-            });
-            
-            slot.addEventListener('drop', (e) => {
-                e.preventDefault();
-                slot.classList.remove('drag-over');
-                
-                try {
-                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-                    const itemName = data.itemName;
-                    
-                    if (!itemName) return;
-                    
-                    // Send message to server to add item to slot
-                    this.game.send({
-                        type: 'factoryWidgetAddItem',
-                        slotIndex: i,
-                        itemName: itemName
-                    });
-                    
-                    console.log(`[FactoryWidget] Dropped ${itemName} into slot ${i}`);
-                } catch (err) {
-                    console.error('[FactoryWidget] Error parsing drag data:', err);
-                }
-            });
+            this.attachHandlerToSlot(i);
         }
         
-        console.log('[FactoryWidget] Drag and drop initialized');
+        this.delegationSetup = true;
+        console.log('[FactoryWidget] All slot handlers attached');
+    }
+    
+    /**
+     * Attach handlers to a specific slot by index
+     */
+    attachHandlerToSlot(slotIndex) {
+        const slot = document.getElementById(`factory-slot-${slotIndex}`);
+        if (!slot) {
+            console.warn(`[FactoryWidget] Slot ${slotIndex} not found in DOM`);
+            return;
+        }
+        
+        // Store reference to this widget instance
+        const widget = this;
+        
+        // Remove old handlers by removing the marker
+        if (slot._factoryHandlersAttached) {
+            console.log(`[FactoryWidget] Slot ${slotIndex} already has handlers`);
+            return;
+        }
+        
+        console.log(`[FactoryWidget] Attaching handlers to slot ${slotIndex}`);
+        
+        // Dragover handler
+        slot.ondragover = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            this.classList.add('drag-over');
+        };
+        
+        // Dragleave handler  
+        slot.ondragleave = function(e) {
+            e.stopPropagation();
+            this.classList.remove('drag-over');
+        };
+        
+        // Drop handler - THIS IS THE KEY ONE
+        slot.ondrop = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.classList.remove('drag-over');
+            
+            console.log(`[FactoryWidget] DROP on slot ${slotIndex}`);
+            
+            try {
+                const dragData = e.dataTransfer.getData('text/plain');
+                console.log(`[FactoryWidget] Drag data for slot ${slotIndex}:`, dragData);
+                
+                if (!dragData) {
+                    console.warn(`[FactoryWidget] No drag data`);
+                    return;
+                }
+                
+                const data = JSON.parse(dragData);
+                console.log(`[FactoryWidget] Parsed data:`, data);
+                
+                const itemName = data.itemName;
+                if (!itemName) {
+                    console.warn(`[FactoryWidget] No itemName in data`);
+                    return;
+                }
+                
+                // Get quantity from input field (default to 1)
+                // Rune slots (2, 3, 4) only accept single items, ignore quantity input
+                const isRuneSlot = slotIndex >= 2 && slotIndex <= 4;
+                let quantity = 1;
+                
+                if (!isRuneSlot) {
+                    // Ingredient slots (0, 1) can use quantity input
+                    const quantityInput = document.getElementById('factory-quantity-input');
+                    if (quantityInput) {
+                        const inputValue = parseInt(quantityInput.value, 10);
+                        if (!isNaN(inputValue) && inputValue > 0) {
+                            quantity = inputValue;
+                        }
+                    }
+                }
+                
+                // Build and send message
+                const message = {
+                    type: 'factoryWidgetAddItem',
+                    slotIndex: slotIndex,
+                    itemName: itemName,
+                    quantity: quantity
+                };
+                
+                console.log(`[FactoryWidget] Sending:`, JSON.stringify(message));
+                widget.game.send(message);
+                
+            } catch (err) {
+                console.error(`[FactoryWidget] Drop error:`, err);
+            }
+        };
+        
+        // Mark as attached
+        slot._factoryHandlersAttached = true;
+    }
+    
+    /**
+     * Re-attach handlers (called when widget is shown)
+     */
+    setupDelegation() {
+        // Re-attach handlers to all slots in case DOM was updated
+        for (let i = 0; i < 5; i++) {
+            const slot = document.getElementById(`factory-slot-${i}`);
+            if (slot) {
+                // Force re-attach by clearing the flag
+                slot._factoryHandlersAttached = false;
+            }
+        }
+        this.attachSlotHandlers();
     }
     
     /**
@@ -148,6 +225,9 @@ export default class FactoryWidget extends Component {
         
         // Update widget slots
         this.updateSlots(this.currentState);
+        
+        // Ensure delegation is setup (only runs once)
+        this.setupDelegation();
         
         // Set global flag for updateWidgetDisplay
         if (typeof window.factoryWidgetVisible !== 'undefined') {
@@ -207,28 +287,32 @@ export default class FactoryWidget extends Component {
     }
     
     /**
-     * Setup empty slot button event listeners
+     * Setup empty slot button event listeners using delegation
      */
     setupEmptyButtons() {
-        for (let i = 0; i < 5; i++) {
-            const btn = document.querySelector(`#factory-slot-${i} .factory-slot-empty-btn`);
-            if (!btn) {
-                console.warn(`[FactoryWidget] Empty button for slot ${i} not found`);
-                continue;
-            }
-            
-            // Remove existing listener if any (to prevent duplicates)
-            const newBtn = btn.cloneNode(true);
-            btn.parentNode.replaceChild(newBtn, btn);
-            
-            newBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                this.emptySlot(i);
-            });
+        const container = document.querySelector('.factory-slot-container');
+        if (!container) return;
+        
+        // Use delegation for empty buttons too
+        if (container._emptyButtonHandler) {
+            container.removeEventListener('click', container._emptyButtonHandler);
         }
         
-        console.log('[FactoryWidget] Empty slot buttons initialized');
+        container._emptyButtonHandler = (e) => {
+            // Check if clicked on empty button
+            if (e.target.classList.contains('factory-slot-empty-btn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const slotIndex = parseInt(e.target.dataset.slot, 10);
+                if (!isNaN(slotIndex)) {
+                    this.emptySlot(slotIndex);
+                }
+            }
+        };
+        
+        container.addEventListener('click', container._emptyButtonHandler);
+        console.log('[FactoryWidget] Empty button delegation setup');
     }
     
     /**
@@ -271,21 +355,20 @@ export default class FactoryWidget extends Component {
                 const isRune = slot.itemType === 'rune';
                 
                 if (isRuneSlot && isRune && slot.runeColor) {
-                    // Rune in rune slot - show color on the diamond itself, not the content
-                    content.textContent = ''; // No text
+                    // Rune in rune slot - show color on the diamond itself
+                    content.textContent = '';
                     content.style.backgroundColor = '';
                     content.style.border = '';
                     content.className = 'factory-slot-content filled';
                     
                     // Set background color on the slot element (the diamond)
-                    // Set CSS variable for the CSS rule, and also set inline style as fallback
                     slotEl.style.setProperty('--rune-color', slot.runeColor);
                     slotEl.style.backgroundColor = slot.runeColor;
                     slotEl.style.borderColor = slot.runeColor;
                     slotEl.style.borderStyle = 'solid';
                     slotEl.classList.add('factory-slot-rune-colored');
                 } else {
-                    // Regular item or non-rune in rune slot - show text
+                    // Regular item - show text
                     if (slot.quantity > 1) {
                         content.textContent = `${slot.itemName} (x${slot.quantity})`;
                     } else {
@@ -326,9 +409,6 @@ export default class FactoryWidget extends Component {
                 }
             }
         }
-        
-        // Re-setup empty buttons after DOM update (in case buttons were recreated)
-        this.setupEmptyButtons();
     }
     
     /**
@@ -338,4 +418,3 @@ export default class FactoryWidget extends Component {
         return this.isVisible;
     }
 }
-

@@ -829,7 +829,7 @@ export default class Terminal extends Component {
         // Restore filter from localStorage
         if (typeof localStorage !== 'undefined') {
             const storedFilter = localStorage.getItem('ticketManager_filter');
-            if (storedFilter && ['all', 'open', 'in_progress', 'resolved'].includes(storedFilter)) {
+            if (storedFilter && ['all', 'open', 'backlog', 'in_progress', 'resolved'].includes(storedFilter)) {
                 this.ticketManagerFilter = storedFilter;
                 console.log(`[Terminal] Restored ticket manager filter from localStorage: "${storedFilter}"`);
                 // Update active button
@@ -865,6 +865,7 @@ export default class Terminal extends Component {
                     <div class="zork-ticket-manager-filters">
                         <button class="ticket-filter-btn active" data-filter="all">All</button>
                         <button class="ticket-filter-btn" data-filter="open">Open</button>
+                        <button class="ticket-filter-btn" data-filter="backlog">Backlog</button>
                         <button class="ticket-filter-btn" data-filter="in_progress">In Progress</button>
                         <button class="ticket-filter-btn" data-filter="resolved">Resolved</button>
                     </div>
@@ -1163,11 +1164,15 @@ export default class Terminal extends Component {
                     <h3>#${ticket.id}: ${this.escapeHtml(ticket.title)}</h3>
                 </div>
                 <div class="ticket-details-actions">
-                    ${ticket.status === 'open' ? `<button class="ticket-action-btn" data-action="start-work" data-ticket-id="${ticket.id}">Start Work</button>` : ''}
-                    ${ticket.status === 'in_progress' ? `<button class="ticket-action-btn" data-action="resolve" data-ticket-id="${ticket.id}">Resolve</button>` : ''}
-                    ${ticket.status === 'resolved' ? `<button class="ticket-action-btn" data-action="reopen" data-ticket-id="${ticket.id}">Reopen</button>` : ''}
-                    <button class="ticket-action-btn" data-action="add-context" data-ticket-id="${ticket.id}">Add Context</button>
-                    ${ticket.status === 'open' || ticket.status === 'in_progress' ? `<button class="ticket-action-btn ticket-action-delete" data-action="delete" data-ticket-id="${ticket.id}">Delete</button>` : ''}
+                    <select class="ticket-status-select" data-ticket-id="${ticket.id}" data-action="change-status" onchange="window.terminal && window.terminal.handleStatusChangeInManager(this)">
+                        <option value="open" ${ticket.status === 'open' ? 'selected' : ''}>Open</option>
+                        <option value="backlog" ${ticket.status === 'backlog' ? 'selected' : ''}>Backlog</option>
+                        <option value="in_progress" ${ticket.status === 'in_progress' ? 'selected' : ''}>In Progress</option>
+                        <option value="resolved" ${ticket.status === 'resolved' ? 'selected' : ''}>Resolved</option>
+                    </select>
+                    ${ticket.status === 'open' || ticket.status === 'backlog' ? `<button class="ticket-action-btn" data-action="edit" data-ticket-id="${ticket.id}">Edit</button>` : ''}
+                    ${ticket.status === 'in_progress' || ticket.status === 'resolved' ? `<button class="ticket-action-btn" data-action="add-context" data-ticket-id="${ticket.id}">Add Context</button>` : ''}
+                    ${ticket.status !== 'deleted' ? `<button class="ticket-action-btn ticket-action-delete" data-action="delete" data-ticket-id="${ticket.id}">Delete</button>` : ''}
                 </div>
             </div>
             <div class="ticket-details-body">
@@ -1211,9 +1216,16 @@ export default class Terminal extends Component {
         // Set innerHTML once
         detailsContainer.innerHTML = html;
         
+        // Status change is now handled by inline onchange handler in the HTML
+        // No need to attach event listeners here - the inline handler calls handleStatusChangeInManager
+        
         // Setup action button handlers AFTER setting innerHTML
+        // Clone buttons to remove old listeners (same pattern as TicketsWidget)
         detailsContainer.querySelectorAll('[data-action]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            const newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+            
+            newBtn.addEventListener('click', (e) => {
                 const action = e.target.dataset.action;
                 const ticketId = parseInt(e.target.dataset.ticketId);
                 console.log('[Terminal] Ticket action clicked:', action, 'ticketId:', ticketId);
@@ -1223,6 +1235,8 @@ export default class Terminal extends Component {
                     this.updateTicketStatusInManager(ticketId, 'resolved');
                 } else if (action === 'reopen') {
                     this.updateTicketStatusInManager(ticketId, 'open');
+                } else if (action === 'edit') {
+                    this.editTicketInManager(ticketId);
                 } else if (action === 'add-context') {
                     this.showAddContextForm(ticketId);
                 } else if (action === 'delete') {
@@ -1239,6 +1253,48 @@ export default class Terminal extends Component {
         // Use the same dialog opening method
         console.log('[Terminal] showCreateTicketForm called, opening dialog');
         this.openZorkTicketDialog();
+    }
+    
+    /**
+     * Handle status change from dropdown (inline handler)
+     */
+    handleStatusChangeInManager(selectElement) {
+        const ticketId = parseInt(selectElement.dataset.ticketId);
+        const newStatus = selectElement.value;
+        console.log('[Terminal] Status change requested:', newStatus, 'ticketId:', ticketId);
+        
+        // Update local ticket data immediately (optimistic update)
+        const ticket = this.allTickets.find(t => t.id === ticketId);
+        if (ticket) {
+            const oldStatus = ticket.status;
+            ticket.status = newStatus;
+            ticket.updated_at = new Date().toISOString();
+            console.log(`[Terminal] Updated local ticket #${ticketId} status from "${oldStatus}" to "${newStatus}"`);
+        } else {
+            console.error(`[Terminal] Ticket #${ticketId} not found in local tickets array`);
+        }
+        
+        // Update displayed status badge immediately
+        const detailsContainer = this.ticketManager.querySelector('#ticketManagerDetails');
+        if (detailsContainer) {
+            const statusBadge = detailsContainer.querySelector('.ticket-status-badge');
+            if (statusBadge) {
+                statusBadge.textContent = newStatus;
+                statusBadge.className = `ticket-status-badge ticket-status-${newStatus}`;
+                console.log(`[Terminal] Updated status badge to "${newStatus}"`);
+            }
+            
+            // Update status emoji in header
+            const statusEmoji = newStatus === 'open' ? '🔴' : newStatus === 'in_progress' ? '🟡' : newStatus === 'resolved' ? '✅' : '⚪';
+            const statusEmojiEl = detailsContainer.querySelector('.ticket-details-status');
+            if (statusEmojiEl) {
+                statusEmojiEl.textContent = statusEmoji;
+            }
+        }
+        
+        // Save to server immediately
+        console.log(`[Terminal] Sending status update to server: ticketId=${ticketId}, status=${newStatus}`);
+        this.updateTicketStatusInManager(ticketId, newStatus);
     }
     
     /**
@@ -1310,6 +1366,225 @@ export default class Terminal extends Component {
     }
     
     /**
+     * Edit ticket (only for open/backlog tickets)
+     */
+    editTicketInManager(ticketId) {
+        const ticket = this.allTickets.find(t => t.id === ticketId);
+        if (!ticket) {
+            console.error('[Terminal] Ticket not found:', ticketId);
+            return;
+        }
+        
+        // Only allow editing open/backlog tickets
+        if (ticket.status !== 'open' && ticket.status !== 'backlog') {
+            console.warn('[Terminal] Cannot edit ticket that is not open or backlog');
+            return;
+        }
+        
+        this.showEditTicketDialogInManager(ticket);
+    }
+    
+    /**
+     * Show edit ticket dialog
+     */
+    showEditTicketDialogInManager(ticket) {
+        // Create or get edit dialog
+        let dialog = document.getElementById('editTicketDialogManager');
+        if (!dialog) {
+            dialog = this.createEditTicketDialogManager();
+        }
+        
+        // Populate form with current ticket data
+        const titleInput = dialog.querySelector('#editTicketTitleManager');
+        const descriptionInput = dialog.querySelector('#editTicketDescriptionManager');
+        const prioritySelect = dialog.querySelector('#editTicketPriorityManager');
+        const typeSelect = dialog.querySelector('#editTicketTypeManager');
+        const errorDiv = dialog.querySelector('#editTicketErrorManager');
+        
+        if (titleInput) titleInput.value = ticket.title || '';
+        if (descriptionInput) descriptionInput.value = ticket.description || '';
+        if (prioritySelect) prioritySelect.value = ticket.priority || 2;
+        if (typeSelect) typeSelect.value = ticket.ticket_type || 'bug';
+        if (errorDiv) {
+            errorDiv.textContent = '';
+            errorDiv.classList.add('hidden');
+        }
+        
+        // Store ticket ID on dialog
+        dialog._ticketId = ticket.id;
+        
+        // Setup handlers
+        this.setupEditTicketDialogHandlersManager();
+        
+        // Show dialog
+        dialog.classList.remove('hidden');
+        
+        // Focus title input
+        setTimeout(() => {
+            if (titleInput) titleInput.focus();
+        }, 100);
+    }
+    
+    createEditTicketDialogManager() {
+        const overlay = document.createElement('div');
+        overlay.id = 'editTicketDialogManager';
+        overlay.className = 'zork-ticket-dialog-overlay hidden';
+        overlay.innerHTML = `
+            <div class="zork-ticket-dialog">
+                <div class="zork-ticket-dialog-header">
+                    <h3>Edit Ticket</h3>
+                    <button id="closeEditTicketDialogManager" class="zork-ticket-dialog-close">×</button>
+                </div>
+                <div class="zork-ticket-dialog-content">
+                    <label for="editTicketTitleManager">Title:</label>
+                    <input type="text" id="editTicketTitleManager" class="zork-ticket-input" placeholder="Ticket title" maxlength="200">
+                    
+                    <label for="editTicketDescriptionManager">Description:</label>
+                    <textarea id="editTicketDescriptionManager" class="zork-ticket-textarea" placeholder="Ticket description" rows="8"></textarea>
+                    
+                    <div style="display: flex; gap: 16px; margin-top: 12px;">
+                        <div style="flex: 1;">
+                            <label for="editTicketPriorityManager">Priority:</label>
+                            <select id="editTicketPriorityManager" class="zork-ticket-input">
+                                <option value="1">Low</option>
+                                <option value="2" selected>Medium</option>
+                                <option value="3">High</option>
+                                <option value="4">Critical</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="editTicketTypeManager">Type:</label>
+                            <select id="editTicketTypeManager" class="zork-ticket-input">
+                                <option value="bug" selected>Bug</option>
+                                <option value="feature">Feature</option>
+                                <option value="debug">Debug</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="editTicketErrorManager" class="zork-ticket-error hidden"></div>
+                </div>
+                <div class="zork-ticket-dialog-buttons">
+                    <button id="editTicketSubmitManager" class="zork-ticket-btn zork-ticket-btn-primary">Save Changes</button>
+                    <button id="editTicketCancelManager" class="zork-ticket-btn zork-ticket-btn-secondary">Cancel</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+    
+    setupEditTicketDialogHandlersManager() {
+        const dialog = document.getElementById('editTicketDialogManager');
+        const submitBtn = document.getElementById('editTicketSubmitManager');
+        const cancelBtn = document.getElementById('editTicketCancelManager');
+        const closeBtn = document.getElementById('closeEditTicketDialogManager');
+        const errorDiv = document.getElementById('editTicketErrorManager');
+        const titleInput = document.getElementById('editTicketTitleManager');
+        const descriptionInput = document.getElementById('editTicketDescriptionManager');
+        
+        if (!dialog || !submitBtn || !cancelBtn || !closeBtn) {
+            console.error('[Terminal] Edit ticket dialog elements not found');
+            return;
+        }
+        
+        // Remove old handlers if they exist
+        if (dialog._handlersSetup) {
+            return; // Already setup
+        }
+        
+        const closeDialog = () => {
+            dialog.classList.add('hidden');
+            if (errorDiv) {
+                errorDiv.textContent = '';
+                errorDiv.classList.add('hidden');
+            }
+        };
+        
+        const handleSubmit = () => {
+            const ticketId = dialog._ticketId;
+            if (!ticketId) {
+                console.error('[Terminal] No ticket ID on edit dialog');
+                return;
+            }
+            
+            const title = titleInput ? titleInput.value.trim() : '';
+            const description = descriptionInput ? descriptionInput.value.trim() : '';
+            const priority = parseInt(document.getElementById('editTicketPriorityManager')?.value || '2', 10);
+            const ticketType = document.getElementById('editTicketTypeManager')?.value || 'bug';
+            
+            if (!title) {
+                if (errorDiv) {
+                    errorDiv.textContent = 'Title is required.';
+                    errorDiv.classList.remove('hidden');
+                }
+                return;
+            }
+            
+            this.updateTicketInManager(ticketId, { title, description, priority, ticketType });
+            closeDialog();
+        };
+        
+        submitBtn.addEventListener('click', handleSubmit);
+        cancelBtn.addEventListener('click', closeDialog);
+        closeBtn.addEventListener('click', closeDialog);
+        
+        // Close on overlay click
+        dialog.addEventListener('click', (e) => {
+            if (e.target === dialog) {
+                closeDialog();
+            }
+        });
+        
+        // Submit on Enter in title (but not in description)
+        if (titleInput) {
+            titleInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    descriptionInput?.focus();
+                }
+            });
+        }
+        
+        dialog._handlersSetup = true;
+    }
+    
+    /**
+     * Update ticket fields (title, description, priority, ticketType)
+     */
+    updateTicketInManager(ticketId, data) {
+        const ws = this.game.getWebSocket();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            console.error('[Terminal] Not connected to server');
+            this.game.messageBus.emit('terminal:error', { message: 'Not connected to server. Cannot update ticket.' });
+            return;
+        }
+        
+        console.log('[Terminal] Sending updateTicket:', { ticketId, ...data });
+        
+        ws.send(JSON.stringify({
+            type: 'updateTicket',
+            ticketId: ticketId,
+            title: data.title,
+            description: data.description,
+            priority: data.priority,
+            ticketType: data.ticketType
+        }));
+        
+        // Reload tickets after update
+        setTimeout(() => {
+            this.loadTicketsForManager();
+            // Re-select the ticket if it was selected
+            const selectedTicket = this.ticketManager.querySelector('.ticket-item.selected');
+            if (selectedTicket) {
+                const selectedId = parseInt(selectedTicket.dataset.ticketId);
+                if (selectedId === ticketId) {
+                    this.selectTicketInManager(ticketId);
+                }
+            }
+        }, 500);
+    }
+    
+    /**
      * Show add context form
      */
     showAddContextForm(ticketId) {
@@ -1363,6 +1638,36 @@ export default class Terminal extends Component {
     }
     
     /**
+     * Show delete ticket confirmation dialog in manager
+     */
+    showDeleteTicketDialogInManager(ticketId) {
+        console.log('[Terminal] Opening delete ticket dialog for ticket:', ticketId);
+        const dialog = this.createBespokeDialog('Delete Ticket', 'Are you sure you want to delete this ticket? It will be marked as deleted and Cursor will ignore it. Type "DELETE" to confirm:', (confirmation) => {
+            if (confirmation && confirmation.trim().toUpperCase() === 'DELETE') {
+                console.log('[Terminal] Delete confirmed for ticket:', ticketId);
+                this.updateTicketStatusInManager(ticketId, 'deleted');
+                // Reload tickets after delete
+                setTimeout(() => {
+                    this.loadTicketsForManager();
+                }, 500);
+            } else {
+                console.log('[Terminal] Delete not confirmed, confirmation text:', confirmation);
+                // Show error if confirmation doesn't match
+                const errorDiv = dialog.querySelector('#ticketActionError');
+                if (errorDiv) {
+                    errorDiv.textContent = 'Confirmation text does not match. Ticket not deleted.';
+                    errorDiv.classList.remove('hidden');
+                }
+            }
+        });
+        if (dialog) {
+            dialog.classList.remove('hidden');
+        } else {
+            console.error('[Terminal] Failed to create delete dialog');
+        }
+    }
+    
+    /**
      * Open bespoke ticket creation dialog (no system popups)
      * @deprecated - Use ticket manager instead
      */
@@ -1386,6 +1691,12 @@ export default class Terminal extends Component {
         errorDiv.textContent = '';
         errorDiv.classList.add('hidden');
         
+        // Reset priority and type to defaults
+        const ticketTypeSelect = document.getElementById('zorkTicketType');
+        const prioritySelect = document.getElementById('zorkTicketPriority');
+        if (ticketTypeSelect) ticketTypeSelect.value = 'bug';
+        if (prioritySelect) prioritySelect.value = '2';
+        
         // Show dialog
         dialog.classList.remove('hidden');
         
@@ -1397,6 +1708,9 @@ export default class Terminal extends Component {
             console.log('[Terminal] Fixed ZORK ticket dialog z-index to 5000');
         }
         
+        // Setup drag and resize functionality
+        this.setupZorkTicketDialogDragResize();
+        
         // Focus title input
         setTimeout(() => {
             titleInput.focus();
@@ -1406,6 +1720,141 @@ export default class Terminal extends Component {
         
         // Setup submit handler (always, to ensure it's ready)
         this.setupZorkTicketDialogHandlers();
+    }
+    
+    /**
+     * Setup drag and resize for ZORK ticket dialog
+     */
+    setupZorkTicketDialogDragResize() {
+        const dialog = document.getElementById('zorkTicketDialog');
+        if (!dialog) return;
+        
+        const dialogContent = dialog.querySelector('.zork-ticket-dialog');
+        if (!dialogContent) return;
+        
+        // If already set up, skip
+        if (dialogContent._dragResizeSetup) {
+            return;
+        }
+        
+        // Make dialog draggable
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        
+        const startDrag = (e) => {
+            // Only drag from header area, not from buttons/inputs
+            if (e.target.closest('button') || e.target.closest('select') || e.target.closest('input') || e.target.closest('textarea')) {
+                return;
+            }
+            const headerEl = dialogContent.querySelector('.zork-ticket-dialog-header');
+            if (!headerEl || !headerEl.contains(e.target)) {
+                return;
+            }
+            isDragging = true;
+            const rect = dialogContent.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+            dialogContent.style.cursor = 'grabbing';
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        
+        const drag = (e) => {
+            if (!isDragging) return;
+            const x = e.clientX - dragOffset.x;
+            const y = e.clientY - dragOffset.y;
+            
+            // Keep dialog within viewport
+            const maxX = window.innerWidth - dialogContent.offsetWidth;
+            const maxY = window.innerHeight - dialogContent.offsetHeight;
+            
+            dialogContent.style.left = Math.max(0, Math.min(x, maxX)) + 'px';
+            dialogContent.style.top = Math.max(0, Math.min(y, maxY)) + 'px';
+            dialogContent.style.transform = 'none';
+        };
+        
+        const stopDrag = () => {
+            if (isDragging) {
+                isDragging = false;
+                dialogContent.style.cursor = '';
+            }
+        };
+        
+        // Make resizable
+        let isResizing = false;
+        let resizeStart = { x: 0, y: 0, width: 0, height: 0 };
+        
+        // Create resize handle
+        let resizeHandle = dialogContent.querySelector('.zork-ticket-resize-handle');
+        if (!resizeHandle) {
+            resizeHandle = document.createElement('div');
+            resizeHandle.className = 'zork-ticket-resize-handle';
+            resizeHandle.style.cssText = 'position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; cursor: nwse-resize; z-index: 1000; background: linear-gradient(135deg, transparent 0%, transparent 40%, #00ff00 40%, #00ff00 60%, transparent 60%, transparent 100%); pointer-events: auto;';
+            dialogContent.appendChild(resizeHandle);
+        }
+        
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            const rect = dialogContent.getBoundingClientRect();
+            resizeStart.x = e.clientX;
+            resizeStart.y = e.clientY;
+            resizeStart.width = rect.width;
+            resizeStart.height = rect.height;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        
+        const doResize = (e) => {
+            if (!isResizing) return;
+            const deltaX = e.clientX - resizeStart.x;
+            const deltaY = e.clientY - resizeStart.y;
+            
+            const newWidth = Math.max(400, Math.min(resizeStart.width + deltaX, window.innerWidth - 20));
+            const newHeight = Math.max(300, Math.min(resizeStart.height + deltaY, window.innerHeight - 20));
+            
+            dialogContent.style.width = newWidth + 'px';
+            dialogContent.style.height = newHeight + 'px';
+        };
+        
+        const stopResize = () => {
+            isResizing = false;
+        };
+        
+        // Setup drag on header
+        const headerEl = dialogContent.querySelector('.zork-ticket-dialog-header');
+        if (headerEl) {
+            if (headerEl._dragHandler) {
+                headerEl.removeEventListener('mousedown', headerEl._dragHandler);
+            }
+            headerEl._dragHandler = startDrag;
+            headerEl.addEventListener('mousedown', startDrag);
+        }
+        
+        // Setup document-level listeners
+        const mouseMoveHandler = (e) => {
+            drag(e);
+            doResize(e);
+        };
+        
+        const mouseUpHandler = () => {
+            stopDrag();
+            stopResize();
+        };
+        
+        document.addEventListener('mousemove', mouseMoveHandler);
+        document.addEventListener('mouseup', mouseUpHandler);
+        
+        // Mark as set up
+        dialogContent._dragResizeSetup = true;
+        
+        // Store cleanup
+        dialogContent._cleanupDragResize = () => {
+            document.removeEventListener('mousemove', mouseMoveHandler);
+            document.removeEventListener('mouseup', mouseUpHandler);
+            if (headerEl && headerEl._dragHandler) {
+                headerEl.removeEventListener('mousedown', headerEl._dragHandler);
+            }
+        };
     }
     
     /**
@@ -1455,8 +1904,12 @@ export default class Terminal extends Component {
             
             const title = titleInput.value.trim();
             const description = descriptionInput.value.trim();
+            const ticketTypeSelect = document.getElementById('zorkTicketType');
+            const prioritySelect = document.getElementById('zorkTicketPriority');
+            const ticketType = ticketTypeSelect ? ticketTypeSelect.value : 'bug';
+            const priority = prioritySelect ? parseInt(prioritySelect.value) : 2;
             
-            console.log('[Terminal] Submit ticket clicked, title:', title.substring(0, 30));
+            console.log('[Terminal] Submit ticket clicked, title:', title.substring(0, 30), 'type:', ticketType, 'priority:', priority);
             
             // Validate
             if (!title) {
@@ -1487,8 +1940,9 @@ export default class Terminal extends Component {
                     type: 'createZorkTicket',
                     title: title,
                     description: description,
-                    priority: 2, // Medium priority
-                    ticketType: 'user'
+                    priority: priority,
+                    ticketType: ticketType,
+                    fromZork: false // User-created, not from ZORK AI
                 }));
                 
                 console.log('[Terminal] ZORK ticket creation request sent');

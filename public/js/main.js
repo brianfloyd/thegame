@@ -30,6 +30,14 @@ const npcWidget = new NPCWidget(game);
 const factoryWidget = new FactoryWidget(game);
 const ticketsWidget = new TicketsWidget(game);
 
+// Store terminal reference globally and on game object for easy access
+if (typeof window !== 'undefined') {
+    window.terminal = terminal;
+}
+if (game) {
+    game.terminal = terminal;
+}
+
 // Initialize all components
 terminal.init();
 statsWidget.init();
@@ -234,9 +242,10 @@ function normalizeCommand(input) {
         'look': 'look', 'l': 'look',
         'inventory': 'inventory', 'inv': 'inventory', 'i': 'inventory',
         'take': 'take', 't': 'take',
+        'get': 'take',
+        'collect': 'take',
         'drop': 'drop',
         'harvest': 'harvest', 'h': 'harvest',
-        'collect': 'harvest', 'c': 'harvest',
         'gather': 'harvest', 'g': 'harvest',
         'attune': 'attune',
         'talk': 'talk', 'say': 'talk',
@@ -477,6 +486,16 @@ document.addEventListener('keydown', (e) => {
     if (e.key >= '0' && e.key <= '9' && e.location === 3) {
         const direction = numpadMap[e.key];
         if (direction) {
+            // Don't trigger if a ticket dialog is open
+            const zorkTicketDialog = document.getElementById('zorkTicketDialog');
+            const ticketDetailsDialog = document.getElementById('ticketDetailsDialog');
+            const addContextDialog = document.getElementById('addContextDialog');
+            if ((zorkTicketDialog && !zorkTicketDialog.classList.contains('hidden')) ||
+                (ticketDetailsDialog && !ticketDetailsDialog.classList.contains('hidden')) ||
+                (addContextDialog && !addContextDialog.classList.contains('hidden'))) {
+                return; // Don't process movement keys when ticket dialogs are open
+            }
+            
             e.preventDefault();
             
             // If auto-navigation or path execution is active, break it first
@@ -511,6 +530,16 @@ document.addEventListener('keydown', (e) => {
     const commandInput = document.getElementById('commandInput');
     if (e.key === 'u' || e.key === 'U') {
         if (commandInput && e.target === commandInput) return; // Don't trigger if typing in command input
+        
+        // Don't trigger if a ticket dialog is open
+        const zorkTicketDialog = document.getElementById('zorkTicketDialog');
+        const ticketDetailsDialog = document.getElementById('ticketDetailsDialog');
+        const addContextDialog = document.getElementById('addContextDialog');
+        if ((zorkTicketDialog && !zorkTicketDialog.classList.contains('hidden')) ||
+            (ticketDetailsDialog && !ticketDetailsDialog.classList.contains('hidden')) ||
+            (addContextDialog && !addContextDialog.classList.contains('hidden'))) {
+            return; // Don't process movement keys when ticket dialogs are open
+        }
         
         // If auto-navigation or path execution is active, break it first
         if (isAutoNavigating || isPathExecuting) {
@@ -580,9 +609,9 @@ function displayHelp() {
         { name: 'down', abbrev: 'd', description: 'Move down', category: 'Movement' },
         { name: 'look', abbrev: 'l', description: 'Look at current room or target', category: 'Information' },
         { name: 'inventory', abbrev: 'inv, i', description: 'Display inventory', category: 'Items' },
-        { name: 'take', abbrev: 't', description: 'Take item from ground', category: 'Items' },
+        { name: 'take', abbrev: 't, get, collect', description: 'Take item from ground', category: 'Items' },
         { name: 'drop', description: 'Drop item to ground', category: 'Items' },
-        { name: 'harvest', abbrev: 'h, c, g', description: 'Harvest from NPC', category: 'NPC Interaction' },
+        { name: 'harvest', abbrev: 'h, g', description: 'Harvest from NPC', category: 'NPC Interaction' },
         { name: 'talk', abbrev: 'say, t', description: 'Talk in room', category: 'Communication' },
         { name: 'resonate', abbrev: 'res, r', description: 'Broadcast to all players', category: 'Communication' },
         { name: 'telepath', abbrev: 'tele, tell', description: 'Send private message', category: 'Communication' },

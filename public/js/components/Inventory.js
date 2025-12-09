@@ -81,7 +81,37 @@ export default class Inventory extends Component {
             });
             
             const tdItem = document.createElement('td');
-            tdItem.textContent = item.item_name;
+            
+            // Create item name container
+            const itemNameContainer = document.createElement('span');
+            itemNameContainer.className = 'inventory-item-name-container';
+            itemNameContainer.style.display = 'inline-flex';
+            itemNameContainer.style.alignItems = 'center';
+            itemNameContainer.style.gap = '8px';
+            
+            // Add rune diamond if item is a rune
+            if (item.item_type === 'rune' && item.rune_color) {
+                const runeDiamond = document.createElement('span');
+                runeDiamond.className = 'inventory-rune-diamond';
+                runeDiamond.style.display = 'inline-block';
+                runeDiamond.style.width = '1em';
+                runeDiamond.style.height = '1em';
+                runeDiamond.style.transform = 'rotate(45deg)';
+                runeDiamond.style.border = '2px solid';
+                runeDiamond.style.borderColor = item.rune_color;
+                runeDiamond.style.backgroundColor = item.rune_color;
+                runeDiamond.style.flexShrink = '0';
+                runeDiamond.title = `Rune color: ${item.rune_color}`;
+                itemNameContainer.appendChild(runeDiamond);
+            }
+            
+            // Add item name
+            const itemNameText = document.createElement('span');
+            itemNameText.textContent = item.item_name;
+            itemNameContainer.appendChild(itemNameText);
+            
+            tdItem.appendChild(itemNameContainer);
+            
             const tdQty = document.createElement('td');
             tdQty.textContent = item.quantity;
             row.appendChild(tdItem);

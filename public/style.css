@@ -2601,6 +2601,35 @@ body {
     background: rgba(255, 102, 102, 0.25);
 }
 
+.factory-quantity-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+}
+
+.factory-quantity-control label {
+    color: #00ff00;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.factory-quantity-control input {
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    padding: 4px 8px;
+    font-size: 12px;
+    width: 60px;
+    font-family: 'Courier New', monospace;
+}
+
+.factory-quantity-control input:focus {
+    outline: 1px solid #00ff00;
+    outline-offset: -1px;
+}
+
 .factory-slot-container {
     display: flex;
     flex-direction: column;
@@ -2727,6 +2756,22 @@ body {
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
+}
+
+/* High contrast button for colored rune slots (red, orange, etc.) */
+.factory-slot-rune-colored .factory-slot-empty-btn {
+    background: rgba(0, 0, 0, 0.8) !important;
+    border: 2px solid #ffffff !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+.factory-slot-rune-colored .factory-slot-empty-btn:hover {
+    background: rgba(0, 0, 0, 0.95) !important;
+    border-color: #ffff00 !important;
+    color: #ffff00 !important;
+    box-shadow: 0 0 6px rgba(255, 255, 0, 0.6);
+    transform: scale(1.1);
 }
 
 .factory-slot-empty-btn:hover {
@@ -2933,6 +2978,23 @@ body {
 
 .inventory-table tbody tr[draggable="true"]:hover {
     background: rgba(0, 255, 0, 0.1);
+}
+
+/* Inventory rune diamond indicator */
+.inventory-item-name-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inventory-rune-diamond {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    transform: rotate(45deg);
+    border: 2px solid;
+    flex-shrink: 0;
+    vertical-align: middle;
 }
 
 /* Scripting Widget Styles */
@@ -3988,12 +4050,9 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.85);
+    background: transparent;
     z-index: 5000; /* Higher than ticket manager (4000) */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    backdrop-filter: blur(2px);
+    pointer-events: none;
 }
 
 .zork-ticket-dialog-overlay.hidden {
@@ -4006,11 +4065,22 @@ body {
     border-radius: 8px;
     padding: 0;
     min-width: 500px;
-    max-width: 600px;
+    width: 600px;
+    min-height: 400px;
+    height: auto;
+    max-width: 90vw;
+    max-height: 90vh;
     color: #00ff00;
     font-family: 'Courier New', monospace;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-    animation: slideInTicketDialog 0.3s ease-out;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 @keyframes slideInTicketDialog {
@@ -4031,6 +4101,8 @@ body {
     justify-content: space-between;
     align-items: center;
     background: rgba(0, 255, 0, 0.05);
+    cursor: move;
+    user-select: none;
 }
 
 .zork-ticket-dialog-header h3 {
@@ -4065,6 +4137,37 @@ body {
 
 .zork-ticket-dialog-content {
     padding: 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Resize handle for zork ticket dialog */
+.zork-ticket-dialog::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(135deg, transparent 0%, transparent 40%, #00ff00 40%, #00ff00 60%, transparent 60%, transparent 100%);
+    cursor: nwse-resize;
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.zork-ticket-dialog::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    cursor: nwse-resize;
+    z-index: 11;
+    pointer-events: auto;
 }
 
 .zork-ticket-dialog-content label {
@@ -4079,8 +4182,8 @@ body {
 .zork-ticket-input,
 .zork-ticket-textarea {
     width: 100%;
-    background: #1a1a1a;
-    border: 2px solid #333;
+    background: #0a0a0a;
+    border: 2px solid #00ff00;
     color: #00ff00;
     font-family: 'Courier New', monospace;
     padding: 10px;
@@ -4096,6 +4199,39 @@ body {
     outline: none;
     border-color: #00ff00;
     box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.zork-ticket-input option,
+.zork-ticket-select option {
+    background: #0a0a0a;
+    color: #00ff00;
+    padding: 8px;
+}
+
+.zork-ticket-input option:hover,
+.zork-ticket-input option:checked,
+.zork-ticket-select option:hover,
+.zork-ticket-select option:checked {
+    background: rgba(0, 255, 0, 0.2);
+    color: #00ff00;
+}
+
+/* Global select option styling for all ticket-related selects */
+select.ticket-status-select option,
+select.zork-ticket-input option,
+select.zork-ticket-select option {
+    background: #0a0a0a !important;
+    color: #00ff00 !important;
+}
+
+select.ticket-status-select option:hover,
+select.ticket-status-select option:checked,
+select.zork-ticket-input option:hover,
+select.zork-ticket-input option:checked,
+select.zork-ticket-select option:hover,
+select.zork-ticket-select option:checked {
+    background: rgba(0, 255, 0, 0.2) !important;
+    color: #00ff00 !important;
 }
 
 .zork-ticket-textarea {
@@ -4171,19 +4307,24 @@ body {
 /* Tickets Widget Styles */
 .tickets-tabs {
     display: flex;
-    gap: 8px;
+    gap: 4px;
     margin-top: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    width: 100%;
 }
 
 .ticket-tab-btn {
-    padding: 6px 12px;
+    padding: 4px 8px;
     background: rgba(0, 255, 0, 0.1);
     border: 1px solid #00ff00;
     color: #00ff00;
     cursor: pointer;
     font-family: 'Courier New', monospace;
-    font-size: 0.85em;
+    font-size: 10px;
     transition: all 0.2s;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .ticket-tab-btn:hover {
@@ -4210,16 +4351,34 @@ body {
 }
 
 .tickets-widget-header {
-    padding: 10px;
+    padding: 8px;
     border-bottom: 2px solid #00ff00;
     background: rgba(0, 255, 0, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .tickets-widget-header h3 {
     color: #ffff00;
-    margin: 0 0 10px 0;
-    font-size: 14px;
+    margin: 0;
+    font-size: 12px;
     text-transform: uppercase;
+}
+
+.tickets-tabs .ticket-action-btn {
+    padding: 4px 8px;
+    font-size: 10px;
+    margin-left: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.tickets-tabs .ticket-filter-btn {
+    padding: 4px 8px;
+    font-size: 10px;
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .tickets-filters {
@@ -4253,9 +4412,10 @@ body {
 }
 
 .tickets-list {
-    padding: 10px;
+    padding: 8px;
     overflow-y: auto;
-    max-height: calc(100% - 80px);
+    max-height: calc(100% - 100px);
+    overflow-x: hidden;
 }
 
 .tickets-empty {
@@ -4268,15 +4428,56 @@ body {
 .ticket-item {
     border: 1px solid #333;
     border-radius: 4px;
-    padding: 10px;
-    margin-bottom: 10px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
     background: rgba(0, 255, 0, 0.02);
     transition: all 0.2s;
+    cursor: pointer;
 }
 
 .ticket-item:hover {
     border-color: #00ff00;
     background: rgba(0, 255, 0, 0.05);
+}
+
+.ticket-header-compact {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+.ticket-title-compact {
+    flex: 1;
+    color: #00ff00;
+    font-weight: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ticket-meta-compact {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 9px;
+    color: #888;
+}
+
+.ticket-type-compact {
+    font-size: 9px;
+}
+
+.ticket-actions-compact {
+    margin-top: 4px;
+    display: flex;
+    gap: 4px;
+}
+
+.ticket-actions-compact .ticket-action-btn {
+    padding: 3px 6px;
+    font-size: 9px;
 }
 
 .ticket-item.cursor-working {
@@ -4403,12 +4604,9 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.85);
+    background: transparent;
     z-index: 3000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    backdrop-filter: blur(2px);
+    pointer-events: none;
 }
 
 .ticket-details-dialog-overlay.hidden {
@@ -4420,35 +4618,95 @@ body {
     border: 3px solid #00ff00;
     border-radius: 8px;
     padding: 0;
-    min-width: 600px;
-    max-width: 800px;
-    max-height: 80vh;
+    min-width: 500px;
+    width: 700px;
+    min-height: 400px;
+    height: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
     color: #00ff00;
     font-family: 'Courier New', monospace;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
     display: flex;
     flex-direction: column;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    overflow: hidden;
 }
 
 .ticket-details-content {
     padding: 20px;
     overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Resize handle for ticket dialog */
+.ticket-details-dialog::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(135deg, transparent 0%, transparent 40%, #00ff00 40%, #00ff00 60%, transparent 60%, transparent 100%);
+    cursor: nwse-resize;
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.ticket-details-dialog::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    cursor: nwse-resize;
+    z-index: 11;
+    pointer-events: auto;
 }
 
 .ticket-details-header {
     padding: 15px 20px;
     border-bottom: 2px solid #00ff00;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 10px;
     background: rgba(0, 255, 0, 0.05);
+    position: relative;
+    cursor: move;
+    user-select: none;
 }
 
-.ticket-details-header h3 {
+.ticket-details-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ticket-details-title-row h3 {
     color: #ffff00;
     margin: 0;
     font-size: 16px;
     text-transform: uppercase;
+    flex: 1;
+}
+
+.ticket-details-status {
+    font-size: 20px;
+}
+
+.ticket-details-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
 }
 
 .ticket-details-close {
@@ -4466,11 +4724,27 @@ body {
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
+    position: absolute;
+    top: 10px;
+    right: 10px;
 }
 
 .ticket-details-close:hover {
     color: #ffff00;
     transform: scale(1.2);
+}
+
+.ticket-details-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #333;
+}
+
+.ticket-details-section strong {
+    color: #00ffff;
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
 }
 
 .ticket-detail-row {
@@ -4483,18 +4757,6 @@ body {
     margin-right: 8px;
 }
 
-.ticket-detail-section {
-    margin-top: 15px;
-    padding-top: 15px;
-    border-top: 1px solid #333;
-}
-
-.ticket-detail-section strong {
-    color: #00ffff;
-    display: block;
-    margin-bottom: 8px;
-    font-size: 13px;
-}
 
 .ticket-detail-text {
     color: #888;
@@ -4879,8 +5141,70 @@ body {
     background: rgba(255, 0, 0, 0.2);
     color: #ff0000;
 }
-    margin-bottom: 5px;
+
+.ticket-priority-badge.priority-1 {
+    background: rgba(136, 136, 136, 0.2);
+    color: #888;
+}
+
+.ticket-priority-badge.priority-2 {
+    background: rgba(0, 255, 0, 0.2);
+    color: #00ff00;
+}
+
+.ticket-priority-badge.priority-3 {
+    background: rgba(255, 136, 0, 0.2);
+    color: #ff8800;
+}
+
+.ticket-priority-badge.priority-4 {
+    background: rgba(255, 0, 0, 0.2);
+    color: #ff0000;
+}
+
+.ticket-status-badge.ticket-status-backlog {
+    background: rgba(136, 136, 136, 0.2);
+    color: #888;
+}
+
+.ticket-creator {
+    color: #00ffff;
+    font-size: 10px;
+}
+
+.ticket-status-select {
+    padding: 6px 10px;
+    border: 1px solid #00ff00;
+    background: #0a0a0a;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
     font-size: 12px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-right: 10px;
+}
+
+.ticket-status-select:hover {
+    border-color: #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.ticket-status-select:focus {
+    outline: none;
+    border-color: #00ff00;
+    box-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
+}
+
+.ticket-status-select option {
+    background: #0a0a0a;
+    color: #00ff00;
+    padding: 8px;
+}
+
+.ticket-status-select option:hover,
+.ticket-status-select option:checked {
+    background: rgba(0, 255, 0, 0.2);
+    color: #00ff00;
 }
 
 .dialog-input, .dialog-textarea {

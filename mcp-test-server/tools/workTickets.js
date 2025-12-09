@@ -65,13 +65,16 @@ export async function handleWorkTicketTool(name, args) {
         const priority = args.priority !== undefined ? args.priority : null;
         const ticketType = args.ticketType || null;
         
-        // Get open tickets ordered by priority
+        // Get tickets to work on:
+        // 1. Open tickets (new tickets to start working on)
+        // 2. In-progress tickets that don't have "IMPLEMENTATION COMPLETE" yet (still being worked on)
         let sql = `
           SELECT dt.*, ds.player_id, ds.bug_label, p.name as player_name
           FROM debug_todos dt
           LEFT JOIN debug_sessions ds ON dt.session_id = ds.id
           LEFT JOIN players p ON ds.player_id = p.id
-          WHERE dt.status = 'open'
+          WHERE dt.status = 'open' 
+             OR (dt.status = 'in_progress' AND (dt.resolution_notes IS NULL OR dt.resolution_notes NOT LIKE '%IMPLEMENTATION COMPLETE%'))
         `;
         const params = [];
         let paramIndex = 1;
@@ -96,7 +99,7 @@ export async function handleWorkTicketTool(name, args) {
           return {
             content: [{
               type: 'text',
-              text: 'No open tickets found. All tickets are resolved!',
+              text: 'No tickets to work on. All tickets are either resolved, in backlog, or already have implementation complete and are waiting for testing.',
             }],
           };
         }
