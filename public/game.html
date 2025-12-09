@@ -25,6 +25,16 @@
                         <span id="vitalisCounter" class="vitalis-counter">[50 / 100]</span>
                         <span class="prompt">&gt;</span>
                         <input type="text" id="commandInput" class="command-input" autocomplete="off" spellcheck="false" placeholder="Type a command...">
+                        <button id="zorkBtn" class="zork-icon hidden" title="ZORK Interface (click to manage tickets)" style="display: none;">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <text x="12" y="18" font-size="16" font-weight="bold" text-anchor="middle" fill="currentColor">Z</text>
+                            </svg>
+                        </button>
+                        <button id="micBtn" class="mic-icon" title="Voice Input (click to record)">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                            </svg>
+                        </button>
                         <button id="scrollLockBtn" class="scroll-lock-icon" title="Lock/Unlock Scroll">
                             <svg viewBox="0 0 24 24" width="20" height="20">
                                 <path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM12 17c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
@@ -61,6 +71,9 @@
                     </button>
                     <button class="widget-icon" data-widget="runekeeper" title="Rune Keeper">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d=""/></svg>
+                    </button>
+                    <button class="widget-icon" data-widget="tickets" title="Tickets">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
                     </button>
                     <button class="widget-exit-btn" id="exitToCharacterSelection" title="Return to Character Selection">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
@@ -153,17 +166,31 @@
                             <div class="widget-header">Factory Machine</div>
                             <div class="widget-content">
                                 <div class="factory-slot-container">
-                                    <div class="factory-slot" id="factory-slot-0" data-slot="0">
-                                        <div class="factory-slot-label">Slot 1</div>
+                                    <!-- Supply Slots (Ingredient) - 2 rectangular slots -->
+                                    <div class="factory-slot factory-slot-supply" id="factory-slot-0" data-slot="0">
+                                        <div class="factory-slot-label">Ingredient</div>
                                         <div class="factory-slot-content"></div>
+                                        <button class="factory-slot-empty-btn" data-slot="0" title="Empty slot back to inventory">×</button>
                                     </div>
-                                    <div class="factory-slot" id="factory-slot-1" data-slot="1">
-                                        <div class="factory-slot-label">Slot 2</div>
+                                    <div class="factory-slot factory-slot-supply" id="factory-slot-1" data-slot="1">
+                                        <div class="factory-slot-label">Ingredient</div>
                                         <div class="factory-slot-content"></div>
+                                        <button class="factory-slot-empty-btn" data-slot="1" title="Empty slot back to inventory">×</button>
                                     </div>
-                                    <div class="factory-slot factory-slot-text" id="factory-slot-2" data-slot="2">
-                                        <div class="factory-slot-label">Input</div>
-                                        <input type="text" class="factory-text-input" id="factory-text-input" placeholder="" />
+                                    <!-- Rune Slots (Diamond-shaped) -->
+                                    <div class="factory-rune-slots">
+                                        <div class="factory-slot factory-slot-rune" id="factory-slot-2" data-slot="2">
+                                            <div class="factory-slot-content"></div>
+                                            <button class="factory-slot-empty-btn" data-slot="2" title="Empty slot back to inventory">×</button>
+                                        </div>
+                                        <div class="factory-slot factory-slot-rune" id="factory-slot-3" data-slot="3">
+                                            <div class="factory-slot-content"></div>
+                                            <button class="factory-slot-empty-btn" data-slot="3" title="Empty slot back to inventory">×</button>
+                                        </div>
+                                        <div class="factory-slot factory-slot-rune" id="factory-slot-4" data-slot="4">
+                                            <div class="factory-slot-content"></div>
+                                            <button class="factory-slot-empty-btn" data-slot="4" title="Empty slot back to inventory">×</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -263,6 +290,12 @@
                     
                     <!-- Scripting Widget (spans 2 slots - full width) -->
                     <div class="widget-slot scripting-widget-slot" data-slot="scripting-top" style="display: none; grid-column: 1 / 3; grid-row: 1;">
+                        <div class="widget hidden" id="widget-tickets" data-widget="tickets">
+                            <div class="widget-header">Tickets</div>
+                            <div class="widget-content" id="ticketsWidget">
+                                <!-- Tickets will be populated by TicketsWidget -->
+                            </div>
+                        </div>
                         <div class="widget scripting-widget" id="widget-scripting" data-widget="scripting">
                             <div class="widget-header">Automation</div>
                             <div class="widget-content scripting-content">
@@ -382,6 +415,46 @@
                     <button id="savePathBtn" class="auth-btn" style="flex: 1;">Save</button>
                     <button id="cancelPathNameBtn" class="auth-btn" style="flex: 1; background: #999;">Cancel</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ZORK Ticket Creation Dialog -->
+    <div id="zorkTicketDialog" class="zork-ticket-dialog-overlay hidden">
+        <div class="zork-ticket-dialog">
+            <div class="zork-ticket-dialog-header">
+                <h3>Create ZORK Ticket</h3>
+                <button id="closeZorkTicketDialog" class="zork-ticket-dialog-close">×</button>
+            </div>
+            <div class="zork-ticket-dialog-content">
+                <label for="zorkTicketTitle">Ticket Title:</label>
+                <input type="text" id="zorkTicketTitle" class="zork-ticket-input" placeholder="Enter ticket title..." autocomplete="off">
+                <label for="zorkTicketDescription">Description (optional):</label>
+                <textarea id="zorkTicketDescription" class="zork-ticket-textarea" placeholder="Enter ticket description... (Paste screenshots with Ctrl+V)" rows="4"></textarea>
+                <div id="zorkTicketError" class="zork-ticket-error hidden"></div>
+            </div>
+            <div class="zork-ticket-dialog-buttons">
+                <button id="zorkTicketSubmit" class="zork-ticket-btn zork-ticket-btn-primary">Create Ticket</button>
+                <button id="zorkTicketCancel" class="zork-ticket-btn zork-ticket-btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Context Dialog (for tickets) -->
+    <div id="addContextDialog" class="zork-ticket-dialog-overlay hidden">
+        <div class="zork-ticket-dialog">
+            <div class="zork-ticket-dialog-header">
+                <h3>Add Context</h3>
+                <button id="closeAddContextDialog" class="zork-ticket-dialog-close">×</button>
+            </div>
+            <div class="zork-ticket-dialog-content">
+                <label for="addContextInput">Add context/feedback (will resubmit ticket to Cursor):</label>
+                <textarea id="addContextInput" class="zork-ticket-textarea" placeholder="Paste screenshots with Ctrl+V" rows="6"></textarea>
+                <div id="addContextError" class="zork-ticket-error hidden"></div>
+            </div>
+            <div class="zork-ticket-dialog-buttons">
+                <button id="addContextSubmit" class="zork-ticket-btn zork-ticket-btn-primary">Submit</button>
+                <button id="addContextCancel" class="zork-ticket-btn zork-ticket-btn-secondary">Cancel</button>
             </div>
         </div>
     </div>

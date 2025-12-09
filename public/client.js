@@ -20,7 +20,7 @@ let scriptingWidgetPosition = 'top'; // 'top' or 'bottom' - which row the script
 let restartRequested = false; // Track if server restart was requested
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 let factoryWidgetVisible = false; // Factory widget is special - auto-managed
-let factoryWidgetState = { slots: [null, null], textInput: '' }; // Factory widget state
+let factoryWidgetState = { slots: [null, null, null] }; // Factory widget state (2 resource slots + 1 rune slot)
 let warehouseWidgetVisible = false; // Warehouse widget visibility (toggleable)
 let warehouseWidgetState = null; // Warehouse widget state
 let hasWarehouseDeed = false; // Track if player has any warehouse deeds
@@ -492,14 +492,22 @@ function handleMessage(data) {
             }
             // Track if we're in a warehouse room
             isInWarehouseRoom = data.room.roomType === 'warehouse';
-            // Handle factory widget state
-            if (data.factoryWidgetState !== undefined) {
-                if (data.room.roomType === 'factory') {
+            // Handle factory widget - show/hide based on room type, not just factoryWidgetState presence
+            console.log('[Factory Widget] roomUpdate - roomType:', data.room?.roomType, 'factoryWidgetState:', data.factoryWidgetState);
+            if (data.room && data.room.roomType === 'factory') {
+                // In factory room - show widget (use state if provided, otherwise use default)
+                if (data.factoryWidgetState !== undefined && data.factoryWidgetState !== null) {
                     factoryWidgetState = data.factoryWidgetState;
-                    showFactoryWidget(factoryWidgetState);
                 } else {
-                    hideFactoryWidget();
+                    // No state sent, initialize with empty state
+                    factoryWidgetState = { slots: [null, null, null] };
                 }
+                console.log('[Factory Widget] In factory room, showing widget with state:', factoryWidgetState);
+                showFactoryWidget(factoryWidgetState);
+            } else {
+                // Not in factory room - hide widget
+                console.log('[Factory Widget] Not in factory room, hiding widget');
+                hideFactoryWidget();
             }
             // Handle warehouse widget state (only if widget is toggled on)
             if (data.hasWarehouseDeed !== undefined) {
@@ -613,14 +621,22 @@ function handleMessage(data) {
             updateRoomView(data.room, data.players, data.exits, data.npcs, data.roomItems, data.showFullInfo, data.messages);
             // Track if we're in a warehouse room
             isInWarehouseRoom = data.room.roomType === 'warehouse';
-            // Handle factory widget state
-            if (data.factoryWidgetState !== undefined) {
-                if (data.room.roomType === 'factory') {
+            // Handle factory widget - show/hide based on room type, not just factoryWidgetState presence
+            console.log('[Factory Widget] moved - roomType:', data.room?.roomType, 'factoryWidgetState:', data.factoryWidgetState);
+            if (data.room && data.room.roomType === 'factory') {
+                // In factory room - show widget (use state if provided, otherwise use default)
+                if (data.factoryWidgetState !== undefined && data.factoryWidgetState !== null) {
                     factoryWidgetState = data.factoryWidgetState;
-                    showFactoryWidget(factoryWidgetState);
                 } else {
-                    hideFactoryWidget();
+                    // No state sent, initialize with empty state
+                    factoryWidgetState = { slots: [null, null, null] };
                 }
+                console.log('[Factory Widget] In factory room, showing widget with state:', factoryWidgetState);
+                showFactoryWidget(factoryWidgetState);
+            } else {
+                // Not in factory room - hide widget
+                console.log('[Factory Widget] Not in factory room, hiding widget');
+                hideFactoryWidget();
             }
             // Handle warehouse widget state (only if widget is toggled on)
             if (data.hasWarehouseDeed !== undefined) {
@@ -6424,13 +6440,18 @@ function hideNPCWidget() {
 // Show the factory widget (auto-triggered when entering factory room)
 function showFactoryWidget(state) {
     const factoryWidget = document.getElementById('widget-factory');
-    if (!factoryWidget) return;
+    if (!factoryWidget) {
+        console.error('[Factory Widget] Widget element not found: widget-factory');
+        return;
+    }
     
+    console.log('[Factory Widget] Showing factory widget with state:', state);
     factoryWidgetVisible = true;
-    factoryWidgetState = state || { slots: [null, null], textInput: '' };
+    factoryWidgetState = state || { slots: [null, null, null] }; // 3 slots: 2 resource + 1 rune
     
     updateFactoryWidgetSlots(factoryWidgetState);
     updateWidgetDisplay();
+    console.log('[Factory Widget] Widget should now be visible, factoryWidgetVisible:', factoryWidgetVisible);
 }
 
 // Hide the factory widget (auto-triggered when leaving factory room)
@@ -6443,48 +6464,26 @@ function hideFactoryWidget() {
 
 // Update factory widget slots display
 function updateFactoryWidgetSlots(state) {
-    const slot0 = document.getElementById('factory-slot-0');
-    const slot1 = document.getElementById('factory-slot-1');
-    const textInput = document.getElementById('factory-text-input');
-    
-    if (slot0) {
-        const content = slot0.querySelector('.factory-slot-content');
-        if (content) {
-            if (state.slots[0]) {
-                const slot = state.slots[0];
-                if (slot.quantity > 1) {
-                    content.textContent = `${slot.itemName} (x${slot.quantity})`;
-                } else {
-                    content.textContent = slot.itemName;
-                }
-                content.className = 'factory-slot-content filled';
+    // Update all 3 slots (2 resource slots + 1 rune slot)
+    for (let i = 0; i < 3; i++) {
+        const slotEl = document.getElementById(`factory-slot-${i}`);
+        if (!slotEl) continue;
+        
+        const content = slotEl.querySelector('.factory-slot-content');
+        if (!content) continue;
+        
+        if (state.slots && state.slots[i]) {
+            const slot = state.slots[i];
+            if (slot.quantity > 1) {
+                content.textContent = `${slot.itemName} (x${slot.quantity})`;
             } else {
-                content.textContent = '';
-                content.className = 'factory-slot-content';
+                content.textContent = slot.itemName;
             }
+            content.className = 'factory-slot-content filled';
+        } else {
+            content.textContent = '';
+            content.className = 'factory-slot-content';
         }
-    }
-    
-    if (slot1) {
-        const content = slot1.querySelector('.factory-slot-content');
-        if (content) {
-            if (state.slots[1]) {
-                const slot = state.slots[1];
-                if (slot.quantity > 1) {
-                    content.textContent = `${slot.itemName} (x${slot.quantity})`;
-                } else {
-                    content.textContent = slot.itemName;
-                }
-                content.className = 'factory-slot-content filled';
-            } else {
-                content.textContent = '';
-                content.className = 'factory-slot-content';
-            }
-        }
-    }
-    
-    if (textInput && state.textInput !== undefined) {
-        textInput.value = state.textInput;
     }
 }
 
@@ -6496,11 +6495,10 @@ function handleFactoryWidgetState(state) {
 
 // Initialize factory widget drag and drop handlers
 function initFactoryWidgetDragDrop() {
-    const slot0 = document.getElementById('factory-slot-0');
-    const slot1 = document.getElementById('factory-slot-1');
-    
-    [slot0, slot1].forEach((slot, index) => {
-        if (!slot) return;
+    // All 3 slots support drag and drop (2 resource slots + 1 rune slot)
+    for (let i = 0; i < 3; i++) {
+        const slot = document.getElementById(`factory-slot-${i}`);
+        if (!slot) continue;
         
         // Allow drop
         slot.addEventListener('dragover', (e) => {
@@ -6527,7 +6525,7 @@ function initFactoryWidgetDragDrop() {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: 'factoryWidgetAddItem',
-                        slotIndex: index,
+                        slotIndex: i,
                         itemName: itemName
                     }));
                 }
@@ -6535,7 +6533,7 @@ function initFactoryWidgetDragDrop() {
                 console.error('Error parsing drag data:', err);
             }
         });
-    });
+    }
 }
 
 // Initialize factory widget drag and drop when DOM is ready

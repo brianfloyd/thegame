@@ -23,6 +23,7 @@ import { sqlTools, handleSqlTool } from './tools/sql.js';
 import { knowledgeTools, handleKnowledgeTool } from './tools/knowledge.js';
 import { debugTools, handleDebugTool } from './tools/debugTodos.js';
 import { workTicketTools, handleWorkTicketTool } from './tools/workTickets.js';
+import { autoTicketTools, handleAutoTicketTool } from './tools/autoTickets.js';
 
 // Create server instance
 const server = new Server(
@@ -47,6 +48,7 @@ const allTools = [
   ...knowledgeTools,
   ...debugTools,
   ...workTicketTools,
+  ...autoTicketTools,
 ];
 
 // Handle list tools request
@@ -92,6 +94,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     if (name.startsWith('work_tickets_')) {
       return await handleWorkTicketTool(name, args);
+    }
+    
+    if (name.startsWith('auto_tickets_')) {
+      return await handleAutoTicketTool(name, args);
     }
 
     return {

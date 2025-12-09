@@ -122,13 +122,16 @@ For each todo:
 
 ### After Fixing
 
-1. **Mark todo as resolved:**
+1. **Mark todo as in_progress with AC (Acceptance Criteria):**
    ```
-   Call debug_update_todo with:
+   Use MCP tool: mcp_game-tests_work_tickets_update
+   Parameters:
    - id: the todo id
-   - status: "resolved"
-   - resolutionNotes: "Brief description of the fix"
+   - status: "in_progress"
+   - resolutionNotes: "IMPLEMENTATION COMPLETE - Ready for Testing\n\n[Brief description of the fix]\n\nACCEPTANCE CRITERIA:\n- [ ] [Test step 1]\n- [ ] [Test step 2]\n- [ ] [Test step 3]\n\n[Additional context or notes]"
    ```
+   **Note:** If the MCP tool is not available, use a temporary script with `database.js` to update the ticket, then delete the script.
+   **DO NOT mark as "resolved"** - the user will test and close it after verification.
 
 2. **Store knowledge about the fix:**
    ```
@@ -148,6 +151,35 @@ For each todo:
 - `debug_start_session` - Start a debug observation session
 - `debug_end_session` - End a debug session
 - `debug_get_session` - Get session details
+
+## Automatic Ticket Processing
+
+**NEW:** Tickets are now automatically processed when created! 
+
+When a ticket is created (client-side or by ZORK):
+1. A trigger file is created in `.tickets/ticket-{id}.trigger`
+2. Cursor should automatically check for new tickets and process them
+
+**Automatic Checking:**
+- **At the start of each conversation/session:** Check for new tickets using `mcp_game-tests_auto_tickets_check` with `sinceId: 0`
+- **When user creates a ticket:** Automatically check for new tickets and start processing
+- **Periodically during work:** If working on other tasks, periodically check for new high-priority tickets
+
+**To check for new tickets:**
+```
+Use MCP tool: mcp_game-tests_auto_tickets_check
+Parameters:
+- sinceId: Last processed ticket ID (track this internally, start with 0)
+- limit: 10 (default)
+```
+
+**When new tickets are detected:**
+- Automatically start processing them (don't wait for user command)
+- Process in priority order (Critical → High → Medium → Low)
+- Follow the standard ticket workflow below
+
+**Manual Processing:**
+If you need to manually trigger ticket processing, use the "work tickets" command below.
 
 ## Work Tickets Command
 
@@ -175,11 +207,13 @@ When user says "work tickets", "debug tickets", "process tickets", "fix tickets"
         - Check relevant handler or component
         - Implement the fix
         - Test locally if possible
-     e. Mark ticket as resolved:
-        - Call `debug_update_todo` with:
+     e. Mark ticket as in_progress with AC (Acceptance Criteria):
+        - Use MCP tool: `mcp_game-tests_work_tickets_update` with:
           - `id`: the ticket ID
-          - `status`: "resolved"
-          - `resolutionNotes`: "Brief description of the fix"
+          - `status`: "in_progress"
+          - `resolutionNotes`: "IMPLEMENTATION COMPLETE - Ready for Testing\n\n[Brief description of the fix]\n\nACCEPTANCE CRITERIA:\n- [ ] [Test step 1]\n- [ ] [Test step 2]\n- [ ] [Test step 3]\n\n[Additional context or notes]"
+        - **If MCP tool unavailable:** Create temporary script using `database.js` to update ticket, then delete script
+        - DO NOT mark as "resolved" - let the user test and close it
      f. Store knowledge about the fix:
         - Call `knowledge_add` with:
           - `title`: "Bug Fix: [brief description]"

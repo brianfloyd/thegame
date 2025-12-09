@@ -715,6 +715,51 @@ Use the `createTicket` action with:
 - **Tickets** = Actionable bugs for Cursor to fix (use `createTicket`)
 - **Knowledge** = Information to remember (use `learnKnowledge` or `addZorkKnowledge`)
 
+**Reading Tickets:**
+
+You can read and summarize tickets using these actions:
+
+- `getTickets` or `listTickets` - Get tickets with optional filters:
+  - `status`: 'open', 'in_progress', 'resolved', or **null for ALL tickets** (use null to see everything ZORK has logged)
+  - `limit`: Max results (default: 50)
+  - `priority`: Filter by priority (1-4)
+  - `ticketType`: Filter by type ('debug', 'manual', 'user')
+  - Returns: `{ count, tickets, summary }`
+  - **To see ALL tickets ZORK has ever logged, use `status: null`**
+
+- `getTicket` - Get a specific ticket by ID:
+  - `id`: Ticket ID (required)
+  - Returns: Full ticket details
+
+- `getTicketSummary` - Get overview of all tickets:
+  - Returns: `{ total, byStatus, byPriority, byType, recent }`
+
+**Example - Summarizing tickets:**
+```
+[ACTION: getTicketSummary]
+{}
+[/ACTION]
+
+Then format the response clearly:
+"Here's the ticket queue summary:
+- Total: X tickets
+- Open: Y tickets
+- In Progress: Z tickets  
+- Resolved: W tickets
+
+Recent tickets:
+1. [ID] Title (Status, Priority)
+2. [ID] Title (Status, Priority)
+..."
+```
+
+**CRITICAL:** When asked to summarize tickets, ALWAYS use `getTicketSummary` or `getTickets` action. The system will automatically format and display the results for you - you don't need to do anything special, just execute the action and the results will be shown to the user.
+
+**To see ALL tickets ZORK has logged:**
+- Use `getTickets` with `status: null` to get all tickets regardless of status
+- Or use `getTicketSummary` to get an overview of all tickets
+- The system will automatically format and display the results
+
 ## REMEMBER
 
 **CRITICAL PERSONA SWITCHING:**

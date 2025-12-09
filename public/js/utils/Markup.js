@@ -518,13 +518,36 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         }
         result = processed;
     } else {
-        // No markdown HTML - escape everything as before
-        result = escapeHtml(result);
+        // No markdown HTML - but we still need to preserve typewriter placeholders
+        // Replace typewriter placeholders BEFORE escaping
+        typewriterBlocks.forEach((span, index) => {
+            const placeholder = `__TYPEWRITER_${index}__`;
+            const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+            result = result.replace(regex, span);
+        });
+        // Now escape the remaining text (but typewriter spans are already safe HTML)
+        // Split by HTML tags to preserve them
+        const parts = result.split(/(<[^>]*>)/);
+        let processed = '';
+        for (const part of parts) {
+            if (part.startsWith('<') && part.endsWith('>')) {
+                // HTML tag (including typewriter spans) - preserve it
+                processed += part;
+            } else if (part) {
+                // Text content - escape it
+                processed += escapeHtml(part);
+            }
+        }
+        result = processed;
     }
     
-    // Replace typewriter placeholders with actual spans (they're already safe HTML)
+    // If we still have typewriter placeholders (shouldn't happen, but just in case)
     typewriterBlocks.forEach((span, index) => {
-        result = result.replace(`__TYPEWRITER_${index}__`, span);
+        const placeholder = `__TYPEWRITER_${index}__`;
+        if (result.includes(placeholder)) {
+            const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+            result = result.replace(regex, span);
+        }
     });
     
     // SECOND: Process line-start patterns (after regular markup is processed)

@@ -1780,6 +1780,145 @@ body {
     color: #006600;
 }
 
+/* ZORK Interface Icon */
+.zork-icon {
+    width: 32px;
+    height: 32px;
+    border: 2px solid #333;
+    border-radius: 6px;
+    background: #0a0a0a;
+    color: #00ff00;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 10px;
+    padding: 0;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+}
+
+.zork-icon:hover {
+    border-color: #00ff00;
+    color: #00ff00;
+    background: #001a00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.zork-icon:active {
+    background: #003300;
+    box-shadow: 0 0 12px rgba(0, 255, 0, 0.5);
+}
+
+.zork-icon svg text {
+    user-select: none;
+    pointer-events: none;
+}
+
+/* Microphone Icon */
+.mic-icon {
+    width: 32px;
+    height: 32px;
+    border: 2px solid #333;
+    border-radius: 6px;
+    background: #0a0a0a;
+    color: #444;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 10px;
+    padding: 0;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.mic-icon:hover {
+    border-color: #666;
+    color: #888;
+    background: #1a1a1a;
+}
+
+.mic-icon.recording {
+    border-color: #ff0000;
+    color: #ff0000;
+    background: #1a0000;
+    animation: pulse-recording 1.5s ease-in-out infinite;
+}
+
+.mic-icon.recording svg {
+    filter: drop-shadow(0 0 4px #ff0000);
+}
+
+@keyframes pulse-recording {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7);
+    }
+    50% {
+        opacity: 0.8;
+        box-shadow: 0 0 0 8px rgba(255, 0, 0, 0);
+    }
+}
+
+.mic-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mic-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Ticket Creation Feedback (Bespoke, not system messages) */
+.ticket-feedback-info,
+.ticket-feedback-error {
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    animation: slideInFeedback 0.3s ease-out;
+}
+
+.ticket-feedback-info {
+    background: rgba(0, 255, 0, 0.1);
+    border-left: 3px solid #00ff00;
+    color: #00ff00;
+}
+
+.ticket-feedback-error {
+    background: rgba(255, 0, 0, 0.1);
+    border-left: 3px solid #ff0000;
+    color: #ff0000;
+}
+
+.ticket-feedback-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.ticket-feedback-text {
+    flex: 1;
+}
+
+@keyframes slideInFeedback {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
 /* Scroll Lock Icon */
 .scroll-lock-icon {
     width: 32px;
@@ -2478,6 +2617,69 @@ body {
     flex-direction: column;
     gap: 4px;
     transition: border-color 0.2s;
+    position: relative;
+}
+
+/* Supply slot (ingredient) - rectangular */
+.factory-slot-supply {
+    width: 100%;
+}
+
+/* Rune slots container */
+.factory-rune-slots {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    margin-top: 10px; /* Space between ingredient slots and rune slots */
+}
+
+/* Rune slots - diamond shape */
+.factory-slot-rune {
+    width: 60px; /* Same width as ingredient slot height */
+    height: 60px;
+    min-height: 60px;
+    border-radius: 0;
+    padding: 4px;
+    transform: rotate(45deg);
+    border: 2px dashed #00ff00;
+    position: relative;
+    flex-shrink: 0;
+}
+
+/* Content inside diamond (rotated back) */
+.factory-slot-rune .factory-slot-content {
+    transform: rotate(-45deg);
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em; /* Smaller text for diamond */
+    word-break: break-word;
+    text-align: center;
+}
+
+/* Empty button in diamond (rotated back) */
+.factory-slot-rune .factory-slot-empty-btn {
+    transform: rotate(-45deg);
+    top: 2px;
+    right: 2px;
+}
+
+/* Rune slot with colored background (when rune is placed) */
+.factory-slot-rune-colored {
+    border: 2px solid !important;
+    border-style: solid !important;
+    /* Use CSS variable if set, otherwise fall back to inline style */
+    background: var(--rune-color, inherit) !important;
+}
+
+/* Ensure content inside colored rune slot is transparent */
+.factory-slot-rune-colored .factory-slot-content {
+    background: transparent !important;
+    border: none !important;
 }
 
 .factory-slot.drag-over {
@@ -2506,6 +2708,36 @@ body {
 .factory-slot-content.filled {
     color: #00ff00;
     font-weight: bold;
+}
+
+.factory-slot-empty-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 24px;
+    height: 24px;
+    background: rgba(255, 0, 0, 0.3);
+    border: 1px solid #ff0000;
+    color: #ff0000;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    display: none; /* Hidden by default, shown when slot has items */
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.factory-slot-empty-btn:hover {
+    background: rgba(255, 0, 0, 0.5);
+    border-color: #ff6666;
+    color: #ff6666;
+    transform: scale(1.1);
+}
+
+.factory-slot-empty-btn:active {
+    transform: scale(0.95);
 }
 
 .factory-slot-text {
@@ -3747,6 +3979,906 @@ body {
 .dialog-content label {
     display: block;
     color: #00ffff;
+}
+
+/* ZORK Ticket Creation Dialog (Bespoke, matches game aesthetic) */
+.zork-ticket-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 5000; /* Higher than ticket manager (4000) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+}
+
+.zork-ticket-dialog-overlay.hidden {
+    display: none;
+}
+
+.zork-ticket-dialog {
+    background: #0a0a0a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    padding: 0;
+    min-width: 500px;
+    max-width: 600px;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    animation: slideInTicketDialog 0.3s ease-out;
+}
+
+@keyframes slideInTicketDialog {
+    from {
+        opacity: 0;
+        transform: scale(0.9) translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.zork-ticket-dialog-header {
+    padding: 15px 20px;
+    border-bottom: 2px solid #00ff00;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.zork-ticket-dialog-header h3 {
+    color: #ffff00;
+    margin: 0;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.zork-ticket-dialog-close {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.zork-ticket-dialog-close:hover {
+    color: #ffff00;
+    transform: scale(1.2);
+}
+
+.zork-ticket-dialog-content {
+    padding: 20px;
+}
+
+.zork-ticket-dialog-content label {
+    display: block;
+    color: #00ffff;
+    margin-bottom: 8px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.zork-ticket-input,
+.zork-ticket-textarea {
+    width: 100%;
+    background: #1a1a1a;
+    border: 2px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    padding: 10px;
+    font-size: 14px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.zork-ticket-input:focus,
+.zork-ticket-textarea:focus {
+    outline: none;
+    border-color: #00ff00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.zork-ticket-textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.zork-ticket-error {
+    color: #ff0000;
+    font-size: 12px;
+    margin-top: 10px;
+    padding: 8px;
+    background: rgba(255, 0, 0, 0.1);
+    border-left: 3px solid #ff0000;
+    border-radius: 4px;
+}
+
+.zork-ticket-error.hidden {
+    display: none;
+}
+
+.zork-ticket-dialog-buttons {
+    padding: 15px 20px;
+    border-top: 2px solid #00ff00;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.zork-ticket-btn {
+    padding: 10px 20px;
+    border: 2px solid #00ff00;
+    background: #0a0a0a;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+    min-width: 100px;
+}
+
+.zork-ticket-btn:hover {
+    background: rgba(0, 255, 0, 0.1);
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    transform: translateY(-1px);
+}
+
+.zork-ticket-btn:active {
+    transform: translateY(0);
+}
+
+.zork-ticket-btn-primary {
+    border-color: #00ff00;
+    color: #00ff00;
+}
+
+.zork-ticket-btn-secondary {
+    border-color: #666;
+    color: #888;
+}
+
+.zork-ticket-btn-secondary:hover {
+    border-color: #888;
+    color: #aaa;
+    box-shadow: 0 0 10px rgba(136, 136, 136, 0.3);
+}
+
+/* Tickets Widget Styles */
+.tickets-tabs {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.ticket-tab-btn {
+    padding: 6px 12px;
+    background: rgba(0, 255, 0, 0.1);
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    transition: all 0.2s;
+}
+
+.ticket-tab-btn:hover {
+    background: rgba(0, 255, 0, 0.2);
+    border-color: #ffff00;
+    color: #ffff00;
+}
+
+.ticket-tab-btn.active {
+    background: #00ff00;
+    color: #000;
+    font-weight: bold;
+}
+
+.tickets-tab-content {
+    margin-top: 10px;
+}
+
+.tickets-tab-title {
+    color: #ffff00;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.tickets-widget-header {
+    padding: 10px;
+    border-bottom: 2px solid #00ff00;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.tickets-widget-header h3 {
+    color: #ffff00;
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    text-transform: uppercase;
+}
+
+.tickets-filters {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.ticket-filter-btn {
+    padding: 5px 10px;
+    border: 1px solid #333;
+    background: #0a0a0a;
+    color: #888;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.ticket-filter-btn:hover {
+    border-color: #00ff00;
+    color: #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.ticket-filter-btn.active {
+    border-color: #00ff00;
+    color: #00ff00;
+    background: rgba(0, 255, 0, 0.15);
+}
+
+.tickets-list {
+    padding: 10px;
+    overflow-y: auto;
+    max-height: calc(100% - 80px);
+}
+
+.tickets-empty {
+    color: #666;
+    text-align: center;
+    padding: 20px;
+    font-style: italic;
+}
+
+.ticket-item {
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: rgba(0, 255, 0, 0.02);
+    transition: all 0.2s;
+}
+
+.ticket-item:hover {
+    border-color: #00ff00;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.ticket-item.cursor-working {
+    border-color: #ffff00;
+    background: rgba(255, 255, 0, 0.05);
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.2);
+    animation: cursor-working-pulse 2s ease-in-out infinite;
+}
+
+@keyframes cursor-working-pulse {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(255, 255, 0, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 15px rgba(255, 255, 0, 0.4);
+    }
+}
+
+.cursor-working-indicator {
+    color: #ffff00;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: auto;
+    animation: cursor-blink 1.5s ease-in-out infinite;
+}
+
+@keyframes cursor-blink {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.ticket-updated {
+    color: #00ffff;
+    font-size: 10px;
+}
+
+.ticket-resolution-preview {
+    background: rgba(255, 255, 0, 0.1);
+    border-left: 3px solid #ffff00;
+    padding: 8px;
+    margin: 8px 0;
+    color: #ffff00;
+    font-size: 11px;
+    line-height: 1.4;
+    border-radius: 3px;
+}
+
+.ticket-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+}
+
+.ticket-status {
+    font-size: 14px;
+}
+
+.ticket-id {
+    color: #00ffff;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.ticket-title {
+    flex: 1;
+    color: #00ff00;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.ticket-priority {
+    color: #ffff00;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.ticket-meta {
+    display: flex;
+    gap: 10px;
+    font-size: 10px;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.ticket-description {
+    color: #888;
+    font-size: 11px;
+    margin: 5px 0;
+    line-height: 1.4;
+}
+
+.ticket-actions {
+    display: flex;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+.ticket-action-btn {
+    padding: 4px 8px;
+    border: 1px solid #333;
+    background: #0a0a0a;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.ticket-action-btn:hover {
+    border-color: #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+}
+
+/* Ticket Details Dialog */
+.ticket-details-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+}
+
+.ticket-details-dialog-overlay.hidden {
+    display: none;
+}
+
+.ticket-details-dialog {
+    background: #0a0a0a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    padding: 0;
+    min-width: 600px;
+    max-width: 800px;
+    max-height: 80vh;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+}
+
+.ticket-details-content {
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.ticket-details-header {
+    padding: 15px 20px;
+    border-bottom: 2px solid #00ff00;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.ticket-details-header h3 {
+    color: #ffff00;
+    margin: 0;
+    font-size: 16px;
+    text-transform: uppercase;
+}
+
+.ticket-details-close {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.ticket-details-close:hover {
+    color: #ffff00;
+    transform: scale(1.2);
+}
+
+.ticket-detail-row {
+    margin-bottom: 10px;
+    font-size: 13px;
+}
+
+.ticket-detail-row strong {
+    color: #00ffff;
+    margin-right: 8px;
+}
+
+.ticket-detail-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #333;
+}
+
+.ticket-detail-section strong {
+    color: #00ffff;
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.ticket-detail-text {
+    color: #888;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* ZORK Ticket Manager - Comprehensive Management UI */
+.zork-ticket-manager-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+}
+
+.zork-ticket-manager-overlay.hidden {
+    display: none;
+}
+
+.zork-ticket-manager {
+    background: #0a0a0a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    width: 95%;
+    max-width: 1400px;
+    height: 90%;
+    max-height: 900px;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0 0 30px rgba(0, 255, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    animation: slideInTicketManager 0.3s ease-out;
+}
+
+@keyframes slideInTicketManager {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.zork-ticket-manager-header {
+    padding: 15px 20px;
+    border-bottom: 2px solid #00ff00;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 255, 0, 0.05);
+    flex-shrink: 0;
+}
+
+.zork-ticket-manager-header h2 {
+    color: #ffff00;
+    margin: 0;
+    font-size: 18px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.zork-ticket-manager-close {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    font-size: 32px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+    width: 35px;
+    height: 35px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.zork-ticket-manager-close:hover {
+    color: #ffff00;
+    transform: scale(1.2);
+}
+
+.zork-ticket-manager-toolbar {
+    padding: 15px 20px;
+    border-bottom: 2px solid #00ff00;
+    background: rgba(0, 255, 0, 0.03);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    flex-shrink: 0;
+}
+
+.zork-ticket-manager-filters {
+    display: flex;
+    gap: 8px;
+}
+
+.zork-ticket-manager-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.ticket-search-input {
+    padding: 8px 12px;
+    background: #1a1a1a;
+    border: 2px solid #333;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    border-radius: 4px;
+    min-width: 200px;
+    transition: border-color 0.2s;
+}
+
+.ticket-search-input:focus {
+    outline: none;
+    border-color: #00ff00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.ticket-action-btn-primary {
+    padding: 8px 16px;
+    border: 2px solid #00ff00;
+    background: rgba(0, 255, 0, 0.1);
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+}
+
+.ticket-action-btn-primary:hover {
+    background: rgba(0, 255, 0, 0.2);
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.zork-ticket-manager-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.zork-ticket-manager-sidebar {
+    width: 350px;
+    border-right: 2px solid #00ff00;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.ticket-manager-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.ticket-manager-loading,
+.ticket-manager-empty {
+    color: #666;
+    text-align: center;
+    padding: 40px 20px;
+    font-style: italic;
+}
+
+.ticket-manager-item {
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 8px;
+    background: rgba(0, 255, 0, 0.02);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.ticket-manager-item:hover {
+    border-color: #00ff00;
+    background: rgba(0, 255, 0, 0.08);
+}
+
+.ticket-manager-item.selected {
+    border-color: #ffff00;
+    background: rgba(255, 255, 0, 0.1);
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.3);
+}
+
+.ticket-manager-item.cursor-working {
+    border-color: #ffff00;
+    background: rgba(255, 255, 0, 0.05);
+    box-shadow: 0 0 10px rgba(255, 255, 0, 0.2);
+    animation: cursor-working-pulse 2s ease-in-out infinite;
+}
+
+.ticket-manager-item.cursor-working:hover {
+    border-color: #ffff00;
+    background: rgba(255, 255, 0, 0.1);
+    box-shadow: 0 0 15px rgba(255, 255, 0, 0.4);
+}
+
+.ticket-manager-item-header .cursor-working-indicator {
+    color: #ffff00;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: auto;
+    animation: cursor-blink 1.5s ease-in-out infinite;
+}
+
+.ticket-manager-item-meta .ticket-updated {
+    color: #00ffff;
+    font-size: 10px;
+}
+
+.ticket-resolution-preview {
+    background: rgba(255, 255, 0, 0.1);
+    border-left: 3px solid #ffff00;
+    padding: 8px;
+    margin: 8px 0;
+    color: #ffff00;
+    font-size: 11px;
+    line-height: 1.4;
+    border-radius: 3px;
+}
+
+.ticket-manager-item.critical {
+    border-left: 4px solid #ff0000;
+}
+
+.ticket-manager-item.high {
+    border-left: 4px solid #ff8800;
+}
+
+.ticket-manager-item-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.ticket-manager-status {
+    font-size: 14px;
+}
+
+.ticket-manager-id {
+    color: #00ffff;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.ticket-manager-priority {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.ticket-manager-priority.critical {
+    background: rgba(255, 0, 0, 0.2);
+    color: #ff0000;
+}
+
+.ticket-manager-priority.high {
+    background: rgba(255, 136, 0, 0.2);
+    color: #ff8800;
+}
+
+.ticket-manager-item-title {
+    color: #00ff00;
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 4px;
+    line-height: 1.4;
+}
+
+.ticket-manager-item-meta {
+    display: flex;
+    gap: 10px;
+    font-size: 10px;
+    color: #666;
+}
+
+.zork-ticket-manager-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.ticket-manager-details {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.ticket-details-header {
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #333;
+}
+
+.ticket-details-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.ticket-details-title-row h3 {
+    color: #00ff00;
+    margin: 0;
+    font-size: 16px;
+    flex: 1;
+}
+
+.ticket-details-status {
+    font-size: 20px;
+}
+
+.ticket-details-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ticket-status-badge,
+.ticket-priority-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
+.ticket-status-badge.ticket-status-open {
+    background: rgba(255, 0, 0, 0.2);
+    color: #ff0000;
+}
+
+.ticket-status-badge.ticket-status-in_progress {
+    background: rgba(255, 255, 0, 0.2);
+    color: #ffff00;
+}
+
+.ticket-status-badge.ticket-status-resolved {
+    background: rgba(0, 255, 0, 0.2);
+    color: #00ff00;
+}
+
+.ticket-priority-badge.ticket-priority-1 {
+    background: rgba(136, 136, 136, 0.2);
+    color: #888;
+}
+
+.ticket-priority-badge.ticket-priority-2 {
+    background: rgba(0, 255, 0, 0.2);
+    color: #00ff00;
+}
+
+.ticket-priority-badge.ticket-priority-3 {
+    background: rgba(255, 136, 0, 0.2);
+    color: #ff8800;
+}
+
+.ticket-priority-badge.ticket-priority-4 {
+    background: rgba(255, 0, 0, 0.2);
+    color: #ff0000;
+}
     margin-bottom: 5px;
     font-size: 12px;
 }

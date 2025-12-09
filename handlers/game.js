@@ -679,7 +679,21 @@ async function move(ctx, data) {
     return;
   }
 
-  const direction = data.direction.toUpperCase();
+  const direction = data.direction ? data.direction.toUpperCase() : null;
+  
+  // Validate that direction is provided and is a valid movement direction
+  if (!direction) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Direction is required' }));
+    return;
+  }
+  
+  // Only process up/down if this is explicitly a move command with U/D/UP/DOWN
+  // This prevents false positives from commands like "look up" or "pick up"
+  const validDirections = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'U', 'UP', 'D', 'DOWN'];
+  if (!validDirections.includes(direction)) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction' }));
+    return;
+  }
   
   // Check if current room has a map connection in this direction
   let targetRoom = null;
@@ -720,13 +734,12 @@ async function move(ctx, data) {
       targetX -= 1;
       targetY -= 1;
     } else if (direction === 'U' || direction === 'UP') {
+      // Only show this message if it's explicitly a move command with up/down
       ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
       return;
     } else if (direction === 'D' || direction === 'DOWN') {
+      // Only show this message if it's explicitly a move command with up/down
       ws.send(JSON.stringify({ type: 'error', message: 'Up/Down movement not yet implemented' }));
-      return;
-    } else {
-      ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction' }));
       return;
     }
 
@@ -882,19 +895,16 @@ async function move(ctx, data) {
     const existingState = factoryWidgetState.get(connectionId);
     if (existingState && existingState.roomId === targetRoom.id) {
       factoryState = {
-        slots: existingState.slots,
-        textInput: existingState.textInput || ''
+        slots: existingState.slots.length === 5 ? existingState.slots : [...existingState.slots, null, null, null, null].slice(0, 5) // Ensure 5 slots
       };
     } else {
       // Initialize empty factory state
       factoryState = {
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null, null, null] // 5 slots: 2 supply + 3 rune
       };
       factoryWidgetState.set(connectionId, {
         roomId: targetRoom.id,
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null, null, null] // 5 slots: 2 supply + 3 rune
       });
     }
   } else {
@@ -1432,8 +1442,8 @@ async function factoryWidgetAddItem(ctx, data) {
   }
   
   const slotIndex = data.slotIndex;
-  if (slotIndex !== 0 && slotIndex !== 1) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index.' }));
+  if (slotIndex !== 0 && slotIndex !== 1 && slotIndex !== 2 && slotIndex !== 3 && slotIndex !== 4) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index. Must be 0, 1, 2, 3, or 4.' }));
     return;
   }
   
@@ -1445,10 +1455,17 @@ async function factoryWidgetAddItem(ctx, data) {
   
   // Check player has the item in inventory
   const playerItems = await db.getPlayerItems(player.id);
-  const item = playerItems.find(i => i.item_name.toLowerCase() === itemName.toLowerCase());
+  const inventoryItem = playerItems.find(i => i.item_name.toLowerCase() === itemName.toLowerCase());
   
-  if (!item || item.quantity < 1) {
+  if (!inventoryItem || inventoryItem.quantity < 1) {
     ws.send(JSON.stringify({ type: 'error', message: `You don't have "${itemName}".` }));
+    return;
+  }
+  
+  // Get full item data (including item_type and rune_color)
+  const itemData = await db.getItemByName(itemName);
+  if (!itemData) {
+    ws.send(JSON.stringify({ type: 'error', message: `Item "${itemName}" not found in database.` }));
     return;
   }
   
@@ -1457,8 +1474,7 @@ async function factoryWidgetAddItem(ctx, data) {
   if (!factoryState || factoryState.roomId !== currentRoom.id) {
     factoryState = {
       roomId: currentRoom.id,
-      slots: [null, null],
-      textInput: ''
+      slots: [null, null, null, null, null] // 5 slots: 2 supply slots + 3 rune slots
     };
     factoryWidgetState.set(connectionId, factoryState);
   }
@@ -1467,34 +1483,35 @@ async function factoryWidgetAddItem(ctx, data) {
   const currentSlot = factoryState.slots[slotIndex];
   if (currentSlot !== null) {
     // Slot is occupied - check if it's the same item type
-    if (currentSlot.itemName.toLowerCase() !== item.item_name.toLowerCase()) {
+    if (currentSlot.itemName.toLowerCase() !== itemData.item_name.toLowerCase()) {
       ws.send(JSON.stringify({ type: 'error', message: 'That slot already contains a different item type.' }));
       return;
     }
     // Same item type - will stack
   }
   
-  // Remove 1 item from player inventory
-  await db.removePlayerItem(player.id, item.item_name, 1);
-  
   // Add item to slot (stack if same type, or create new entry)
-  if (currentSlot && currentSlot.itemName.toLowerCase() === item.item_name.toLowerCase()) {
+  if (currentSlot && currentSlot.itemName.toLowerCase() === inventoryItem.item_name.toLowerCase()) {
     // Stack: increase quantity
     currentSlot.quantity += 1;
   } else {
-    // New item in slot
+    // New item in slot - include item_type and rune_color for display
     factoryState.slots[slotIndex] = {
-      itemName: item.item_name,
-      quantity: 1
+      itemName: inventoryItem.item_name,
+      quantity: 1,
+      itemType: itemData.item_type,
+      runeColor: itemData.rune_color || null
     };
   }
+  
+  // Remove 1 item from player inventory
+  await db.removePlayerItem(player.id, inventoryItem.item_name, 1);
   
   // Send updated factory widget state
   ws.send(JSON.stringify({
     type: 'factoryWidgetState',
     state: {
-      slots: factoryState.slots,
-      textInput: factoryState.textInput
+      slots: factoryState.slots // 5 slots: 2 supply + 3 rune
     }
   }));
   
@@ -1504,6 +1521,73 @@ async function factoryWidgetAddItem(ctx, data) {
   
   // Send updated player stats (encumbrance changed)
   await sendPlayerStats(connectedPlayers, db, connectionId);
+}
+
+/**
+ * Handle factory widget remove item (empty slot)
+ */
+async function factoryWidgetRemoveItem(ctx, data) {
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  // Validate player is in factory room
+  if (currentRoom.room_type !== 'factory') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a factory room to use the machine.' }));
+    return;
+  }
+  
+  const slotIndex = data.slotIndex;
+  if (slotIndex !== 0 && slotIndex !== 1 && slotIndex !== 2 && slotIndex !== 3 && slotIndex !== 4) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid slot index. Must be 0, 1, 2, 3, or 4.' }));
+    return;
+  }
+  
+  // Get factory widget state
+  let factoryState = factoryWidgetState.get(connectionId);
+  if (!factoryState || factoryState.roomId !== currentRoom.id) {
+    ws.send(JSON.stringify({ type: 'error', message: 'No items in factory machine.' }));
+    return;
+  }
+  
+  const slot = factoryState.slots[slotIndex];
+  if (!slot || !slot.itemName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'That slot is already empty.' }));
+    return;
+  }
+  
+  // Return items to player inventory
+  await db.addPlayerItem(player.id, slot.itemName, slot.quantity);
+  
+  // Clear the slot
+  factoryState.slots[slotIndex] = null;
+  
+  // Send updated factory widget state
+  ws.send(JSON.stringify({
+    type: 'factoryWidgetState',
+    state: {
+      slots: factoryState.slots // 5 slots: 2 supply + 3 rune
+    }
+  }));
+  
+  // Send updated inventory
+  const updatedItems = await db.getPlayerItems(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+  
+  // Send updated player stats (encumbrance changed)
+  await sendPlayerStats(connectedPlayers, db, connectionId);
+  
+  console.log(`[Factory] Player ${playerName} emptied slot ${slotIndex}, returned ${slot.quantity}x ${slot.itemName} to inventory`);
 }
 
 /**
@@ -5474,6 +5558,215 @@ async function continuePathExecution(ctx, data) {
 // ============================================================================
 
 /**
+ * Handle create ZORK ticket from user interface
+ */
+async function createZorkTicket(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { title, description, priority = 2, ticketType = 'user' } = data;
+  
+  if (!title || !title.trim()) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Ticket title is required' }));
+    return;
+  }
+  
+  try {
+    const ticket = await db.createDebugTodo({
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      priority: priority,
+      ticket_type: ticketType,
+      status: 'open',
+      created_by: playerData.playerName, // Use actual player name, not 'user'
+      player_id: playerData.playerId,
+      player_name: playerData.playerName
+    });
+    
+    ws.send(JSON.stringify({
+      type: 'zorkTicketCreated',
+      ticketId: ticket.id,
+      message: `Ticket #${ticket.id} created successfully. ZORK will review it shortly.`
+    }));
+    
+    console.log(`[ZORK Ticket] Created ticket #${ticket.id} by ${playerData.playerName}: ${title}`);
+    
+    // Create trigger file for auto-ticket processor
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const ticketsDir = path.join(__dirname, '..', '.tickets');
+      
+      // Ensure directory exists
+      if (!fs.existsSync(ticketsDir)) {
+        fs.mkdirSync(ticketsDir, { recursive: true });
+      }
+      
+      // Create trigger file
+      const triggerFile = path.join(ticketsDir, `ticket-${ticket.id}.trigger`);
+      fs.writeFileSync(triggerFile, JSON.stringify({
+        ticketId: ticket.id,
+        title: ticket.title,
+        priority: ticket.priority,
+        ticketType: ticketType,
+        createdBy: playerData.playerName,
+        timestamp: new Date().toISOString()
+      }, null, 2));
+      
+      console.log(`[ZORK Ticket] Created trigger file for auto-processing: ${triggerFile}`);
+    } catch (triggerError) {
+      // Don't fail ticket creation if trigger file creation fails
+      console.warn('[ZORK Ticket] Failed to create trigger file (non-fatal):', triggerError.message);
+    }
+  } catch (error) {
+    console.error('[ZORK Ticket] Error creating ticket:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to create ticket: ' + error.message }));
+  }
+}
+
+/**
+ * Get tickets for user (with filters)
+ */
+async function getTickets(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { status = null, limit = 100, includeResolved = false } = data;
+  
+  try {
+    let tickets;
+    if (status) {
+      tickets = await db.listDebugTodos({ status, limit });
+    } else {
+      tickets = await db.listDebugTodos({ limit: limit * 2 }); // Get more to filter
+    }
+    
+    // Filter out resolved if not requested
+    if (!includeResolved) {
+      tickets = tickets.filter(t => t.status !== 'resolved');
+    }
+    
+    // Limit results
+    tickets = tickets.slice(0, limit);
+    
+    ws.send(JSON.stringify({
+      type: 'ticketsList',
+      tickets: tickets,
+      count: tickets.length
+    }));
+  } catch (error) {
+    console.error('[Tickets] Error getting tickets:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get tickets: ' + error.message }));
+  }
+}
+
+/**
+ * Update ticket (status, feedback, etc.)
+ */
+async function updateTicket(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { ticketId, status, feedback, resolutionNotes } = data;
+  
+  if (!ticketId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Ticket ID is required' }));
+    return;
+  }
+  
+  try {
+    const updates = {};
+    if (status) updates.status = status;
+    if (feedback) {
+      // Append feedback to resolution notes
+      const ticket = await db.getDebugTodo(ticketId);
+      const existingNotes = ticket?.resolution_notes || '';
+      const feedbackText = `\n\n[Feedback from ${playerData.playerName}]: ${feedback}`;
+      updates.resolutionNotes = existingNotes + feedbackText;
+    }
+    if (resolutionNotes) updates.resolutionNotes = resolutionNotes;
+    
+    const updated = await db.updateDebugTodo(ticketId, updates);
+    
+    if (!updated) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Ticket not found' }));
+      return;
+    }
+    
+    ws.send(JSON.stringify({
+      type: 'ticketUpdated',
+      ticketId: updated.id,
+      ticket: updated
+    }));
+    
+    console.log(`[Tickets] Updated ticket #${ticketId} by ${playerData.playerName}`);
+  } catch (error) {
+    console.error('[Tickets] Error updating ticket:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to update ticket: ' + error.message }));
+  }
+}
+
+/**
+ * Add feedback to a ticket (for work tickets workflow)
+ */
+async function addTicketFeedback(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const { ticketId, feedback } = data;
+  
+  if (!ticketId || !feedback) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Ticket ID and feedback are required' }));
+    return;
+  }
+  
+  try {
+    const ticket = await db.getDebugTodo(ticketId);
+    if (!ticket) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Ticket not found' }));
+      return;
+    }
+    
+    const existingNotes = ticket.resolution_notes || '';
+    const feedbackText = `\n\n[Feedback from ${playerData.playerName} at ${new Date().toISOString()}]:\n${feedback}`;
+    const updated = await db.updateDebugTodo(ticketId, {
+      resolutionNotes: existingNotes + feedbackText
+    });
+    
+    ws.send(JSON.stringify({
+      type: 'ticketFeedbackAdded',
+      ticketId: updated.id,
+      message: 'Feedback added successfully'
+    }));
+    
+    console.log(`[Tickets] Added feedback to ticket #${ticketId} by ${playerData.playerName}`);
+  } catch (error) {
+    console.error('[Tickets] Error adding feedback:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to add feedback: ' + error.message }));
+  }
+}
+
+/**
  * Start or stop a debug observation session
  * Client will stream telemetry when session is active
  */
@@ -5620,6 +5913,7 @@ module.exports = {
   take,
   drop,
   factoryWidgetAddItem,
+  factoryWidgetRemoveItem,
   harvest,
   attune,
   resonate,
@@ -5649,6 +5943,10 @@ module.exports = {
   calculateAutoPath,
   startAutoNavigation,
   observeBug,
-  clientDebugEvent
+  clientDebugEvent,
+  createZorkTicket,
+  getTickets,
+  updateTicket,
+  addTicketFeedback
 };
 

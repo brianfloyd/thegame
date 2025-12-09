@@ -332,6 +332,14 @@ function handleDisconnect(code, reason) {
     return;
   }
   
+  // CRITICAL FIX: If we're already connected AND in the world (have a currentRoomId),
+  // this disconnect is likely just the server cleaning up during nodemon restart.
+  // Don't trigger reconnection - we're already successfully in the world.
+  if (client?.connected && currentRoomId !== null) {
+    console.log(`[ZORK] Already connected and in world (Room ${currentRoomId}). Ignoring disconnect (code: ${code}) - likely server cleanup during restart.`);
+    return;
+  }
+  
   // Code 1006 = abnormal closure (server restart/crash)
   // Code 1000 = normal closure (but during nodemon restart, this can also mean server restart)
   // Code 1001 = going away (server restart)
@@ -525,6 +533,12 @@ function handleRoomUpdate(message) {
   if (message.room) {
     currentRoom = message.room;
     currentRoomId = message.room.id;
+    // When we receive a room update, we're successfully in the world
+    // Reset reconnecting flag if it was set, since we're clearly connected
+    if (isReconnecting) {
+      console.log(`[ZORK] Received room update (Room ${currentRoomId}) - we're in the world, clearing reconnecting flag`);
+      isReconnecting = false;
+    }
   }
 }
 
@@ -778,7 +792,14 @@ async function processAndRespond(speaker, message, method) {
     const speakerIsGod = await checkPlayerGodMode(speaker);
     
     // Build context for the AI (async - includes database lookups)
-    const context = await buildContext(speaker, speakerIsGod, message, method);
+    let context;
+    try {
+      context = await buildContext(speaker, speakerIsGod, message, method);
+    } catch (contextError) {
+      console.error('[ZORK] Error building context:', contextError.message);
+      console.error('[ZORK] Context error stack:', contextError.stack);
+      throw new Error(`Failed to build context: ${contextError.message}`);
+    }
     
     // Get conversation history for this speaker
     const history = getConversationHistory(speaker);
@@ -787,14 +808,29 @@ async function processAndRespond(speaker, message, method) {
     history.push({ role: 'user', content: context });
     
     console.log(`[ZORK] Processing message from ${speaker} (god: ${speakerIsGod})...`);
+    console.log(`[ZORK] Context length: ${context.length} chars, History length: ${history.length} messages`);
+    console.log(`[ZORK] System prompt length: ${systemPrompt.length} chars`);
     
     // Call Claude API
-    const response = await anthropic.messages.create({
-      model: CONFIG.MODEL,
-      max_tokens: CONFIG.MAX_TOKENS,
-      system: systemPrompt,
-      messages: history,
-    });
+    let response;
+    try {
+      response = await anthropic.messages.create({
+        model: CONFIG.MODEL,
+        max_tokens: CONFIG.MAX_TOKENS,
+        system: systemPrompt,
+        messages: history,
+      });
+    } catch (apiError) {
+      console.error('[ZORK] Claude API call failed:', apiError.message);
+      console.error('[ZORK] API error details:', {
+        status: apiError.status,
+        statusCode: apiError.status_code,
+        type: apiError.type,
+        code: apiError.code,
+        error: apiError.error
+      });
+      throw apiError; // Re-throw to be caught by outer catch
+    }
     
     const aiResponse = response.content[0].text;
     
@@ -834,14 +870,17 @@ async function processAndRespond(speaker, message, method) {
         try {
           const result = await executeAction(action, speaker);
           
-          // For markup, game message, and connection management actions, result contains the data (don't need verification)
-          if (['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword', 'disconnectZork', 'reconnectZork', 'getZorkConnectionStatus'].includes(action.type)) {
+          // For markup, game message, connection management, ticket reading, and SQL query actions, result contains the data (don't need verification)
+          const readOnlyActions = ['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword', 'disconnectZork', 'reconnectZork', 'getZorkConnectionStatus', 'getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'sql'];
+          
+          if (readOnlyActions.includes(action.type)) {
             console.log(`[ZORK] Action ${action.type} completed successfully`);
             // Mark as successful (no verification needed for direct DB operations or connection management)
             action.verificationFailed = false;
-            if (result && (action.type === 'getMarkupConventions' || action.type === 'getZorkConnectionStatus')) {
-              // Store result for potential use in response
+            // Store result for read actions so AI can see it
+            if (result) {
               action.result = result;
+              console.log(`[ZORK] Stored action result for ${action.type}:`, JSON.stringify(result).substring(0, 200));
             }
           }
         } catch (error) {
@@ -867,6 +906,121 @@ async function processAndRespond(speaker, message, method) {
         ).join('. ');
         await sendResponse(speaker, `Hmm. ${errorMsg}`, method);
       }
+      
+      // Check if we have read actions with results that need to be presented to the user
+      const readActionsWithResults = actions.filter(a => 
+        ['getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'getMarkupConventions', 'getZorkConnectionStatus', 'sql'].includes(a.type) && 
+        a.result && 
+        !a.verificationFailed
+      );
+      
+      if (readActionsWithResults.length > 0) {
+        console.log(`[ZORK] Found ${readActionsWithResults.length} read action(s) with results - formatting for display`);
+        
+        // Format the results directly instead of making another API call
+        let formattedResults = '';
+        
+        for (const action of readActionsWithResults) {
+          const result = action.result;
+          
+          if (action.type === 'getTicketSummary') {
+            // Format ticket summary
+            formattedResults += `\n\n**Ticket Summary:**\n`;
+            formattedResults += `- Total tickets: ${result.total}\n`;
+            formattedResults += `- Open: ${result.byStatus.open} | In Progress: ${result.byStatus.in_progress} | Resolved: ${result.byStatus.resolved}\n`;
+            formattedResults += `- By Priority: Critical: ${result.byPriority.critical}, High: ${result.byPriority.high}, Medium: ${result.byPriority.medium}, Low: ${result.byPriority.low}\n`;
+            formattedResults += `- By Type: Debug: ${result.byType.debug}, Manual: ${result.byType.manual}, User: ${result.byType.user}\n`;
+            if (result.recent && result.recent.length > 0) {
+              formattedResults += `\n**Recent Tickets:**\n`;
+              result.recent.forEach(t => {
+                const statusEmoji = t.status === 'open' ? '🔴' : t.status === 'in_progress' ? '🟡' : '✅';
+                formattedResults += `${statusEmoji} #${t.id}: ${t.title} (Priority: ${t.priority})\n`;
+              });
+            }
+          } else if (action.type === 'getTickets' || action.type === 'listTickets') {
+            // Format ticket list
+            formattedResults += `\n\n**Tickets (${result.count} total):**\n`;
+            if (result.tickets && result.tickets.length > 0) {
+              result.tickets.forEach(t => {
+                const statusEmoji = t.status === 'open' ? '🔴' : t.status === 'in_progress' ? '🟡' : '✅';
+                formattedResults += `${statusEmoji} #${t.id}: ${t.title}\n`;
+                formattedResults += `   Status: ${t.status} | Priority: ${t.priority} | Type: ${t.ticket_type}\n`;
+                if (t.description) {
+                  formattedResults += `   ${t.description.substring(0, 100)}${t.description.length > 100 ? '...' : ''}\n`;
+                }
+                formattedResults += `\n`;
+              });
+            } else {
+              formattedResults += `No tickets found.\n`;
+            }
+          } else if (action.type === 'getTicket') {
+            // Format single ticket
+            formattedResults += `\n\n**Ticket #${result.id}:**\n`;
+            formattedResults += `Title: ${result.title}\n`;
+            formattedResults += `Status: ${result.status} | Priority: ${result.priority} | Type: ${result.ticket_type}\n`;
+            if (result.description) {
+              formattedResults += `\nDescription:\n${result.description}\n`;
+            }
+            if (result.repro_steps) {
+              formattedResults += `\nRepro Steps:\n${result.repro_steps}\n`;
+            }
+            if (result.resolution_notes) {
+              formattedResults += `\nResolution Notes:\n${result.resolution_notes}\n`;
+            }
+          } else if (action.type === 'sql') {
+            // Format SQL query results
+            formattedResults += `\n\n**SQL Query Results:**\n`;
+            if (result.rows && result.rows.length > 0) {
+              formattedResults += `Rows returned: ${result.rows.length}\n\n`;
+              // Format as table-like structure
+              if (result.rows.length <= 20) {
+                // Show all rows if 20 or fewer
+                result.rows.forEach((row, index) => {
+                  formattedResults += `Row ${index + 1}:\n`;
+                  Object.entries(row).forEach(([key, value]) => {
+                    const displayValue = value === null ? 'NULL' : String(value);
+                    formattedResults += `  ${key}: ${displayValue}\n`;
+                  });
+                  formattedResults += `\n`;
+                });
+              } else {
+                // Show first 10 and last 10 if more than 20
+                formattedResults += `(Showing first 10 and last 10 of ${result.rows.length} rows)\n\n`;
+                for (let i = 0; i < 10; i++) {
+                  formattedResults += `Row ${i + 1}:\n`;
+                  Object.entries(result.rows[i]).forEach(([key, value]) => {
+                    const displayValue = value === null ? 'NULL' : String(value);
+                    formattedResults += `  ${key}: ${displayValue}\n`;
+                  });
+                  formattedResults += `\n`;
+                }
+                formattedResults += `... (${result.rows.length - 20} rows hidden) ...\n\n`;
+                for (let i = result.rows.length - 10; i < result.rows.length; i++) {
+                  formattedResults += `Row ${i + 1}:\n`;
+                  Object.entries(result.rows[i]).forEach(([key, value]) => {
+                    const displayValue = value === null ? 'NULL' : String(value);
+                    formattedResults += `  ${key}: ${displayValue}\n`;
+                  });
+                  formattedResults += `\n`;
+                }
+              }
+            } else {
+              formattedResults += `Query executed successfully but returned no rows.\n`;
+              if (result.rowCount !== undefined) {
+                formattedResults += `Rows affected: ${result.rowCount}\n`;
+              }
+            }
+          }
+        }
+        
+        // Append formatted results to the clean response
+        const responseWithResults = cleanResponse + formattedResults;
+        console.log(`[ZORK] Appended formatted results to response`);
+        
+        // Send the response with results
+        await sendResponse(speaker, responseWithResults, method);
+        return; // Don't send the original cleanResponse
+      }
     } else if (actions.length > 0 && !speakerIsGod) {
       console.log(`[ZORK] Ignoring ${actions.length} action(s) - speaker lacks god mode`);
     } else if (actions.length === 0 && speakerIsGod) {
@@ -877,9 +1031,41 @@ async function processAndRespond(speaker, message, method) {
     await sendResponse(speaker, cleanResponse, method);
     
   } catch (error) {
+    // Enhanced error logging to diagnose issues
     console.error('[ZORK] AI processing error:', error.message);
-    // Send a fallback response
-    await sendResponse(speaker, "Hmm. My thoughts are clouded. Try again.", method);
+    console.error('[ZORK] Error stack:', error.stack);
+    console.error('[ZORK] Error details:', {
+      name: error.name,
+      message: error.message,
+      status: error.status,
+      statusCode: error.status_code,
+      type: error.type,
+      code: error.code
+    });
+    
+    // Check for specific API errors
+    const errorMessage = error.message || '';
+    const errorStatus = error.status_code || error.status;
+    const errorBody = error.error || {};
+    const nestedError = errorBody.error || {};
+    
+    if (errorStatus === 401) {
+      console.error('[ZORK] ❌ API Authentication Error: Invalid or missing API key');
+      await sendResponse(speaker, "I'm having trouble authenticating with my AI service. Please check my API key configuration.", method);
+    } else if (errorStatus === 429) {
+      console.error('[ZORK] ❌ API Rate Limit Error: Too many requests');
+      await sendResponse(speaker, "I'm being rate-limited by my AI service. Please wait a moment and try again.", method);
+    } else if (errorStatus === 402 || errorMessage.includes('insufficient') || errorMessage.includes('credit balance') || errorMessage.includes('too low') || nestedError.message?.includes('credit balance') || nestedError.message?.includes('too low')) {
+      console.error('[ZORK] ❌ API Payment Error: Insufficient credits or payment required');
+      await sendResponse(speaker, "My AI service account is out of credits. Please go to your Anthropic account (Plans & Billing) to add credits. Once credits are added, I'll be able to respond again.", method);
+    } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('network')) {
+      console.error('[ZORK] ❌ Network Error: Cannot reach AI service');
+      await sendResponse(speaker, "I'm having network connectivity issues reaching my AI service. Please check your internet connection.", method);
+    } else {
+      // Generic fallback for unknown errors
+      console.error('[ZORK] ❌ Unknown error - using fallback message');
+      await sendResponse(speaker, "Hmm. My thoughts are clouded. Try again.", method);
+    }
   }
 }
 
@@ -2155,8 +2341,13 @@ async function executeAction(action, speakerName = null) {
     if (type === 'sql') {
       // Direct SQL query
       const result = await verifier.query(params.query, params.params || []);
-      console.log(`[ZORK] SQL executed, rows affected: ${result.rowCount}`);
-      return result;
+      console.log(`[ZORK] SQL executed, rows returned: ${result.rows?.length || 0}, rowCount: ${result.rowCount}`);
+      // Return the full result including rows for display
+      return {
+        rows: result.rows || [],
+        rowCount: result.rowCount || 0,
+        command: result.command || 'SELECT'
+      };
     }
     
     // Connection management actions (ZORK-specific)
@@ -2462,9 +2653,161 @@ async function executeAction(action, speakerName = null) {
         
         console.log(`[ZORK] Created ticket #${updatedTicket.id}: "${title}" (Priority: ${priority}, Type: ${ticketType})`);
         
+        // Create trigger file for auto-ticket processor
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const ticketsDir = path.join(__dirname, '..', '.tickets');
+          
+          // Ensure directory exists
+          if (!fs.existsSync(ticketsDir)) {
+            fs.mkdirSync(ticketsDir, { recursive: true });
+          }
+          
+          // Create trigger file
+          const triggerFile = path.join(ticketsDir, `ticket-${updatedTicket.id}.trigger`);
+          fs.writeFileSync(triggerFile, JSON.stringify({
+            ticketId: updatedTicket.id,
+            title: title,
+            priority: priority,
+            ticketType: ticketType,
+            createdBy: 'zork',
+            timestamp: new Date().toISOString()
+          }, null, 2));
+          
+          console.log(`[ZORK] Created trigger file for auto-processing: ${triggerFile}`);
+        } catch (triggerError) {
+          // Don't fail ticket creation if trigger file creation fails
+          console.warn('[ZORK] Failed to create trigger file (non-fatal):', triggerError.message);
+        }
+        
         return updatedTicket;
       } catch (error) {
         console.error(`[ZORK] Error creating ticket:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Get tickets (list tickets with optional filters)
+    if (type === 'getTickets' || type === 'listTickets') {
+      try {
+        const {
+          status = 'open', // 'open', 'in_progress', 'resolved', or null for all
+          limit = 50,
+          priority = null,
+          ticketType = null
+        } = params;
+        
+        let tickets;
+        if (status) {
+          tickets = await db.listDebugTodos({ status, limit });
+        } else {
+          // Get all tickets
+          tickets = await db.listDebugTodos({ limit });
+        }
+        
+        // Filter by priority if specified
+        if (priority !== null) {
+          tickets = tickets.filter(t => t.priority === priority);
+        }
+        
+        // Filter by ticket type if specified
+        if (ticketType) {
+          tickets = tickets.filter(t => t.ticket_type === ticketType);
+        }
+        
+        // Sort by priority (descending), then by created_at (ascending)
+        tickets.sort((a, b) => {
+          if (b.priority !== a.priority) {
+            return (b.priority || 2) - (a.priority || 2);
+          }
+          return new Date(a.created_at) - new Date(b.created_at);
+        });
+        
+        console.log(`[ZORK] Retrieved ${tickets.length} ticket(s) with status=${status || 'all'}`);
+        
+        return {
+          count: tickets.length,
+          tickets: tickets,
+          summary: tickets.map(t => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            priority: t.priority,
+            ticket_type: t.ticket_type,
+            created_at: t.created_at
+          }))
+        };
+      } catch (error) {
+        console.error(`[ZORK] Error getting tickets:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Get a specific ticket by ID
+    if (type === 'getTicket') {
+      try {
+        const { id } = params;
+        
+        if (!id) {
+          throw new Error('ticket id is required');
+        }
+        
+        const ticket = await db.getDebugTodo(id);
+        
+        if (!ticket) {
+          return { error: `Ticket #${id} not found` };
+        }
+        
+        console.log(`[ZORK] Retrieved ticket #${id}: "${ticket.title}"`);
+        
+        return ticket;
+      } catch (error) {
+        console.error(`[ZORK] Error getting ticket:`, error.message);
+        throw error;
+      }
+    }
+    
+    // Get ticket summary (counts by status)
+    if (type === 'getTicketSummary') {
+      try {
+        const allTickets = await db.listDebugTodos({ limit: 1000 }); // Get all tickets
+        
+        const summary = {
+          total: allTickets.length,
+          byStatus: {
+            open: allTickets.filter(t => t.status === 'open').length,
+            in_progress: allTickets.filter(t => t.status === 'in_progress').length,
+            resolved: allTickets.filter(t => t.status === 'resolved').length
+          },
+          byPriority: {
+            critical: allTickets.filter(t => t.priority === 4).length,
+            high: allTickets.filter(t => t.priority === 3).length,
+            medium: allTickets.filter(t => t.priority === 2).length,
+            low: allTickets.filter(t => t.priority === 1).length
+          },
+          byType: {
+            debug: allTickets.filter(t => t.ticket_type === 'debug').length,
+            manual: allTickets.filter(t => t.ticket_type === 'manual').length,
+            user: allTickets.filter(t => t.ticket_type === 'user').length
+          },
+          recent: allTickets
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, 10)
+            .map(t => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              priority: t.priority,
+              created_at: t.created_at
+            }))
+        };
+        
+        console.log(`[ZORK] Generated ticket summary: ${summary.total} total tickets`);
+        
+        return summary;
+      } catch (error) {
+        console.error(`[ZORK] Error getting ticket summary:`, error.message);
         throw error;
       }
     }

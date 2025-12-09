@@ -32,6 +32,29 @@ export const workTicketTools = [
       },
     },
   },
+  {
+    name: 'work_tickets_update',
+    description: 'Update a ticket status and add resolution notes with Acceptance Criteria. Use this after implementing a fix to mark ticket as in_progress with AC for user testing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'number',
+          description: 'Ticket ID to update',
+        },
+        status: {
+          type: 'string',
+          enum: ['open', 'in_progress', 'resolved'],
+          description: 'New status (typically "in_progress" after implementation)',
+        },
+        resolutionNotes: {
+          type: 'string',
+          description: 'Resolution notes with Acceptance Criteria. Format: "IMPLEMENTATION COMPLETE - Ready for Testing\\n\\n[Description]\\n\\nACCEPTANCE CRITERIA:\\n- [ ] [Test step 1]\\n- [ ] [Test step 2]"',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ];
 
 export async function handleWorkTicketTool(name, args) {
@@ -117,6 +140,49 @@ export async function handleWorkTicketTool(name, args) {
             })),
             workflow: 'sequential',
           },
+        };
+      }
+      
+      case 'work_tickets_update': {
+        const updates = [];
+        const params = [];
+        let paramIndex = 1;
+        
+        if (args.status) {
+          updates.push(`status = $${paramIndex++}`);
+          params.push(args.status);
+        }
+        
+        if (args.resolutionNotes !== undefined) {
+          updates.push(`resolution_notes = $${paramIndex++}`);
+          params.push(args.resolutionNotes);
+        }
+        
+        if (updates.length === 0) {
+          return {
+            content: [{ type: 'text', text: 'No updates provided. Must specify status or resolutionNotes.' }],
+            isError: true,
+          };
+        }
+        
+        updates.push('updated_at = NOW()');
+        params.push(args.id);
+        
+        const sql = `UPDATE debug_todos SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+        const result = await verifier.queryOne(sql, params);
+        
+        if (!result) {
+          return {
+            content: [{ type: 'text', text: `Ticket #${args.id} not found` }],
+            isError: true,
+          };
+        }
+        
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ Ticket #${result.id} updated!\nStatus: ${result.status}\nTitle: ${result.title}\nUpdated: ${new Date(result.updated_at).toISOString()}\n\nResolution notes have been added. Ticket is ready for user testing.`,
+          }],
         };
       }
       

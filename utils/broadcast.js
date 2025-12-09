@@ -318,18 +318,15 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     const existingState = factoryWidgetState.get(connectionId);
     if (existingState && existingState.roomId === room.id) {
       factoryState = {
-        slots: existingState.slots,
-        textInput: existingState.textInput || ''
+        slots: existingState.slots.length === 3 ? existingState.slots : [...existingState.slots, null] // Ensure 3 slots
       };
     } else {
       factoryState = {
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null] // 3 slots: 2 resource + 1 rune
       };
       factoryWidgetState.set(connectionId, {
         roomId: room.id,
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null] // 3 slots: 2 resource + 1 rune
       });
     }
   } else {

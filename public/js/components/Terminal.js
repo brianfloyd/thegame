@@ -15,15 +15,26 @@ export default class Terminal extends Component {
         this.roomItemsDisplay = null;
         this.commandInput = null;
         this.scrollLockBtn = null;
+        this.micBtn = null;
+        this.zorkBtn = null;
         this.scrollLocked = false;
+        this.recognition = null;
+        this.isRecording = false;
+        this.userIsTyping = false; // Track if user is manually typing
+        this.lastManualInputTime = 0; // Track when user last typed manually
+        this.sessionStartText = null; // Track starting text when recording session begins (for additive behavior)
         this.currentRoomId = null;
         this.lastInteractionTime = Date.now();
         this.IDLE_LOOK_DELAY = 30000; // 30 seconds
         this.idleLookInterval = null;
+        this.lastIdleLookTime = 0; // Track when we last sent an idle look
         // Track NPC elements in current room for in-place status updates
         this.currentRoomNPCs = new Map(); // npcId -> { element, nameSpan, statusSpan, lastStatus }
         // Track if disconnect message has been shown (to prevent duplicate messages)
         this.disconnectMessageShown = false;
+        this.ticketManagerFilter = 'all'; // Track current filter in ticket manager
+        this.allTickets = [];
+        this.ticketManager = null;
     }
     
     init() {
@@ -33,6 +44,29 @@ export default class Terminal extends Component {
         this.roomItemsDisplay = document.getElementById('roomItemsDisplay');
         this.commandInput = document.getElementById('commandInput');
         this.scrollLockBtn = document.getElementById('scrollLockBtn');
+        this.micBtn = document.getElementById('micBtn');
+        this.zorkBtn = document.getElementById('zorkBtn');
+        
+        // Track manual typing to prevent voice recognition from interfering
+        if (this.commandInput) {
+            this.commandInput.addEventListener('input', () => {
+                this.userIsTyping = true;
+                this.lastManualInputTime = Date.now();
+                // Clear flag after a short delay (user stopped typing)
+                clearTimeout(this.typingTimeout);
+                this.typingTimeout = setTimeout(() => {
+                    // Only clear if user hasn't typed in last 500ms
+                    if (Date.now() - this.lastManualInputTime > 500) {
+                        this.userIsTyping = false;
+                    }
+                }, 500);
+            });
+            
+            this.commandInput.addEventListener('keydown', () => {
+                this.userIsTyping = true;
+                this.lastManualInputTime = Date.now();
+            });
+        }
         
         if (!this.terminalContent) {
             console.error('[Terminal] terminalContent element not found');
@@ -45,6 +79,12 @@ export default class Terminal extends Component {
                 this.toggleScrollLock();
             });
         }
+        
+        // Setup ZORK interface button
+        this.initZorkButton();
+        
+        // Setup microphone button for voice input
+        this.initVoiceInput();
         
         // Subscribe to MessageBus events
         this.subscribe('terminal:message', (data) => this.handleTerminalMessage(data));
@@ -61,6 +101,45 @@ export default class Terminal extends Component {
         this.subscribe('talked', (data) => this.handleTalked(data));
         this.subscribe('telepath', (data) => this.handleTelepath(data));
         this.subscribe('telepathSent', (data) => this.handleTelepathSent(data));
+        this.subscribe('zorkTicketCreated', (data) => this.handleZorkTicketCreated(data));
+        this.subscribe('ticket:error', (data) => this.handleTicketError(data));
+        this.subscribe('ticketsList', (data) => this.handleTicketsList(data));
+        this.subscribe('ticketUpdated', (data) => {
+            console.log('[Terminal] ticketUpdated event received:', data);
+            
+            // If ticket was deleted, immediately remove it from local array to prevent stale display
+            if (data.ticket && data.ticket.status === 'deleted') {
+                console.log(`[Terminal] Ticket #${data.ticketId} was deleted, removing from local array immediately`);
+                this.allTickets = (this.allTickets || []).filter(t => t && t.id !== data.ticketId);
+                // If ticket manager is visible, re-render immediately
+                if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
+                    this.renderTicketManagerList(this.ticketManagerFilter);
+                    // If deleted ticket was selected, clear selection
+                    const selectedItem = this.ticketManager.querySelector(`.ticket-manager-item[data-ticket-id="${data.ticketId}"]`);
+                    if (selectedItem) {
+                        const detailsContainer = this.ticketManager.querySelector('#ticketManagerDetails');
+                        if (detailsContainer) {
+                            detailsContainer.innerHTML = '<p>Select a ticket to view details</p>';
+                        }
+                    }
+                }
+            }
+            
+            if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
+                console.log('[Terminal] Reloading tickets after update');
+                this.loadTicketsForManager();
+            } else {
+                console.log('[Terminal] Ticket manager not visible, skipping reload');
+            }
+        });
+        
+        this.subscribe('ticketFeedbackAdded', (data) => {
+            console.log('[Terminal] ticketFeedbackAdded event received:', data);
+            if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
+                console.log('[Terminal] Reloading tickets after feedback added');
+                this.loadTicketsForManager();
+            }
+        });
         this.subscribe('terminal:history', (data) => this.handleTerminalHistory(data));
         this.subscribe('merchant:list', (data) => this.handleMerchantList(data));
         
@@ -717,6 +796,1367 @@ export default class Terminal extends Component {
         return name.replace(/^@|@$/g, '');
     }
     
+    // ========================================================================
+    // ZORK Interface Button
+    // ========================================================================
+    
+    /**
+     * Initialize ZORK interface button for direct ticket creation
+     */
+    initZorkButton() {
+        if (!this.zorkBtn) {
+            console.warn('[Terminal] ZORK button not found');
+            return;
+        }
+        
+        this.zorkBtn.addEventListener('click', () => {
+            this.openZorkTicketManager();
+        });
+        
+        console.log('[Terminal] ZORK interface button initialized');
+    }
+    
+    /**
+     * Open comprehensive ZORK ticket management UI
+     */
+    openZorkTicketManager() {
+        // Create or get the ticket manager dialog
+        let manager = document.getElementById('zorkTicketManager');
+        if (!manager) {
+            manager = this.createTicketManager();
+        }
+        
+        // Restore filter from localStorage
+        if (typeof localStorage !== 'undefined') {
+            const storedFilter = localStorage.getItem('ticketManager_filter');
+            if (storedFilter && ['all', 'open', 'in_progress', 'resolved'].includes(storedFilter)) {
+                this.ticketManagerFilter = storedFilter;
+                console.log(`[Terminal] Restored ticket manager filter from localStorage: "${storedFilter}"`);
+                // Update active button
+                setTimeout(() => {
+                    const filterBtn = manager.querySelector(`[data-filter="${storedFilter}"]`);
+                    if (filterBtn) {
+                        manager.querySelectorAll('.ticket-filter-btn').forEach(btn => btn.classList.remove('active'));
+                        filterBtn.classList.add('active');
+                    }
+                }, 100);
+            }
+        }
+        
+        // Load tickets and show manager
+        this.loadTicketsForManager();
+        manager.classList.remove('hidden');
+    }
+    
+    /**
+     * Create the comprehensive ticket management UI
+     */
+    createTicketManager() {
+        const manager = document.createElement('div');
+        manager.id = 'zorkTicketManager';
+        manager.className = 'zork-ticket-manager-overlay hidden';
+        manager.innerHTML = `
+            <div class="zork-ticket-manager">
+                <div class="zork-ticket-manager-header">
+                    <h2>ZORK Ticket Management</h2>
+                    <button class="zork-ticket-manager-close" onclick="document.getElementById('zorkTicketManager').classList.add('hidden')">×</button>
+                </div>
+                <div class="zork-ticket-manager-toolbar">
+                    <div class="zork-ticket-manager-filters">
+                        <button class="ticket-filter-btn active" data-filter="all">All</button>
+                        <button class="ticket-filter-btn" data-filter="open">Open</button>
+                        <button class="ticket-filter-btn" data-filter="in_progress">In Progress</button>
+                        <button class="ticket-filter-btn" data-filter="resolved">Resolved</button>
+                    </div>
+                    <div class="zork-ticket-manager-actions">
+                        <input type="text" id="ticketSearchInput" class="ticket-search-input" placeholder="Search tickets...">
+                        <button class="ticket-action-btn-primary" id="createNewTicketBtn">+ New Ticket</button>
+                        <button class="ticket-action-btn" id="refreshTicketsBtn">Refresh</button>
+                    </div>
+                </div>
+                <div class="zork-ticket-manager-content">
+                    <div class="zork-ticket-manager-sidebar">
+                        <div id="ticketManagerList" class="ticket-manager-list">
+                            <div class="ticket-manager-loading">Loading tickets...</div>
+                        </div>
+                    </div>
+                    <div class="zork-ticket-manager-main">
+                        <div id="ticketManagerDetails" class="ticket-manager-details">
+                            <div class="ticket-manager-empty">
+                                <p>Select a ticket to view details</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(manager);
+        
+        // Setup event handlers
+        this.setupTicketManagerHandlers(manager);
+        
+        return manager;
+    }
+    
+    /**
+     * Setup handlers for ticket manager
+     */
+    setupTicketManagerHandlers(manager) {
+        // Filter buttons
+        manager.querySelectorAll('.ticket-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                manager.querySelectorAll('.ticket-filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const filter = btn.dataset.filter;
+                this.filterTicketsInManager(filter);
+            });
+        });
+        
+        // Search input
+        const searchInput = manager.querySelector('#ticketSearchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.searchTicketsInManager(e.target.value);
+            });
+        }
+        
+        // Create new ticket button
+        const createBtn = manager.querySelector('#createNewTicketBtn');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => {
+                this.showCreateTicketForm(manager);
+            });
+        }
+        
+        // Refresh button
+        const refreshBtn = manager.querySelector('#refreshTicketsBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                this.loadTicketsForManager();
+            });
+        }
+        
+        // Store manager reference
+        this.ticketManager = manager;
+        
+        // Store terminal reference globally for onclick handlers
+        if (typeof window !== 'undefined') {
+            window.terminal = this;
+        }
+    }
+    
+    /**
+     * Load tickets for the manager
+     */
+    loadTicketsForManager() {
+        const ws = this.game.getWebSocket();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            console.error('[Terminal] Not connected');
+            return;
+        }
+        
+        ws.send(JSON.stringify({
+            type: 'getTickets',
+            status: null, // Get all
+            limit: 200,
+            includeResolved: true
+        }));
+    }
+    
+    /**
+     * Handle tickets list response
+     */
+    handleTicketsList(data) {
+        console.log('[Terminal] handleTicketsList called with', data.tickets?.length || 0, 'tickets');
+        if (!this.ticketManager) {
+            console.warn('[Terminal] Ticket manager not found, cannot update list');
+            return;
+        }
+        
+        // CRITICAL: Restore filter from active button or use stored filter
+        const activeFilterBtn = this.ticketManager.querySelector('.ticket-filter-btn.active');
+        if (activeFilterBtn) {
+            const filterFromButton = activeFilterBtn.dataset.filter || 'all';
+            console.log(`[Terminal] Restoring filter from active button: "${filterFromButton}"`);
+            this.ticketManagerFilter = filterFromButton;
+        } else {
+            // No active button, use stored filter or default to 'all'
+            console.log(`[Terminal] No active filter button, using stored filter: "${this.ticketManagerFilter}"`);
+        }
+        
+        this.allTickets = data.tickets || [];
+        console.log(`[Terminal] Updated allTickets (${this.allTickets.length} tickets), rendering with filter: "${this.ticketManagerFilter}"`);
+        this.renderTicketManagerList(this.ticketManagerFilter);
+        
+        // If a ticket was selected, re-select it to refresh details
+        const selectedItem = this.ticketManager.querySelector('.ticket-manager-item.selected');
+        if (selectedItem) {
+            const ticketId = parseInt(selectedItem.dataset.ticketId);
+            console.log('[Terminal] Re-selecting ticket', ticketId, 'to refresh details');
+            this.selectTicketInManager(ticketId);
+        }
+    }
+    
+    /**
+     * Render ticket list in manager
+     */
+    renderTicketManagerList(filter = null, searchTerm = '') {
+        if (!this.ticketManager) return;
+        
+        // Use provided filter, stored filter, or default to 'all'
+        if (filter === null) {
+            filter = this.ticketManagerFilter || 'all';
+        }
+        
+        // Store the filter
+        this.ticketManagerFilter = filter;
+        
+        console.log(`[Terminal] renderTicketManagerList with filter: "${filter}", searchTerm: "${searchTerm}"`);
+        console.log(`[Terminal] Total tickets: ${this.allTickets.length}`);
+        
+        const listContainer = this.ticketManager.querySelector('#ticketManagerList');
+        if (!listContainer) return;
+        
+        let filtered = [...(this.allTickets || [])];
+        
+        // CRITICAL: Always filter out deleted tickets first, regardless of filter
+        const beforeDeletedFilter = filtered.length;
+        filtered = filtered.filter(t => t && t.status !== 'deleted');
+        if (filtered.length !== beforeDeletedFilter) {
+            console.log(`[Terminal] Filtered out ${beforeDeletedFilter - filtered.length} deleted tickets`);
+        }
+        
+        // Apply status filter
+        if (filter !== 'all') {
+            const beforeFilter = filtered.length;
+            filtered = filtered.filter(t => t.status === filter);
+            console.log(`[Terminal] Filtered by status "${filter}": ${beforeFilter} -> ${filtered.length} tickets`);
+        }
+        
+        // Apply search
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filtered = filtered.filter(t => 
+                t.title.toLowerCase().includes(term) ||
+                (t.description && t.description.toLowerCase().includes(term)) ||
+                (t.created_by && t.created_by.toLowerCase().includes(term))
+            );
+        }
+        
+        // Sort by priority (desc) then created_at (asc)
+        filtered.sort((a, b) => {
+            if (b.priority !== a.priority) return b.priority - a.priority;
+            return new Date(a.created_at) - new Date(b.created_at);
+        });
+        
+        if (filtered.length === 0) {
+            listContainer.innerHTML = '<div class="ticket-manager-empty">No tickets found</div>';
+            return;
+        }
+        
+        let html = '';
+        filtered.forEach(ticket => {
+            const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'in_progress' ? '🟡' : '✅';
+            const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
+            const priorityClass = ticket.priority >= 4 ? 'critical' : ticket.priority >= 3 ? 'high' : '';
+            
+            // Check if Cursor is working on this (in_progress status means Cursor is working)
+            const cursorWorking = ticket.status === 'in_progress';
+            const cursorIndicator = cursorWorking ? '<span class="cursor-working-indicator" title="Cursor is working on this ticket">🤖 Cursor Working...</span>' : '';
+            
+            html += `
+                <div class="ticket-manager-item ${priorityClass} ${cursorWorking ? 'cursor-working' : ''}" data-ticket-id="${ticket.id}">
+                    <div class="ticket-manager-item-header">
+                        <span class="ticket-manager-status">${statusEmoji}</span>
+                        <span class="ticket-manager-id">#${ticket.id}</span>
+                        <span class="ticket-manager-priority ${priorityClass}">${priorityText}</span>
+                        ${cursorIndicator}
+                    </div>
+                    <div class="ticket-manager-item-title">${this.escapeHtml(ticket.title)}</div>
+                    <div class="ticket-manager-item-meta">
+                        <span>${ticket.ticket_type || 'debug'}</span>
+                        <span>${new Date(ticket.created_at).toLocaleDateString()}</span>
+                        ${ticket.created_by ? `<span>by ${this.escapeHtml(ticket.created_by)}</span>` : ''}
+                        ${ticket.updated_at && ticket.updated_at !== ticket.created_at ? `<span class="ticket-updated">Updated: ${new Date(ticket.updated_at).toLocaleString()}</span>` : ''}
+                    </div>
+                    ${cursorWorking && ticket.resolution_notes ? `<div class="ticket-resolution-preview">${this.escapeHtml(ticket.resolution_notes.substring(0, 150))}${ticket.resolution_notes.length > 150 ? '...' : ''}</div>` : ''}
+                </div>
+            `;
+        });
+        
+        listContainer.innerHTML = html;
+        
+        // Setup click handlers for ticket items
+        listContainer.querySelectorAll('.ticket-manager-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const ticketId = parseInt(item.dataset.ticketId);
+                this.selectTicketInManager(ticketId);
+            });
+        });
+    }
+    
+    /**
+     * Filter tickets in manager
+     */
+    filterTicketsInManager(filter) {
+        console.log(`[Terminal] filterTicketsInManager called with filter: "${filter}"`);
+        // Store the filter
+        this.ticketManagerFilter = filter;
+        // Save to localStorage
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('ticketManager_filter', filter);
+        }
+        
+        // Update active button state
+        this.ticketManager.querySelectorAll('.ticket-filter-btn').forEach(btn => {
+            if (btn.dataset.filter === filter) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        
+        const searchTerm = this.ticketManager.querySelector('#ticketSearchInput')?.value || '';
+        this.renderTicketManagerList(filter, searchTerm);
+    }
+    
+    /**
+     * Search tickets in manager
+     */
+    searchTicketsInManager(searchTerm) {
+        const activeFilter = this.ticketManager.querySelector('.ticket-filter-btn.active')?.dataset.filter || 'all';
+        this.renderTicketManagerList(activeFilter, searchTerm);
+    }
+    
+    /**
+     * Select ticket to view details (called from onclick in HTML)
+     */
+    selectTicketInManager(ticketId) {
+        const ticket = this.allTickets.find(t => t.id === ticketId);
+        if (!ticket) return;
+        
+        this.renderTicketDetails(ticket);
+        
+        // Highlight selected item
+        this.ticketManager.querySelectorAll('.ticket-manager-item').forEach(item => {
+            item.classList.remove('selected');
+        });
+        const item = this.ticketManager.querySelector(`[data-ticket-id="${ticketId}"]`);
+        if (item) item.classList.add('selected');
+    }
+    
+    /**
+     * Render ticket details
+     */
+    renderTicketDetails(ticket) {
+        const detailsContainer = this.ticketManager.querySelector('#ticketManagerDetails');
+        if (!detailsContainer) return;
+        
+        const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'in_progress' ? '🟡' : '✅';
+        const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
+        
+        // Build complete HTML string first (avoid innerHTML += which destroys event listeners)
+        const html = `
+            <div class="ticket-details-header">
+                <div class="ticket-details-title-row">
+                    <span class="ticket-details-status">${statusEmoji}</span>
+                    <h3>#${ticket.id}: ${this.escapeHtml(ticket.title)}</h3>
+                </div>
+                <div class="ticket-details-actions">
+                    ${ticket.status === 'open' ? `<button class="ticket-action-btn" data-action="start-work" data-ticket-id="${ticket.id}">Start Work</button>` : ''}
+                    ${ticket.status === 'in_progress' ? `<button class="ticket-action-btn" data-action="resolve" data-ticket-id="${ticket.id}">Resolve</button>` : ''}
+                    ${ticket.status === 'resolved' ? `<button class="ticket-action-btn" data-action="reopen" data-ticket-id="${ticket.id}">Reopen</button>` : ''}
+                    <button class="ticket-action-btn" data-action="add-context" data-ticket-id="${ticket.id}">Add Context</button>
+                    ${ticket.status === 'open' || ticket.status === 'in_progress' ? `<button class="ticket-action-btn ticket-action-delete" data-action="delete" data-ticket-id="${ticket.id}">Delete</button>` : ''}
+                </div>
+            </div>
+            <div class="ticket-details-body">
+                <div class="ticket-details-section">
+                    <div class="ticket-detail-row">
+                        <strong>Status:</strong> <span class="ticket-status-badge ticket-status-${ticket.status}">${ticket.status}</span>
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Priority:</strong> <span class="ticket-priority-badge ticket-priority-${ticket.priority || 2}">${priorityText}</span>
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Type:</strong> ${ticket.ticket_type || 'debug'}
+                    </div>
+                    <div class="ticket-detail-row">
+                        <strong>Created:</strong> ${new Date(ticket.created_at).toLocaleString()}
+                    </div>
+                    ${ticket.created_by ? `<div class="ticket-detail-row"><strong>Created by:</strong> ${this.escapeHtml(ticket.created_by)}</div>` : ''}
+                    ${ticket.player_name ? `<div class="ticket-detail-row"><strong>Player:</strong> ${this.escapeHtml(ticket.player_name)}</div>` : ''}
+                </div>
+                ${ticket.description ? `
+                    <div class="ticket-details-section">
+                        <strong>Description:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.description)}</div>
+                    </div>
+                ` : ''}
+                ${ticket.repro_steps ? `
+                    <div class="ticket-details-section">
+                        <strong>Reproduction Steps:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.repro_steps)}</div>
+                    </div>
+                ` : ''}
+                ${ticket.resolution_notes ? `
+                    <div class="ticket-details-section">
+                        <strong>Resolution Notes & Context:</strong>
+                        <div class="ticket-detail-text">${this.renderTicketTextWithImages(ticket.resolution_notes)}</div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Set innerHTML once
+        detailsContainer.innerHTML = html;
+        
+        // Setup action button handlers AFTER setting innerHTML
+        detailsContainer.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const action = e.target.dataset.action;
+                const ticketId = parseInt(e.target.dataset.ticketId);
+                console.log('[Terminal] Ticket action clicked:', action, 'ticketId:', ticketId);
+                if (action === 'start-work') {
+                    this.updateTicketStatusInManager(ticketId, 'in_progress');
+                } else if (action === 'resolve') {
+                    this.updateTicketStatusInManager(ticketId, 'resolved');
+                } else if (action === 'reopen') {
+                    this.updateTicketStatusInManager(ticketId, 'open');
+                } else if (action === 'add-context') {
+                    this.showAddContextForm(ticketId);
+                } else if (action === 'delete') {
+                    this.showDeleteTicketDialogInManager(ticketId);
+                }
+            });
+        });
+    }
+    
+    /**
+     * Show create ticket form
+     */
+    showCreateTicketForm(manager) {
+        // Use the same dialog opening method
+        console.log('[Terminal] showCreateTicketForm called, opening dialog');
+        this.openZorkTicketDialog();
+    }
+    
+    /**
+     * Update ticket status
+     */
+    updateTicketStatusInManager(ticketId, status) {
+        const ticket = this.allTickets.find(t => t.id === ticketId);
+        if (!ticket) {
+            console.error('[Terminal] Ticket not found:', ticketId);
+            return;
+        }
+        
+        console.log('[Terminal] Updating ticket status:', ticketId, 'to', status, 'from', ticket.status);
+        
+        if (status === 'resolved') {
+            // Use bespoke dialog for resolution notes
+            console.log('[Terminal] Opening resolve dialog');
+            const dialog = this.createBespokeDialog('Resolve Ticket', 'Add resolution notes (optional):', (notes) => {
+                console.log('[Terminal] Resolve dialog submitted with notes:', notes ? 'yes' : 'no');
+                this.updateTicketStatusInManagerWithNotes(ticketId, status, notes);
+            });
+            if (dialog) {
+                dialog.classList.remove('hidden');
+                console.log('[Terminal] Resolve dialog shown');
+            }
+            return;
+        } else if (status === 'open' && ticket.status === 'resolved') {
+            // Reopening a resolved ticket - allow notes for regression tracking
+            console.log('[Terminal] Opening reopen dialog');
+            const dialog = this.createBespokeDialog('Reopen Ticket', 'Reopen as regression bug? Add notes (optional):', (notes) => {
+                console.log('[Terminal] Reopen dialog submitted with notes:', notes ? 'yes' : 'no');
+                const reopenNotes = 'Reopened as regression bug' + (notes ? '\n\n' + notes : '');
+                this.updateTicketStatusInManagerWithNotes(ticketId, status, reopenNotes);
+            });
+            if (dialog) {
+                dialog.classList.remove('hidden');
+                console.log('[Terminal] Reopen dialog shown');
+            }
+            return;
+        }
+        
+        // For other status changes (e.g., start-work), update directly
+        console.log('[Terminal] Updating status directly (no dialog)');
+        this.updateTicketStatusInManagerWithNotes(ticketId, status, null);
+    }
+    
+    /**
+     * Update ticket status with notes
+     */
+    updateTicketStatusInManagerWithNotes(ticketId, status, resolutionNotes) {
+        const ws = this.game.getWebSocket();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            console.error('[Terminal] Not connected to server');
+            this.game.messageBus.emit('terminal:error', { message: 'Not connected to server. Cannot update ticket.' });
+            return;
+        }
+        
+        console.log('[Terminal] Sending updateTicket:', { ticketId, status, hasNotes: !!resolutionNotes });
+        
+        ws.send(JSON.stringify({
+            type: 'updateTicket',
+            ticketId: ticketId,
+            status: status,
+            resolutionNotes: resolutionNotes
+        }));
+        
+        // Reload tickets after update
+        setTimeout(() => this.loadTicketsForManager(), 500);
+    }
+    
+    /**
+     * Show add context form
+     */
+    showAddContextForm(ticketId) {
+        console.log('[Terminal] Opening add context dialog for ticket:', ticketId);
+        const dialog = this.createBespokeDialog('Add Context', 'Add context, notes, or feedback:', (context) => {
+            if (context && context.trim()) {
+                console.log('[Terminal] Submitting context for ticket:', ticketId, 'context:', context);
+                this.addContextToTicket(ticketId, context.trim());
+            } else {
+                console.log('[Terminal] No context provided, skipping');
+            }
+        });
+        if (dialog) {
+            dialog.classList.remove('hidden');
+            console.log('[Terminal] Dialog shown, hidden class removed. Dialog visible:', !dialog.classList.contains('hidden'));
+            console.log('[Terminal] Dialog element:', dialog);
+            console.log('[Terminal] Dialog computed style display:', window.getComputedStyle(dialog).display);
+            console.log('[Terminal] Dialog z-index:', window.getComputedStyle(dialog).zIndex);
+        } else {
+            console.error('[Terminal] Failed to create dialog');
+        }
+    }
+    
+    /**
+     * Add context to ticket
+     */
+    addContextToTicket(ticketId, context) {
+        const ws = this.game.getWebSocket();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            console.error('[Terminal] Not connected to server');
+            this.game.messageBus.emit('terminal:error', { message: 'Not connected to server. Cannot add context.' });
+            return;
+        }
+        
+        console.log('[Terminal] Sending addTicketFeedback:', { ticketId, contextLength: context.length });
+        
+        ws.send(JSON.stringify({
+            type: 'addTicketFeedback',
+            ticketId: ticketId,
+            feedback: context
+        }));
+        
+        // Show feedback
+        this.game.messageBus.emit('terminal:message', { 
+            message: `Context added to ticket #${ticketId}.`, 
+            type: 'info' 
+        });
+        
+        // Reload tickets after update
+        setTimeout(() => this.loadTicketsForManager(), 500);
+    }
+    
+    /**
+     * Open bespoke ticket creation dialog (no system popups)
+     * @deprecated - Use ticket manager instead
+     */
+    openZorkTicketDialog() {
+        const dialog = document.getElementById('zorkTicketDialog');
+        const titleInput = document.getElementById('zorkTicketTitle');
+        const descriptionInput = document.getElementById('zorkTicketDescription');
+        const errorDiv = document.getElementById('zorkTicketError');
+        
+        if (!dialog || !titleInput || !descriptionInput) {
+            console.error('[Terminal] ZORK ticket dialog elements not found');
+            return;
+        }
+        
+        // Get current command input value as default
+        const currentInput = this.commandInput ? this.commandInput.value.trim() : '';
+        
+        // Pre-fill inputs
+        titleInput.value = currentInput || '';
+        descriptionInput.value = currentInput || '';
+        errorDiv.textContent = '';
+        errorDiv.classList.add('hidden');
+        
+        // Show dialog
+        dialog.classList.remove('hidden');
+        
+        // Ensure z-index is correct (should be 5000 from CSS, but verify)
+        const computedZIndex = window.getComputedStyle(dialog).zIndex;
+        console.log('[Terminal] ZORK ticket dialog z-index:', computedZIndex);
+        if (parseInt(computedZIndex) < 4000) {
+            dialog.style.zIndex = '5000';
+            console.log('[Terminal] Fixed ZORK ticket dialog z-index to 5000');
+        }
+        
+        // Focus title input
+        setTimeout(() => {
+            titleInput.focus();
+            titleInput.select();
+            console.log('[Terminal] ZORK ticket dialog opened and focused');
+        }, 100);
+        
+        // Setup submit handler (always, to ensure it's ready)
+        this.setupZorkTicketDialogHandlers();
+    }
+    
+    /**
+     * Setup handlers for ZORK ticket dialog
+     */
+    setupZorkTicketDialogHandlers() {
+        const dialog = document.getElementById('zorkTicketDialog');
+        if (!dialog) {
+            console.error('[Terminal] zorkTicketDialog not found');
+            return;
+        }
+        
+        // If handlers are already set up, don't set them up again
+        if (this.zorkTicketSubmitHandler && dialog._handlersSetup) {
+            console.log('[Terminal] ZORK ticket dialog handlers already set up, skipping');
+            return;
+        }
+        
+        const titleInput = document.getElementById('zorkTicketTitle');
+        const descriptionInput = document.getElementById('zorkTicketDescription');
+        const errorDiv = document.getElementById('zorkTicketError');
+        
+        if (!titleInput || !descriptionInput || !errorDiv) {
+            console.error('[Terminal] ZORK ticket dialog elements not found:', {
+                titleInput: !!titleInput,
+                descriptionInput: !!descriptionInput,
+                errorDiv: !!errorDiv
+            });
+            return;
+        }
+        
+        const closeDialog = () => {
+            console.log('[Terminal] Closing ZORK ticket dialog');
+            dialog.classList.add('hidden');
+            errorDiv.classList.add('hidden');
+        };
+        
+        // Track if submission is in progress to prevent duplicates
+        let isSubmitting = false;
+        
+        const submitTicket = () => {
+            // Prevent duplicate submissions
+            if (isSubmitting) {
+                console.log('[Terminal] Ticket submission already in progress, ignoring duplicate call');
+                return;
+            }
+            
+            const title = titleInput.value.trim();
+            const description = descriptionInput.value.trim();
+            
+            console.log('[Terminal] Submit ticket clicked, title:', title.substring(0, 30));
+            
+            // Validate
+            if (!title) {
+                errorDiv.textContent = 'Ticket title is required';
+                errorDiv.classList.remove('hidden');
+                titleInput.focus();
+                return;
+            }
+            
+            // Mark as submitting
+            isSubmitting = true;
+            
+            // Hide error
+            errorDiv.classList.add('hidden');
+            
+            // Create ticket via WebSocket
+            const ws = this.game.getWebSocket();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Show immediate feedback
+                this.showTicketCreationFeedback('Creating ticket...', 'info');
+                
+                // Close dialog
+                closeDialog();
+                
+                console.log('[Terminal] Sending createZorkTicket:', { title, description });
+                
+                ws.send(JSON.stringify({
+                    type: 'createZorkTicket',
+                    title: title,
+                    description: description,
+                    priority: 2, // Medium priority
+                    ticketType: 'user'
+                }));
+                
+                console.log('[Terminal] ZORK ticket creation request sent');
+                
+                // Clear command input if it was used
+                if (this.commandInput && this.commandInput.value.trim()) {
+                    this.commandInput.value = '';
+                }
+                
+                // Reset submitting flag after a delay (in case of error, allow retry)
+                setTimeout(() => {
+                    isSubmitting = false;
+                }, 2000);
+            } else {
+                console.error('[Terminal] WebSocket not connected');
+                errorDiv.textContent = 'Not connected to server. Cannot create ticket.';
+                errorDiv.classList.remove('hidden');
+                isSubmitting = false; // Reset on error
+            }
+        };
+        
+        // Remove old event listeners if they exist
+        if (dialog._clickHandler) {
+            dialog.removeEventListener('click', dialog._clickHandler, true);
+            console.log('[Terminal] Removed old ZORK dialog click handler');
+        }
+        
+        if (dialog._escapeHandler) {
+            document.removeEventListener('keydown', dialog._escapeHandler);
+            console.log('[Terminal] Removed old escape handler');
+        }
+        
+        // Remove old direct button handlers by cloning and replacing
+        const submitBtn = dialog.querySelector('#zorkTicketSubmit');
+        const cancelBtn = dialog.querySelector('#zorkTicketCancel');
+        const closeBtn = dialog.querySelector('#closeZorkTicketDialog');
+        
+        if (submitBtn) {
+            const newSubmitBtn = submitBtn.cloneNode(true);
+            submitBtn.parentNode.replaceChild(newSubmitBtn, submitBtn);
+        }
+        if (cancelBtn) {
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+        }
+        if (closeBtn) {
+            const newCloseBtn = closeBtn.cloneNode(true);
+            closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+        }
+        
+        // Get fresh references after cloning
+        const newSubmitBtn = dialog.querySelector('#zorkTicketSubmit');
+        const newCancelBtn = dialog.querySelector('#zorkTicketCancel');
+        const newCloseBtn = dialog.querySelector('#closeZorkTicketDialog');
+        
+        // Create new click handler with better logging
+        dialog._clickHandler = (e) => {
+            console.log('[Terminal] ZORK dialog click detected:', {
+                target: e.target.tagName,
+                targetId: e.target.id,
+                targetClass: e.target.className,
+                currentTarget: e.currentTarget.id
+            });
+            
+            // Find the actual button element (might be clicked on child element)
+            let button = e.target;
+            let clickedButton = null;
+            let iterations = 0;
+            const maxIterations = 10; // Safety limit
+            
+            while (button && button !== dialog && iterations < maxIterations) {
+                iterations++;
+                const buttonId = button.id;
+                const buttonClass = button.className || '';
+                
+                console.log('[Terminal] Checking element:', { buttonId, buttonClass, tagName: button.tagName, iteration: iterations });
+                
+                // Check if this is the submit button
+                if (buttonId === 'zorkTicketSubmit' || (button.classList.contains('zork-ticket-btn-primary') && button.tagName === 'BUTTON')) {
+                    clickedButton = 'submit';
+                    console.log('[Terminal] Found submit button');
+                    break;
+                }
+                
+                // Check if this is the cancel button
+                if (buttonId === 'zorkTicketCancel' || (button.classList.contains('zork-ticket-btn') && !button.classList.contains('zork-ticket-btn-primary') && button.tagName === 'BUTTON' && buttonId !== 'zorkTicketSubmit')) {
+                    clickedButton = 'cancel';
+                    console.log('[Terminal] Found cancel button');
+                    break;
+                }
+                
+                // Check if this is the close button
+                if (buttonId === 'closeZorkTicketDialog' || (button.classList.contains('zork-ticket-dialog-close') && button.tagName === 'BUTTON')) {
+                    clickedButton = 'close';
+                    console.log('[Terminal] Found close button');
+                    break;
+                }
+                
+                // Move up the DOM tree
+                button = button.parentElement;
+            }
+            
+            if (clickedButton) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Terminal] ZORK dialog button clicked:', clickedButton);
+                
+                if (clickedButton === 'submit') {
+                    submitTicket();
+                } else {
+                    closeDialog();
+                }
+                return false;
+            }
+            
+            // Close on overlay click
+            if (e.target === dialog) {
+                console.log('[Terminal] Overlay clicked, closing dialog');
+                closeDialog();
+                return false;
+            }
+        };
+        
+        // Use capture phase to catch events early
+        dialog.addEventListener('click', dialog._clickHandler, true);
+        console.log('[Terminal] ZORK ticket dialog click handler attached (capture phase)');
+        
+        // Also try direct button handlers as backup (using new cloned buttons)
+        if (newSubmitBtn) {
+            newSubmitBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Terminal] Submit button direct click handler');
+                submitTicket();
+            }, true);
+        }
+        
+        if (newCancelBtn) {
+            newCancelBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Terminal] Cancel button direct click handler');
+                closeDialog();
+            }, true);
+        }
+        
+        if (newCloseBtn) {
+            newCloseBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Terminal] Close button direct click handler');
+                closeDialog();
+            }, true);
+        }
+        
+        // Remove old keyboard handlers if they exist
+        if (titleInput._keydownHandler) {
+            titleInput.removeEventListener('keydown', titleInput._keydownHandler);
+        }
+        if (descriptionInput._keydownHandler) {
+            descriptionInput.removeEventListener('keydown', descriptionInput._keydownHandler);
+        }
+        if (descriptionInput._pasteHandler) {
+            descriptionInput.removeEventListener('paste', descriptionInput._pasteHandler);
+        }
+        
+        // Submit on Enter in title, Ctrl+Enter in description
+        if (titleInput) {
+            titleInput._keydownHandler = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    console.log('[Terminal] Enter pressed in title, submitting');
+                    submitTicket();
+                }
+            };
+            titleInput.addEventListener('keydown', titleInput._keydownHandler);
+        }
+        
+        if (descriptionInput) {
+            descriptionInput._keydownHandler = (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    console.log('[Terminal] Ctrl+Enter pressed in description, submitting');
+                    submitTicket();
+                }
+            };
+            descriptionInput.addEventListener('keydown', descriptionInput._keydownHandler);
+            
+            // Handle image paste (screenshots)
+            descriptionInput._pasteHandler = async (e) => {
+                const items = e.clipboardData?.items;
+                if (!items) return;
+                
+                // Look for image in clipboard
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (item.type.indexOf('image') !== -1) {
+                        e.preventDefault();
+                        console.log('[Terminal] Image detected in clipboard, processing...');
+                        
+                        const file = item.getAsFile();
+                        if (!file) continue;
+                        
+                        // Convert to base64
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const base64Image = event.target.result;
+                            const imageSizeKB = Math.round(base64Image.length / 1024);
+                            
+                            console.log('[Terminal] Image converted to base64, size:', imageSizeKB, 'KB');
+                            
+                            // Check size limit (5MB base64 = ~3.75MB actual)
+                            if (imageSizeKB > 5120) {
+                                errorDiv.textContent = `Image too large (${imageSizeKB}KB). Maximum size is 5MB.`;
+                                errorDiv.classList.remove('hidden');
+                                return;
+                            }
+                            
+                            // Insert image markdown at cursor position
+                            const cursorPos = descriptionInput.selectionStart;
+                            const textBefore = descriptionInput.value.substring(0, cursorPos);
+                            const textAfter = descriptionInput.value.substring(cursorPos);
+                            
+                            // Insert image as markdown-style embed
+                            const imageMarkdown = `\n\n![Screenshot](${base64Image})\n\n`;
+                            descriptionInput.value = textBefore + imageMarkdown + textAfter;
+                            
+                            // Move cursor after inserted image
+                            const newCursorPos = cursorPos + imageMarkdown.length;
+                            descriptionInput.setSelectionRange(newCursorPos, newCursorPos);
+                            
+                            // Show success message
+                            const successMsg = document.createElement('div');
+                            successMsg.className = 'ticket-image-success';
+                            successMsg.textContent = `✓ Screenshot pasted (${imageSizeKB}KB)`;
+                            successMsg.style.cssText = 'color: #00ff00; font-size: 11px; margin-top: 5px;';
+                            
+                            // Remove any existing success message
+                            const existing = descriptionInput.parentElement.querySelector('.ticket-image-success');
+                            if (existing) existing.remove();
+                            
+                            descriptionInput.parentElement.appendChild(successMsg);
+                            
+                            // Remove success message after 3 seconds
+                            setTimeout(() => {
+                                if (successMsg.parentElement) {
+                                    successMsg.remove();
+                                }
+                            }, 3000);
+                            
+                            descriptionInput.focus();
+                        };
+                        
+                        reader.onerror = () => {
+                            console.error('[Terminal] Error reading image file');
+                            errorDiv.textContent = 'Error processing image. Please try again.';
+                            errorDiv.classList.remove('hidden');
+                        };
+                        
+                        reader.readAsDataURL(file);
+                        break;
+                    }
+                }
+            };
+            descriptionInput.addEventListener('paste', descriptionInput._pasteHandler);
+        }
+        
+        // Escape to close
+        dialog._escapeHandler = (e) => {
+            if (e.key === 'Escape' && !dialog.classList.contains('hidden')) {
+                console.log('[Terminal] Escape pressed, closing ZORK ticket dialog');
+                closeDialog();
+            }
+        };
+        document.addEventListener('keydown', dialog._escapeHandler);
+        
+        // Mark as set up
+        this.zorkTicketSubmitHandler = true;
+        dialog._handlersSetup = true;
+        console.log('[Terminal] ZORK ticket dialog handlers setup complete');
+    }
+    
+    /**
+     * Show ticket creation feedback directly in terminal (bespoke, not system message)
+     */
+    showTicketCreationFeedback(message, type = 'info') {
+        if (!this.terminalContent) return;
+        
+        const feedbackDiv = document.createElement('div');
+        feedbackDiv.className = type === 'error' ? 'ticket-feedback-error' : 'ticket-feedback-info';
+        feedbackDiv.innerHTML = `<span class="ticket-feedback-icon">${type === 'error' ? '❌' : '📝'}</span> <span class="ticket-feedback-text">${this.escapeHtml(message)}</span>`;
+        
+        this.terminalContent.appendChild(feedbackDiv);
+        this.scrollToBottom();
+        
+        // Auto-remove after 5 seconds for non-error messages
+        if (type !== 'error') {
+            setTimeout(() => {
+                if (feedbackDiv.parentNode) {
+                    feedbackDiv.style.opacity = '0';
+                    feedbackDiv.style.transition = 'opacity 0.5s';
+                    setTimeout(() => {
+                        if (feedbackDiv.parentNode) {
+                            feedbackDiv.parentNode.removeChild(feedbackDiv);
+                        }
+                    }, 500);
+                }
+            }, 5000);
+        }
+    }
+    
+    /**
+     * Handle ZORK ticket created response
+     */
+    handleZorkTicketCreated(data) {
+        const { ticketId, message } = data;
+        // Use bespoke feedback system instead of system messages
+        const feedbackMessage = message || `Ticket #${ticketId} created successfully. ZORK will review it shortly.`;
+        this.showTicketCreationFeedback(feedbackMessage, 'info');
+    }
+    
+    /**
+     * Handle error responses from ticket creation
+     */
+    handleTicketError(data) {
+        if (data.type === 'error' && data.message) {
+            // Check if this is a ticket-related error
+            if (data.message.includes('ticket') || data.message.includes('Ticket')) {
+                const dialog = document.getElementById('zorkTicketDialog');
+                const errorDiv = document.getElementById('zorkTicketError');
+                if (dialog && errorDiv && !dialog.classList.contains('hidden')) {
+                    // Show error in dialog if it's open
+                    errorDiv.textContent = data.message;
+                    errorDiv.classList.remove('hidden');
+                } else {
+                    // Show error in terminal
+                    this.showTicketCreationFeedback(data.message, 'error');
+                }
+            }
+        }
+    }
+    
+    // ========================================================================
+    // Voice Input System
+    // ========================================================================
+    
+    /**
+     * Initialize voice input using Web Speech API
+     */
+    initVoiceInput() {
+        if (!this.micBtn) {
+            console.warn('[Terminal] Microphone button not found');
+            return;
+        }
+        
+        // Check for browser support
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.warn('[Terminal] Web Speech API not supported in this browser');
+            this.micBtn.disabled = true;
+            this.micBtn.title = 'Voice input not supported in this browser';
+            return;
+        }
+        
+        // Initialize recognition
+        this.recognition = new SpeechRecognition();
+        this.recognition.continuous = true; // Keep recording until manually stopped
+        this.recognition.interimResults = true; // Show interim results while speaking
+        this.recognition.lang = 'en-US'; // Default to English
+        
+        // Track accumulated transcript and processed result indices
+        this.accumulatedTranscript = '';
+        this.lastProcessedResultIndex = -1; // Track last processed result index to prevent reprocessing
+        
+        // Handle recognition results
+        this.recognition.onresult = (event) => {
+            // Always accumulate results, but only update UI if user isn't actively typing
+            const shouldUpdateUI = !this.userIsTyping && (Date.now() - this.lastManualInputTime >= 300);
+            
+            // Get all results (interim and final)
+            let interimTranscript = '';
+            let finalTranscript = '';
+            
+            // Only process NEW results (those after lastProcessedResultIndex)
+            // This prevents reprocessing the same results multiple times
+            const startIndex = Math.max(event.resultIndex, this.lastProcessedResultIndex + 1);
+            
+            for (let i = startIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                const transcript = result[0].transcript;
+                
+                if (result.isFinal) {
+                    finalTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            
+            // Update last processed index
+            if (event.results.length > 0) {
+                this.lastProcessedResultIndex = event.results.length - 1;
+            }
+            
+            // ALWAYS update accumulated transcript with final results (even if user was typing)
+            // This ensures we capture all speech for display when recording stops
+            // Simplified logic to be less restrictive and capture more speech
+            if (finalTranscript) {
+                const newContent = finalTranscript.trim();
+                if (newContent) {
+                    // Always add new final content unless it's exactly the same as what we already have at the end
+                    // This is less restrictive to ensure we capture all speech, especially on successive uses
+                    const accumulatedTrimmed = this.accumulatedTranscript.trim();
+                    if (!accumulatedTrimmed) {
+                        // Empty - just add it
+                        this.accumulatedTranscript = newContent;
+                        console.log('[Terminal] Voice recognition first result:', newContent);
+                    } else if (!accumulatedTrimmed.endsWith(newContent)) {
+                        // Not at the end - add it (might be continuation or new phrase)
+                        this.accumulatedTranscript += ' ' + newContent;
+                        console.log('[Terminal] Voice recognition result added:', newContent);
+                        console.log('[Terminal] Total accumulated:', this.accumulatedTranscript);
+                    } else {
+                        // Already ends with this content - might be duplicate, but log it
+                        console.log('[Terminal] Voice recognition result already at end (possible duplicate):', newContent);
+                    }
+                }
+            }
+            
+            // Log interim results for debugging successive use issues
+            if (interimTranscript) {
+                console.log('[Terminal] Voice recognition interim:', interimTranscript);
+            }
+            
+            // Update input field only if user isn't actively typing (to avoid interference)
+            if (shouldUpdateUI && this.commandInput && (finalTranscript || interimTranscript)) {
+                const voiceText = this.accumulatedTranscript + (interimTranscript ? ' ' + interimTranscript : '');
+                const currentValue = this.commandInput.value;
+                
+                // Build display text: existing text + space + voice input (additive behavior)
+                // Use sessionStartText if available, otherwise use current value
+                const baseText = this.sessionStartText || currentValue;
+                const displayText = baseText.trim() + (baseText.trim() && voiceText.trim() ? ' ' : '') + voiceText.trim();
+                
+                // Only update if:
+                // 1. Input is empty (fresh start)
+                // 2. Input matches our base text + accumulated transcript (voice-only input)
+                // 3. User hasn't manually changed the input since we started
+                const expectedValue = (this.sessionStartText || '') + (this.accumulatedTranscript ? ' ' + this.accumulatedTranscript : '');
+                if (!currentValue || currentValue.trim() === expectedValue.trim() || currentValue === baseText) {
+                    // Safe to update - either empty, matches our voice transcript, or matches base text
+                    this.commandInput.value = displayText;
+                    
+                    // Focus the input and move cursor to end
+                    this.commandInput.focus();
+                    this.commandInput.setSelectionRange(this.commandInput.value.length, this.commandInput.value.length);
+                }
+            }
+        };
+        
+        // Handle errors
+        this.recognition.onerror = (event) => {
+            console.error('[Terminal] Speech recognition error:', event.error);
+            
+            let errorMsg = 'Voice recognition error';
+            if (event.error === 'no-speech') {
+                // Don't stop on no-speech - user might be thinking
+                console.log('[Terminal] No speech detected, continuing to listen...');
+                return; // Don't stop recording or show error
+            } else if (event.error === 'audio-capture') {
+                errorMsg = 'Microphone not found or not accessible.';
+                this.messageBus.emit('terminal:error', { message: errorMsg });
+                this.stopRecording();
+            } else if (event.error === 'not-allowed') {
+                errorMsg = 'Microphone permission denied. Please allow microphone access.';
+                this.messageBus.emit('terminal:error', { message: errorMsg });
+                this.stopRecording();
+            } else if (event.error === 'network') {
+                errorMsg = 'Network error. Check your connection.';
+                this.messageBus.emit('terminal:error', { message: errorMsg });
+                this.stopRecording();
+            } else {
+                // Other errors - log but don't stop (might be temporary)
+                console.warn('[Terminal] Speech recognition error (non-fatal):', event.error);
+            }
+        };
+        
+        // Handle end of recognition (only stop if manually stopped, not on auto-end)
+        this.recognition.onend = () => {
+            console.log('[Terminal] Speech recognition ended, isRecording:', this.isRecording);
+            // Only restart if we're still in recording state (user didn't manually stop)
+            // This prevents auto-restart on temporary disconnections
+            if (this.isRecording) {
+                // Recognition ended but we want to keep recording - restart it
+                // Add a small delay to prevent immediate restart issues
+                setTimeout(() => {
+                    if (this.isRecording && this.recognition) {
+                        try {
+                            this.recognition.start();
+                            console.log('[Terminal] Restarted recognition after auto-end');
+                        } catch (error) {
+                            // If restart fails, actually stop
+                            if (error.message.includes('already started')) {
+                                // Already running, ignore
+                                console.log('[Terminal] Recognition already started, ignoring restart');
+                            } else {
+                                console.error('[Terminal] Failed to restart recognition:', error);
+                                this.stopRecording();
+                            }
+                        }
+                    }
+                }, 100); // Small delay to prevent restart issues
+            } else {
+                console.log('[Terminal] Recognition ended, not restarting (user stopped)');
+            }
+        };
+        
+        // Setup button click handler
+        this.micBtn.addEventListener('click', () => {
+            if (this.isRecording) {
+                this.stopRecording();
+            } else {
+                this.startRecording();
+            }
+        });
+        
+        console.log('[Terminal] Voice input initialized');
+    }
+    
+    /**
+     * Start voice recording
+     */
+    startRecording() {
+        if (!this.recognition) {
+            this.messageBus.emit('terminal:error', { message: 'Voice input not available in this browser' });
+            return;
+        }
+        
+        if (this.isRecording) {
+            console.log('[Terminal] Already recording, ignoring start request');
+            return; // Already recording
+        }
+        
+        // Save existing text in command input to preserve it (for additive behavior)
+        const existingText = this.commandInput ? this.commandInput.value.trim() : '';
+        
+        // CRITICAL: Fully reset state for new session to ensure clean start
+        // This prevents issues with successive captures only picking up first word
+        this.accumulatedTranscript = '';
+        this.lastProcessedResultIndex = -1;
+        this.sessionStartText = existingText; // Store starting text for this session
+        this.userIsTyping = false; // Reset typing state
+        this.lastManualInputTime = 0; // Reset manual input time
+        
+        // Ensure recognition is fully stopped before starting new session
+        // Use setTimeout to ensure clean state
+        try {
+            if (this.recognition) {
+                try {
+                    this.recognition.stop();
+                } catch (e) {
+                    // Ignore - might already be stopped
+                }
+            }
+        } catch (e) {
+            // Ignore errors
+        }
+        
+        // Wait a moment for recognition to fully stop, then start
+        setTimeout(() => {
+            console.log('[Terminal] Starting new recording session, preserving text:', existingText);
+            console.log('[Terminal] Reset state - accumulatedTranscript:', this.accumulatedTranscript, 'lastProcessedResultIndex:', this.lastProcessedResultIndex);
+            
+            try {
+                this.recognition.start();
+                this.isRecording = true;
+                
+                if (this.micBtn) {
+                    this.micBtn.classList.add('recording');
+                    this.micBtn.title = 'Recording... (click to stop)';
+                }
+                
+                console.log('[Terminal] Voice recording started (continuous mode), sessionStartText:', this.sessionStartText);
+                // Use bespoke feedback instead of system message
+                this.showTicketCreationFeedback('🎤 Recording... Speak now. Click microphone again to stop.', 'info');
+            } catch (error) {
+                console.error('[Terminal] Error starting recognition:', error);
+                if (error.message.includes('already started')) {
+                    // Recognition already running, just update UI
+                    console.log('[Terminal] Recognition already started, updating UI only');
+                    this.isRecording = true;
+                    if (this.micBtn) {
+                        this.micBtn.classList.add('recording');
+                    }
+                } else {
+                    this.messageBus.emit('terminal:error', { message: 'Failed to start voice recording: ' + error.message });
+                }
+            }
+        }, 150); // Wait 150ms to ensure clean state
+    }
+    
+    /**
+     * Stop voice recording
+     */
+    stopRecording() {
+        if (!this.isRecording) {
+            return;
+        }
+        
+        // Mark as not recording first to prevent auto-restart
+        this.isRecording = false;
+        
+        try {
+            if (this.recognition) {
+                this.recognition.stop();
+            }
+        } catch (error) {
+            // Ignore errors when stopping
+            console.log('[Terminal] Error stopping recognition (ignored):', error.message);
+        }
+        
+        if (this.micBtn) {
+            this.micBtn.classList.remove('recording');
+            this.micBtn.title = 'Voice Input (click to record)';
+        }
+        
+        // Wait a moment for any final results to come in, then get the transcript
+        // The recognition.onend will fire after stop(), so we need to wait for final results
+        setTimeout(() => {
+            // Get the final transcript before clearing
+            const finalTranscript = this.accumulatedTranscript.trim();
+            
+            // Display transcript in terminal if we captured anything
+            if (finalTranscript) {
+                console.log('[Terminal] Voice transcript:', finalTranscript);
+                
+                // Add transcript to terminal as a system message
+                this.addMessage(`🎤 Voice input: "${finalTranscript}"`, 'info');
+                
+                // Update command input: existing text + space + voice input (additive)
+                if (this.commandInput) {
+                    const existingText = this.sessionStartText || this.commandInput.value.trim();
+                    const newValue = existingText + (existingText && finalTranscript ? ' ' : '') + finalTranscript;
+                    this.commandInput.value = newValue;
+                    this.commandInput.focus();
+                    this.commandInput.setSelectionRange(this.commandInput.value.length, this.commandInput.value.length);
+                }
+            } else {
+                // No transcript captured - show feedback
+                this.showVoiceInputFeedback('info', 'No speech detected. Try speaking closer to the microphone.');
+            }
+            
+            // Clear accumulated transcript and reset typing flags and result tracking
+            this.accumulatedTranscript = '';
+            this.lastProcessedResultIndex = -1;
+            this.userIsTyping = false;
+            this.lastManualInputTime = 0;
+            this.sessionStartText = null; // Clear session start text
+        }, 500); // Wait 500ms for final results to arrive
+        
+        // Clear accumulated transcript and reset typing flags and result tracking
+        this.accumulatedTranscript = '';
+        this.lastProcessedResultIndex = -1;
+        this.userIsTyping = false;
+        this.lastManualInputTime = 0;
+        
+        console.log('[Terminal] Voice recording stopped');
+    }
+    
     /**
      * Handle telepath message
      */
@@ -831,11 +2271,13 @@ export default class Terminal extends Component {
             const now = Date.now();
             const idleTime = now - this.lastInteractionTime;
             
-            if (idleTime >= this.IDLE_LOOK_DELAY) {
+            // Only send look if idle for 30s AND we haven't sent one in the last 30s
+            if (idleTime >= this.IDLE_LOOK_DELAY && (now - this.lastIdleLookTime) >= this.IDLE_LOOK_DELAY) {
                 // Send look command
                 const ws = this.game.getWebSocket();
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     this.game.send({ type: 'look' });
+                    this.lastIdleLookTime = now; // Track when we sent the look
                 }
             }
         }, 5000); // Check every 5 seconds
@@ -846,6 +2288,7 @@ export default class Terminal extends Component {
      */
     resetIdleTimer() {
         this.lastInteractionTime = Date.now();
+        this.lastIdleLookTime = 0; // Reset idle look tracking on interaction
     }
     
     /**
@@ -862,6 +2305,13 @@ export default class Terminal extends Component {
             clearInterval(this.idleLookInterval);
             this.idleLookInterval = null;
         }
+        
+        // Stop voice recording if active
+        this.stopRecording();
+        if (this.recognition) {
+            this.recognition = null;
+        }
+        
         super.destroy();
     }
     
@@ -895,6 +2345,225 @@ export default class Terminal extends Component {
                 }
             }
         }
+    }
+    
+    /**
+     * Create or reuse a bespoke dialog for ticket actions (no system popups)
+     */
+    createBespokeDialog(title, label, onSubmit) {
+        // Create or reuse dialog
+        let dialog = document.getElementById('ticketActionDialog');
+        if (!dialog) {
+            dialog = document.createElement('div');
+            dialog.id = 'ticketActionDialog';
+            dialog.className = 'zork-ticket-dialog-overlay hidden';
+            dialog.innerHTML = `
+                <div class="zork-ticket-dialog">
+                    <div class="zork-ticket-dialog-header">
+                        <h3 id="ticketActionDialogTitle">${this.escapeHtml(title)}</h3>
+                        <button class="zork-ticket-dialog-close" id="ticketActionDialogClose">×</button>
+                    </div>
+                    <div class="zork-ticket-dialog-content">
+                        <label id="ticketActionLabel">${this.escapeHtml(label)}</label>
+                        <textarea id="ticketActionInput" class="zork-ticket-textarea" rows="4"></textarea>
+                        <div id="ticketActionError" class="zork-ticket-error hidden"></div>
+                    </div>
+                    <div class="zork-ticket-dialog-buttons">
+                        <button id="ticketActionSubmit" class="zork-ticket-btn zork-ticket-btn-primary">Submit</button>
+                        <button id="ticketActionCancel" class="zork-ticket-btn zork-ticket-btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+        }
+        
+        // Get current elements
+        const titleEl = dialog.querySelector('#ticketActionDialogTitle');
+        const labelEl = dialog.querySelector('#ticketActionLabel');
+        const input = dialog.querySelector('#ticketActionInput');
+        const errorEl = dialog.querySelector('#ticketActionError');
+        const submitBtn = dialog.querySelector('#ticketActionSubmit');
+        const cancelBtn = dialog.querySelector('#ticketActionCancel');
+        const closeBtn = dialog.querySelector('#ticketActionDialogClose') || dialog.querySelector('.zork-ticket-dialog-close');
+        
+        // Update content
+        if (titleEl) titleEl.textContent = title;
+        if (labelEl) labelEl.textContent = label;
+        if (input) input.value = '';
+        if (errorEl) {
+            errorEl.textContent = '';
+            errorEl.classList.add('hidden');
+        }
+        
+        // Setup handlers - use event delegation on dialog to avoid cloning issues
+        if (!submitBtn || !cancelBtn) {
+            console.error('[Terminal] Dialog buttons not found:', { submitBtn: !!submitBtn, cancelBtn: !!cancelBtn });
+            return dialog;
+        }
+        
+        const closeDialog = () => {
+            console.log('[Terminal] Closing dialog');
+            dialog.classList.add('hidden');
+            if (input) input.value = '';
+        };
+        
+        // Store onSubmit in dialog dataset for event delegation
+        dialog.dataset.onSubmit = 'true';
+        dialog._onSubmitCallback = onSubmit;
+        
+        // Use event delegation on the dialog itself (more reliable than cloning)
+        if (!dialog.dataset.delegationSetup) {
+            dialog.addEventListener('click', (e) => {
+                // Find the actual button element (might be clicked on child element)
+                let button = e.target;
+                while (button && button !== dialog) {
+                    const buttonId = button.id;
+                    const buttonClass = button.className || '';
+                    
+                    // Check if this is the submit button or contains it
+                    if (buttonId === 'ticketActionSubmit' || button.classList.contains('zork-ticket-btn-primary')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('[Terminal] Submit button clicked via delegation');
+                        
+                        const currentInputEl = dialog.querySelector('#ticketActionInput');
+                        const value = currentInputEl ? currentInputEl.value.trim() : '';
+                        console.log('[Terminal] Submit - value length:', value.length, 'value:', value.substring(0, 50));
+                        console.log('[Terminal] Submit - callback exists:', !!dialog._onSubmitCallback);
+                        
+                        closeDialog();
+                        
+                        if (dialog._onSubmitCallback) {
+                            console.log('[Terminal] Calling onSubmit callback');
+                            try {
+                                dialog._onSubmitCallback(value);
+                                console.log('[Terminal] onSubmit completed');
+                            } catch (error) {
+                                console.error('[Terminal] Error in onSubmit:', error);
+                            }
+                        } else {
+                            console.warn('[Terminal] No onSubmit callback found');
+                        }
+                        return;
+                    }
+                    
+                    // Check if this is the cancel button
+                    if (buttonId === 'ticketActionCancel' || (button.classList.contains('zork-ticket-btn') && !button.classList.contains('zork-ticket-btn-primary'))) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('[Terminal] Cancel button clicked via delegation');
+                        closeDialog();
+                        return;
+                    }
+                    
+                    // Check if this is the close button
+                    if (buttonId === 'ticketActionDialogClose' || button.classList.contains('zork-ticket-dialog-close')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('[Terminal] Close button clicked via delegation');
+                        closeDialog();
+                        return;
+                    }
+                    
+                    // Move up the DOM tree
+                    button = button.parentElement;
+                }
+                
+                // Log if click wasn't on a button (for debugging)
+                if (e.target !== dialog) {
+                    console.log('[Terminal] Dialog click on non-button element:', {
+                        tagName: e.target.tagName,
+                        id: e.target.id,
+                        className: e.target.className
+                    });
+                }
+            });
+            
+            dialog.dataset.delegationSetup = 'true';
+        }
+        
+        // Setup keyboard handlers on input
+        if (input) {
+            // Remove old listeners by cloning
+            const newInput = input.cloneNode(true);
+            input.parentNode.replaceChild(newInput, input);
+            
+            newInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('[Terminal] Ctrl+Enter pressed, triggering submit');
+                    const submitBtn = dialog.querySelector('#ticketActionSubmit');
+                    if (submitBtn) {
+                        submitBtn.click();
+                    }
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('[Terminal] Escape pressed, closing');
+                    closeDialog();
+                }
+            });
+            
+            // Focus the new input
+            setTimeout(() => {
+                newInput.focus();
+                console.log('[Terminal] Input focused');
+            }, 100);
+        }
+        
+        if (closeBtn) {
+            const newCloseBtn = closeBtn.cloneNode(true);
+            closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+            newCloseBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Terminal] Close button clicked');
+                closeDialog();
+            });
+        }
+        
+        // Close on overlay click (only add once)
+        if (!dialog.dataset.overlayHandlerAdded) {
+            dialog.addEventListener('click', (e) => {
+                if (e.target === dialog) {
+                    console.log('[Terminal] Overlay clicked, closing dialog');
+                    closeDialog();
+                }
+            });
+            dialog.dataset.overlayHandlerAdded = 'true';
+        }
+        
+        return dialog;
+    }
+    
+    /**
+     * Render ticket text with image support
+     * Converts markdown-style image syntax ![alt](data:image/...) to actual img tags
+     */
+    renderTicketTextWithImages(text) {
+        if (!text) return '';
+        
+        // Escape HTML first
+        let escaped = this.escapeHtml(text);
+        
+        // Convert markdown-style images to HTML img tags
+        // Pattern: ![alt](data:image/type;base64,...)
+        const imagePattern = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/g;
+        escaped = escaped.replace(imagePattern, (match, alt, dataUri) => {
+            // Validate it's a data URI
+            if (!dataUri.startsWith('data:image/')) {
+                return match; // Return original if not valid
+            }
+            
+            // Create img tag with base64 data
+            return `<img src="${dataUri}" alt="${this.escapeHtml(alt || 'Screenshot')}" class="ticket-screenshot" style="max-width: 100%; height: auto; border: 2px solid #00ff00; border-radius: 4px; margin: 10px 0; display: block;" />`;
+        });
+        
+        // Convert line breaks to <br>
+        escaped = escaped.replace(/\n/g, '<br>');
+        
+        return escaped;
     }
 }
 

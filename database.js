@@ -1298,8 +1298,9 @@ async function getItemByName(name) {
 async function createItem(item) {
   const result = await query(
     `INSERT INTO items (name, description, item_type, active, poofable, encumbrance, 
-     deed_warehouse_location_key, deed_base_max_item_types, deed_max_total_items, deed_automation_enabled, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+     deed_warehouse_location_key, deed_base_max_item_types, deed_max_total_items, deed_automation_enabled, 
+     rune_color, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
     [
       item.name,
       item.description || '',
@@ -1311,6 +1312,7 @@ async function createItem(item) {
       item.deed_base_max_item_types || (item.item_type === 'deed' ? 1 : null),
       item.deed_max_total_items || (item.item_type === 'deed' ? 100 : null),
       item.deed_automation_enabled || false,
+      item.rune_color || (item.item_type === 'rune' ? '#0000FF' : null),
       Date.now()
     ]
   );
@@ -1320,7 +1322,8 @@ async function createItem(item) {
 async function updateItem(item) {
   await query(
     `UPDATE items SET name = $1, description = $2, item_type = $3, active = $4, poofable = $5, encumbrance = $6,
-     deed_warehouse_location_key = $8, deed_base_max_item_types = $9, deed_max_total_items = $10, deed_automation_enabled = $11
+     deed_warehouse_location_key = $8, deed_base_max_item_types = $9, deed_max_total_items = $10, deed_automation_enabled = $11,
+     rune_color = $12
      WHERE id = $7`,
     [
       item.name,
@@ -1333,7 +1336,8 @@ async function updateItem(item) {
       item.deed_warehouse_location_key || null,
       item.deed_base_max_item_types || (item.item_type === 'deed' ? 1 : null),
       item.deed_max_total_items || (item.item_type === 'deed' ? 100 : null),
-      item.deed_automation_enabled || false
+      item.deed_automation_enabled || false,
+      item.rune_color || (item.item_type === 'rune' ? '#0000FF' : null)
     ]
   );
   return getItemById(item.id);
@@ -2881,13 +2885,13 @@ async function getDebugSessionById(sessionId) {
  * @param {object} params - Todo parameters
  * @returns {Promise<object>} The created todo
  */
-async function createDebugTodo({ sessionId, title, description, reproSteps, environment, logs, createdBy = 'zork' }) {
+async function createDebugTodo({ sessionId, title, description, reproSteps, environment, logs, createdBy = 'zork', ticketType = 'debug', priority = 2, playerId = null, playerName = null }) {
   const result = await query(
     `INSERT INTO debug_todos 
-     (session_id, title, description, repro_steps, environment, logs, created_by) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7) 
+     (session_id, title, description, repro_steps, environment, logs, created_by, ticket_type, priority, player_id, player_name) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
      RETURNING *`,
-    [sessionId, title, description, reproSteps, JSON.stringify(environment || {}), JSON.stringify(logs || {}), createdBy]
+    [sessionId, title, description, reproSteps, JSON.stringify(environment || {}), JSON.stringify(logs || {}), createdBy, ticketType, priority, playerId, playerName]
   );
   return result.rows[0];
 }
@@ -2897,13 +2901,23 @@ async function createDebugTodo({ sessionId, title, description, reproSteps, envi
  * @param {object} options - Filter options
  * @returns {Promise<Array>} List of todos
  */
-async function listDebugTodos({ status = null, limit = 50 } = {}) {
+async function listDebugTodos({ status = null, limit = 50, includeDeleted = false } = {}) {
   let sql = 'SELECT * FROM debug_todos';
   const params = [];
+  const conditions = [];
+  
+  // Filter out deleted tickets by default
+  if (!includeDeleted) {
+    conditions.push("status != 'deleted'");
+  }
   
   if (status) {
-    sql += ' WHERE status = $1';
+    conditions.push('status = $' + (conditions.length + 1));
     params.push(status);
+  }
+  
+  if (conditions.length > 0) {
+    sql += ' WHERE ' + conditions.join(' AND ');
   }
   
   sql += ' ORDER BY created_at DESC';
@@ -2931,7 +2945,7 @@ async function getDebugTodo(id) {
  * @param {object} updates - Fields to update
  * @returns {Promise<object|null>} The updated todo
  */
-async function updateDebugTodo(id, { status, resolutionNotes }) {
+async function updateDebugTodo(id, { status, resolutionNotes, title, description, priority, tags }) {
   const updates = [];
   const params = [];
   let paramIndex = 1;
@@ -2944,6 +2958,26 @@ async function updateDebugTodo(id, { status, resolutionNotes }) {
   if (resolutionNotes !== undefined) {
     updates.push(`resolution_notes = $${paramIndex++}`);
     params.push(resolutionNotes);
+  }
+  
+  if (title !== undefined) {
+    updates.push(`title = $${paramIndex++}`);
+    params.push(title);
+  }
+  
+  if (description !== undefined) {
+    updates.push(`description = $${paramIndex++}`);
+    params.push(description);
+  }
+  
+  if (priority !== undefined) {
+    updates.push(`priority = $${paramIndex++}`);
+    params.push(priority);
+  }
+  
+  if (tags !== undefined) {
+    updates.push(`tags = $${paramIndex++}`);
+    params.push(JSON.stringify(tags));
   }
   
   updates.push(`updated_at = NOW()`);

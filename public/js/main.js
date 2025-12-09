@@ -12,6 +12,8 @@ import CompassWidget from './components/CompassWidget.js';
 import CommsWidget from './components/CommsWidget.js';
 import Inventory from './components/Inventory.js';
 import NPCWidget from './components/NPCWidget.js';
+import FactoryWidget from './components/FactoryWidget.js';
+import TicketsWidget from './components/TicketsWidget.js';
 import MapRenderer from './utils/MapRenderer.js';
 
 // Initialize game
@@ -25,6 +27,8 @@ const compassWidget = new CompassWidget(game);
 const commsWidget = new CommsWidget(game);
 const inventory = new Inventory(game);
 const npcWidget = new NPCWidget(game);
+const factoryWidget = new FactoryWidget(game);
+const ticketsWidget = new TicketsWidget(game);
 
 // Initialize all components
 terminal.init();
@@ -34,6 +38,8 @@ compassWidget.init();
 commsWidget.init();
 inventory.init();
 npcWidget.init();
+factoryWidget.init();
+ticketsWidget.init();
 
 // Track last command for /r repeat command
 let lastCommand = null;
@@ -668,7 +674,7 @@ function displayHelp() {
 }
 
 // Widget toggle functionality
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting', 'runekeeper'];
+const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting', 'runekeeper', 'tickets'];
 let activeWidgets = ['stats', 'compass', 'map', 'comms']; // Default active widgets
 let godMode = false;
 let hasWarehouseDeed = false;
@@ -684,10 +690,34 @@ game.messageBus.on('player:stats', (data) => {
             // Only update widget display if godMode status changed
             if (wasGodMode !== godMode) {
                 updateWidgetDisplay();
+                updateZorkButtonVisibility();
             }
         }
     }
 });
+
+// Update ZORK button visibility based on god mode
+function updateZorkButtonVisibility() {
+    const zorkBtn = document.getElementById('zorkBtn');
+    if (zorkBtn) {
+        if (godMode) {
+            zorkBtn.classList.remove('hidden');
+            zorkBtn.style.display = '';
+        } else {
+            zorkBtn.classList.add('hidden');
+            zorkBtn.style.display = 'none';
+        }
+    }
+}
+
+// Initialize ZORK button visibility on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        updateZorkButtonVisibility();
+    });
+} else {
+    updateZorkButtonVisibility();
+}
 
 game.messageBus.on('room:update', (data) => {
     if (data.hasWarehouseDeed !== undefined) {
@@ -767,9 +797,10 @@ function initWidgetToggleBar() {
 function toggleWidget(widgetName) {
     if (!TOGGLEABLE_WIDGETS.includes(widgetName)) return;
     
-    // Check if widget is available (godmode requires godMode, warehouse requires hasWarehouseDeed)
+    // Check if widget is available (godmode requires godMode, warehouse requires hasWarehouseDeed, tickets requires godMode)
     if (widgetName === 'godmode' && !godMode) return;
     if (widgetName === 'warehouse' && !hasWarehouseDeed) return;
+    if (widgetName === 'tickets' && !godMode) return;
     
     const isActive = activeWidgets.includes(widgetName);
     
@@ -873,9 +904,24 @@ function updateWidgetDisplay() {
         npcWidgetVisible = npcWidget.getVisibility();
     }
     
+    // Update Factory widget visibility from component
+    let factoryWidgetVisible = false;
+    if (typeof factoryWidget !== 'undefined' && factoryWidget) {
+        factoryWidgetVisible = factoryWidget.getVisibility();
+    }
+    // Also check global variable for backward compatibility
+    if (typeof window.factoryWidgetVisible !== 'undefined') {
+        factoryWidgetVisible = window.factoryWidgetVisible || factoryWidgetVisible;
+    }
+    
     // Build list of widgets to actually display in slots
     // Auto-managed widgets (factory, npc, warehouse) take priority, then activeWidgets
     let widgetsToShow = [];
+    
+    // Factory widget takes slot if visible (auto-managed)
+    if (factoryWidgetVisible) {
+        widgetsToShow.push('factory');
+    }
     
     // NPC widget takes slot if visible (auto-managed)
     if (npcWidgetVisible) {
@@ -886,6 +932,7 @@ function updateWidgetDisplay() {
     const filteredActiveWidgets = activeWidgets.filter(w => {
         if (w === 'godmode' && !godMode) return false;
         if (w === 'warehouse' && !hasWarehouseDeed) return false;
+        if (w === 'tickets' && !godMode) return false;
         return true;
     });
     widgetsToShow.push(...filteredActiveWidgets);
@@ -894,6 +941,10 @@ function updateWidgetDisplay() {
     widgetsToShow = widgetsToShow.slice(0, 4);
     
     // Hide auto-managed widgets if not in widgetsToShow
+    const factoryWidgetEl = document.getElementById('widget-factory');
+    if (factoryWidgetEl && !widgetsToShow.includes('factory')) {
+        factoryWidgetEl.classList.add('hidden');
+    }
     const npcWidgetEl = document.getElementById('widget-npc');
     if (npcWidgetEl && !widgetsToShow.includes('npc')) {
         npcWidgetEl.classList.add('hidden');

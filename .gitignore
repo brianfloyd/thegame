@@ -30,6 +30,9 @@ Thumbs.db
 logs/
 *.log
 
+# Auto-ticket processing
+.tickets/
+
 # Build files
 dist/
 build/

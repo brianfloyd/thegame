@@ -293,6 +293,25 @@ function showItemForm(item = null) {
                        placeholder="Enter item weight">
             </div>
             
+            <div data-rune-config class="item-form-group" style="border-top: 2px solid #00ff00; margin-top: 20px; padding-top: 15px; display: ${item?.item_type === 'rune' ? 'block' : 'none'};">
+                <h4 style="color: #ffff00; margin-bottom: 15px;">Rune Configuration</h4>
+                
+                <div class="item-form-group">
+                    <label for="runeColor">Rune Color (Hex)</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="color" id="runeColorPicker" 
+                               value="${item && item.rune_color ? item.rune_color : '#0000ff'}" 
+                               style="width: 60px; height: 40px; cursor: pointer; border: 2px solid #00ff00; background: #0a0a0a;">
+                        <input type="text" id="runeColor" class="item-form-input" 
+                               value="${item && item.rune_color ? item.rune_color : '#0000ff'}" 
+                               pattern="^#[0-9A-Fa-f]{6}$"
+                               placeholder="#0000ff"
+                               style="flex: 1;">
+                    </div>
+                    <p style="font-size: 0.85em; color: #888; margin-top: 5px;">Default: Blue (#0000ff). This color will be displayed in the factory widget when the rune is placed.</p>
+                </div>
+            </div>
+            
             <div data-deed-config class="item-form-group" style="border-top: 2px solid #00ff00; margin-top: 20px; padding-top: 15px; display: ${item?.item_type === 'deed' ? 'block' : 'none'};">
                 <h4 style="color: #ffff00; margin-bottom: 15px;">Deed Configuration</h4>
                 
@@ -366,6 +385,21 @@ function showItemForm(item = null) {
     // Add item type change handler to show/hide deed fields
     const itemTypeSelect = document.getElementById('itemType');
     if (itemTypeSelect) {
+        // Sync color picker with text input
+        const colorPicker = document.getElementById('runeColorPicker');
+        const colorInput = document.getElementById('runeColor');
+        if (colorPicker && colorInput) {
+            colorPicker.addEventListener('input', (e) => {
+                colorInput.value = e.target.value.toUpperCase();
+            });
+            colorInput.addEventListener('input', (e) => {
+                const value = e.target.value;
+                if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+                    colorPicker.value = value;
+                }
+            });
+        }
+        
         itemTypeSelect.addEventListener('change', () => {
             // Re-render form to show/hide deed fields
             const currentItem = item || {};
@@ -466,6 +500,23 @@ function saveItem(itemId) {
         }
         if (automationCheckbox) {
             item.deed_automation_enabled = automationCheckbox.checked;
+        }
+    }
+    
+    // Add rune configuration if item type is rune
+    if (itemType === 'rune') {
+        const runeColorInput = document.getElementById('runeColor');
+        if (runeColorInput) {
+            const colorValue = runeColorInput.value.trim();
+            // Validate hex color format
+            if (/^#[0-9A-Fa-f]{6}$/.test(colorValue)) {
+                item.rune_color = colorValue.toUpperCase();
+            } else {
+                // Default to blue if invalid
+                item.rune_color = '#0000FF';
+            }
+        } else {
+            item.rune_color = '#0000FF'; // Default blue
         }
     }
     

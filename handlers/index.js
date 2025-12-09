@@ -22,6 +22,7 @@ const handlerMap = {
   take: gameHandlers.take,
   drop: gameHandlers.drop,
   factoryWidgetAddItem: gameHandlers.factoryWidgetAddItem,
+  factoryWidgetRemoveItem: gameHandlers.factoryWidgetRemoveItem,
   harvest: gameHandlers.harvest,
   attune: gameHandlers.attune,
   resonate: gameHandlers.resonate,
@@ -67,6 +68,10 @@ const handlerMap = {
   
   // Debug observer handlers
   observeBug: gameHandlers.observeBug,
+  createZorkTicket: gameHandlers.createZorkTicket,
+  getTickets: gameHandlers.getTickets,
+  updateTicket: gameHandlers.updateTicket,
+  addTicketFeedback: gameHandlers.addTicketFeedback,
   clientDebugEvent: gameHandlers.clientDebugEvent,
   
   // Map editor handlers

@@ -144,7 +144,13 @@ function renderPlayerList() {
         
         const nameSpan = document.createElement('span');
         nameSpan.className = 'player-list-name';
-        nameSpan.textContent = player.name;
+        // Parse markup to show player colors (e.g., @Fliz@ displays with color)
+        if (typeof parseMarkup === 'function') {
+            nameSpan.innerHTML = parseMarkup(player.name, '#00ff00');
+        } else {
+            // Fallback if parseMarkup not available
+            nameSpan.textContent = player.name;
+        }
         
         const godModeSpan = document.createElement('span');
         godModeSpan.className = 'player-list-badge';

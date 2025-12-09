@@ -279,6 +279,13 @@ export default class Game {
                 });
                 break;
                 
+            case 'factoryWidgetState':
+                // Direct factory widget state update
+                this.messageBus.emit('factoryWidgetState', {
+                    state: data.state
+                });
+                break;
+                
             case 'playerJoined':
                 this.messageBus.emit('player:joined', {
                     playerName: data.playerName,
@@ -325,6 +332,30 @@ export default class Game {
                 
             case 'systemMessage':
                 this.messageBus.emit('system:message', {
+                    message: data.message
+                });
+                break;
+                
+            case 'zorkTicketCreated':
+                this.messageBus.emit('zorkTicketCreated', data);
+                break;
+                
+            case 'ticketsList':
+                this.messageBus.emit('ticketsList', data);
+                break;
+                
+            case 'ticketUpdated':
+                this.messageBus.emit('ticketUpdated', data);
+                break;
+                
+            case 'ticketFeedbackAdded':
+                this.messageBus.emit('ticketFeedbackAdded', data);
+                break;
+                
+            case 'error':
+                // Route errors to appropriate handlers
+                this.messageBus.emit('ticket:error', data);
+                this.messageBus.emit('terminal:error', {
                     message: data.message
                 });
                 break;

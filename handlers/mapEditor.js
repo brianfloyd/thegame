@@ -673,19 +673,16 @@ async function jumpToRoom(ctx, data) {
     const existingState = factoryWidgetState.get(connectionId);
     if (existingState && existingState.roomId === targetRoom.id) {
       factoryState = {
-        slots: existingState.slots,
-        textInput: existingState.textInput || ''
+        slots: existingState.slots.length === 5 ? existingState.slots : [...existingState.slots, null, null, null, null].slice(0, 5) // Ensure 5 slots
       };
     } else {
       // Initialize empty factory state
       factoryState = {
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null, null, null] // 5 slots: 2 supply + 3 rune
       };
       factoryWidgetState.set(connectionId, {
         roomId: targetRoom.id,
-        slots: [null, null],
-        textInput: ''
+        slots: [null, null, null, null, null] // 5 slots: 2 supply + 3 rune
       });
     }
   } else {
