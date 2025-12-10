@@ -285,6 +285,34 @@ export default class Game {
                     state: data.state
                 });
                 break;
+            
+            case 'factoryCraftStarted':
+                this.messageBus.emit('factoryCraftStarted', {
+                    recipeName: data.recipeName,
+                    craftTimeMs: data.craftTimeMs,
+                    successRate: data.successRate,
+                    critChance: data.critChance
+                });
+                break;
+            
+            case 'factoryCraftComplete':
+                this.messageBus.emit('factoryCraftComplete', {
+                    success: data.success,
+                    critical: data.critical,
+                    recipeName: data.recipeName,
+                    outputs: data.outputs,
+                    byproducts: data.byproducts,
+                    message: data.message,
+                    returnedIngredients: data.returnedIngredients,
+                    wornTriggered: data.wornTriggered
+                });
+                break;
+            
+            case 'factoryCraftFizzle':
+                this.messageBus.emit('factoryCraftFizzle', {
+                    message: data.message
+                });
+                break;
                 
             case 'playerJoined':
                 this.messageBus.emit('player:joined', {

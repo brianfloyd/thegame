@@ -197,6 +197,17 @@
                                         </div>
                                     </div>
                                 </div>
+                                <!-- Craft Button and Progress -->
+                                <div class="factory-craft-section">
+                                    <button id="factory-craft-btn" class="factory-craft-btn" style="display: none;" title="Begin crafting">CRAFT</button>
+                                    <div id="factory-progress-container" class="factory-progress-container" style="display: none;">
+                                        <div class="factory-progress-bar">
+                                            <div id="factory-progress-fill" class="factory-progress-fill"></div>
+                                        </div>
+                                        <span id="factory-progress-text" class="factory-progress-text">Crafting...</span>
+                                    </div>
+                                    <div id="factory-message" class="factory-message" style="display: none;"></div>
+                                </div>
                             </div>
                         </div>
                         <!-- Warehouse Widget (hidden by default, auto-shows in warehouse rooms) -->
@@ -258,6 +269,10 @@
                                         <button class="godmode-editor-btn" data-action="player">
                                             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                                             <span>Player</span>
+                                        </button>
+                                        <button class="godmode-editor-btn" data-action="crafting">
+                                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19.36 2.72L20.78 4.14L19.36 5.56L17.94 4.14L19.36 2.72M12 8L13.41 9.41L12 10.83L10.59 9.41L12 8M6.64 2.72L8.06 4.14L6.64 5.56L5.22 4.14L6.64 2.72M21.5 6.5L20.09 7.91L18.68 6.5L20.09 5.09L21.5 6.5M19.36 21.28L17.94 19.86L19.36 18.44L20.78 19.86L19.36 21.28M12 15.17L13.41 16.59L12 18L10.59 16.59L12 15.17M6.64 21.28L5.22 19.86L6.64 18.44L8.06 19.86L6.64 21.28M2.5 6.5L3.91 5.09L5.32 6.5L3.91 7.91L2.5 6.5M12 2L13.41 3.41L12 4.83L10.59 3.41L12 2M12 20L13.41 21.41L12 22.83L10.59 21.41L12 20M4.93 4.93L6.34 6.34L4.93 7.75L3.51 6.34L4.93 4.93M19.07 4.93L20.49 6.34L19.07 7.75L17.66 6.34L19.07 4.93M4.93 19.07L3.51 17.66L4.93 16.24L6.34 17.66L4.93 19.07M19.07 19.07L17.66 17.66L19.07 16.24L20.49 17.66L19.07 19.07M12 11L13.41 12.41L12 13.83L10.59 12.41L12 11Z"/></svg>
+                                            <span>Crafting</span>
                                         </button>
                                     </div>
                                 </div>

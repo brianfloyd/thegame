@@ -10,6 +10,7 @@ const mapEditorHandlers = require('./mapEditor');
 const npcEditorHandlers = require('./npcEditor');
 const itemEditorHandlers = require('./itemEditor');
 const playerEditorHandlers = require('./playerEditor');
+const craftingEditorHandlers = require('./craftingEditor');
 const { isHarvestSafeCommand, findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
 
 // Map of message types to handler functions
@@ -23,6 +24,7 @@ const handlerMap = {
   drop: gameHandlers.drop,
   factoryWidgetAddItem: gameHandlers.factoryWidgetAddItem,
   factoryWidgetRemoveItem: gameHandlers.factoryWidgetRemoveItem,
+  factoryCraft: gameHandlers.factoryCraft,
   harvest: gameHandlers.harvest,
   attune: gameHandlers.attune,
   resonate: gameHandlers.resonate,
@@ -127,7 +129,14 @@ const handlerMap = {
   updatePlayer: playerEditorHandlers.updatePlayer,
   getPlayerInventory: playerEditorHandlers.getPlayerInventory,
   addPlayerInventoryItem: playerEditorHandlers.addPlayerInventoryItem,
-  removePlayerInventoryItem: playerEditorHandlers.removePlayerInventoryItem
+  removePlayerInventoryItem: playerEditorHandlers.removePlayerInventoryItem,
+  
+  // Crafting editor handlers
+  getFactoryRecipes: craftingEditorHandlers.getFactoryRecipes,
+  getFactoryRecipe: craftingEditorHandlers.getFactoryRecipe,
+  createFactoryRecipe: craftingEditorHandlers.createFactoryRecipe,
+  updateFactoryRecipe: craftingEditorHandlers.updateFactoryRecipe,
+  deleteFactoryRecipe: craftingEditorHandlers.deleteFactoryRecipe
 };
 
 /**

@@ -524,6 +524,11 @@ function setupRoutes(app, options) {
     res.sendFile(path.join(__dirname, '..', 'public', 'item-editor.html'));
   });
   
+  // Crafting Recipe Editor route (God Mode only)
+  app.get('/crafting-editor', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'crafting-editor.html'));
+  });
+  
   // Player Editor route (God Mode only)
   app.get('/player', validateSession, checkGodMode, (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'public', 'player-editor.html'));

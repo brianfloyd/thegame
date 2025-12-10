@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crafting Recipe Editor - The Game</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/editor-core.css">
+</head>
+<body>
+    <!-- Crafting Recipe Editor - Uses new unified editor layout -->
+    <div id="craftingEditor" class="editor-overlay" style="display: block;">
+        <div class="editor-container">
+            <!-- Header with navigation -->
+            <div class="editor-header">
+                <div class="editor-header-left">
+                    <h2>Crafting Recipe Editor</h2>
+                    <button class="editor-nav-btn" data-editor="map-editor" title="Go to Map Editor">Map</button>
+                    <button class="editor-nav-btn" data-editor="npc-editor" title="Go to NPC Editor">NPC</button>
+                    <button class="editor-nav-btn" data-editor="item-editor" title="Go to Item Editor">Item</button>
+                </div>
+                <div class="editor-header-actions">
+                    <button id="closeCraftingEditor" class="editor-close-btn">Close</button>
+                </div>
+            </div>
+            
+            <!-- Two-pane layout -->
+            <div class="editor-layout">
+                <!-- Left Sidebar (25%) -->
+                <div class="editor-sidebar">
+                    <div id="recipeSidebar"></div>
+                </div>
+                
+                <!-- Right Main Panel (75%) -->
+                <div class="editor-main-panel">
+                    <div class="editor-main-scroll">
+                        <div id="craftingEditorForm">
+                            <p class="editor-hint">Select a recipe to edit or click "New" to create one.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="markup-helper.js"></script>
+    <script type="module" src="crafting-editor.js"></script>
+</body>
+</html>

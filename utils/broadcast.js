@@ -317,16 +317,23 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   if (room.room_type === 'factory') {
     const existingState = factoryWidgetState.get(connectionId);
     if (existingState && existingState.roomId === room.id) {
+      // Ensure 5 slots: 2 ingredient + 3 rune (production, speed, efficiency)
+      const slots = existingState.slots || [];
+      while (slots.length < 5) slots.push(null);
       factoryState = {
-        slots: existingState.slots.length === 3 ? existingState.slots : [...existingState.slots, null] // Ensure 3 slots
+        slots: slots.slice(0, 5),
+        factoryTier: room.factory_tier || 1,
+        factoryQuirks: room.factory_quirks || null
       };
     } else {
       factoryState = {
-        slots: [null, null, null] // 3 slots: 2 resource + 1 rune
+        slots: [null, null, null, null, null], // 5 slots: 2 ingredient + 3 rune
+        factoryTier: room.factory_tier || 1,
+        factoryQuirks: room.factory_quirks || null
       };
       factoryWidgetState.set(connectionId, {
         roomId: room.id,
-        slots: [null, null, null] // 3 slots: 2 resource + 1 rune
+        slots: [null, null, null, null, null] // 5 slots: 2 ingredient + 3 rune
       });
     }
   } else {

@@ -13,6 +13,9 @@ export default class FactoryWidget extends Component {
         this.isVisible = false;
         this.currentState = null;
         this.delegationSetup = false;
+        this.isCrafting = false;
+        this.craftProgress = 0;
+        this.craftProgressInterval = null;
     }
     
     init() {
@@ -25,11 +28,19 @@ export default class FactoryWidget extends Component {
         // Subscribe to factoryWidgetState messages for direct state updates
         this.subscribe('factoryWidgetState', (data) => this.handleFactoryWidgetState(data));
         
+        // Subscribe to craft-related messages
+        this.subscribe('factoryCraftStarted', (data) => this.handleCraftStarted(data));
+        this.subscribe('factoryCraftComplete', (data) => this.handleCraftComplete(data));
+        this.subscribe('factoryCraftFizzle', (data) => this.handleCraftFizzle(data));
+        
         // Initialize drag and drop using event delegation
         this.initDragDropDelegation();
         
         // Initialize empty slot button handlers
         this.initEmptyButtons();
+        
+        // Initialize craft button handler
+        this.initCraftButton();
         
         console.log('[FactoryWidget] Initialized');
     }
@@ -409,6 +420,9 @@ export default class FactoryWidget extends Component {
                 }
             }
         }
+        
+        // Update craft button visibility based on Production Rune presence
+        this.updateCraftButtonVisibility();
     }
     
     /**
@@ -416,5 +430,190 @@ export default class FactoryWidget extends Component {
      */
     getVisibility() {
         return this.isVisible;
+    }
+    
+    /**
+     * Initialize craft button handler
+     */
+    initCraftButton() {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.setupCraftButton());
+        } else {
+            this.setupCraftButton();
+        }
+    }
+    
+    /**
+     * Setup craft button click handler
+     */
+    setupCraftButton() {
+        const craftBtn = document.getElementById('factory-craft-btn');
+        if (!craftBtn) return;
+        
+        craftBtn.addEventListener('click', () => {
+            if (this.isCrafting) return;
+            this.startCraft();
+        });
+        
+        console.log('[FactoryWidget] Craft button handler setup');
+    }
+    
+    /**
+     * Check if Production Rune is in slot 2 (required for crafting)
+     */
+    hasProductionRune() {
+        if (!this.currentState || !this.currentState.slots) return false;
+        
+        const slot2 = this.currentState.slots[2];
+        if (!slot2 || !slot2.itemName) return false;
+        
+        // Check if it's a production rune by type or name
+        if (slot2.runeType === 'PRODUCTION') return true;
+        
+        const name = (slot2.itemName || '').toLowerCase();
+        return name.includes('production') || name.includes('factory') || name.includes('harvester');
+    }
+    
+    /**
+     * Update craft button visibility based on Production Rune presence
+     */
+    updateCraftButtonVisibility() {
+        const craftBtn = document.getElementById('factory-craft-btn');
+        if (!craftBtn) return;
+        
+        const hasRune = this.hasProductionRune();
+        craftBtn.style.display = hasRune && !this.isCrafting ? 'block' : 'none';
+    }
+    
+    /**
+     * Start crafting
+     */
+    startCraft() {
+        if (this.isCrafting) return;
+        if (!this.hasProductionRune()) {
+            this.showMessage('A Production Rune is required in the production slot to craft.', 'error');
+            return;
+        }
+        
+        console.log('[FactoryWidget] Starting craft');
+        this.game.send({ type: 'factoryCraft' });
+    }
+    
+    /**
+     * Handle craft started message
+     */
+    handleCraftStarted(data) {
+        console.log('[FactoryWidget] Craft started:', data);
+        
+        this.isCrafting = true;
+        this.craftProgress = 0;
+        
+        // Hide craft button, show progress
+        const craftBtn = document.getElementById('factory-craft-btn');
+        const progressContainer = document.getElementById('factory-progress-container');
+        const progressFill = document.getElementById('factory-progress-fill');
+        const progressText = document.getElementById('factory-progress-text');
+        
+        if (craftBtn) craftBtn.style.display = 'none';
+        if (progressContainer) progressContainer.style.display = 'block';
+        if (progressFill) progressFill.style.width = '0%';
+        if (progressText) {
+            progressText.textContent = `Crafting ${data.recipeName || 'item'}...`;
+        }
+        
+        // Show success rate info
+        this.showMessage(`Crafting ${data.recipeName || 'item'} (${data.successRate || '?'}% success, ${data.critChance || '?'}% crit)`, 'info');
+        
+        // Start progress animation
+        const craftTimeMs = data.craftTimeMs || 5000;
+        const updateInterval = 100;
+        const totalUpdates = craftTimeMs / updateInterval;
+        let currentUpdate = 0;
+        
+        this.craftProgressInterval = setInterval(() => {
+            currentUpdate++;
+            const progress = Math.min(100, (currentUpdate / totalUpdates) * 100);
+            
+            if (progressFill) {
+                progressFill.style.width = `${progress}%`;
+            }
+            
+            if (currentUpdate >= totalUpdates) {
+                clearInterval(this.craftProgressInterval);
+                this.craftProgressInterval = null;
+            }
+        }, updateInterval);
+    }
+    
+    /**
+     * Handle craft complete message
+     */
+    handleCraftComplete(data) {
+        console.log('[FactoryWidget] Craft complete:', data);
+        
+        this.isCrafting = false;
+        
+        // Clear progress interval if still running
+        if (this.craftProgressInterval) {
+            clearInterval(this.craftProgressInterval);
+            this.craftProgressInterval = null;
+        }
+        
+        // Hide progress, show result
+        const progressContainer = document.getElementById('factory-progress-container');
+        if (progressContainer) progressContainer.style.display = 'none';
+        
+        // Show result message
+        if (data.success) {
+            const critText = data.critical ? ' CRITICAL SUCCESS!' : '';
+            this.showMessage(data.message || `Successfully crafted!${critText}`, data.critical ? 'critical' : 'success');
+        } else {
+            this.showMessage(data.message || 'Crafting failed.', 'failure');
+        }
+        
+        // Update craft button visibility (it will reappear if Production Rune still present)
+        this.updateCraftButtonVisibility();
+    }
+    
+    /**
+     * Handle craft fizzle message (invalid recipe)
+     */
+    handleCraftFizzle(data) {
+        console.log('[FactoryWidget] Craft fizzle:', data);
+        
+        this.isCrafting = false;
+        
+        // Clear progress interval if running
+        if (this.craftProgressInterval) {
+            clearInterval(this.craftProgressInterval);
+            this.craftProgressInterval = null;
+        }
+        
+        // Hide progress
+        const progressContainer = document.getElementById('factory-progress-container');
+        if (progressContainer) progressContainer.style.display = 'none';
+        
+        // Show fizzle message
+        this.showMessage(data.message || 'The ingredients don\'t form a valid recipe.', 'fizzle');
+        
+        // Update craft button visibility
+        this.updateCraftButtonVisibility();
+    }
+    
+    /**
+     * Show a message in the factory widget
+     */
+    showMessage(text, type = 'info') {
+        const messageEl = document.getElementById('factory-message');
+        if (!messageEl) return;
+        
+        messageEl.textContent = text;
+        messageEl.className = `factory-message factory-message-${type}`;
+        messageEl.style.display = 'block';
+        
+        // Auto-hide after delay
+        setTimeout(() => {
+            messageEl.style.display = 'none';
+        }, type === 'critical' || type === 'success' ? 5000 : 3000);
     }
 }

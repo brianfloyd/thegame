@@ -19,6 +19,14 @@ const { findPlayerHarvestSession, endHarvestSession } = require('../services/npc
 const { verifyGodMode } = require('../utils/broadcast');
 const messageCache = require('../utils/messageCache');
 
+// Factory crafting system services
+const factoryConfig = require('../config/factoryConfig');
+const factoryRuneSystem = require('../services/factoryRuneSystem');
+const factoryQuirks = require('../services/factoryQuirks');
+const factoryRecipeMatcher = require('../services/factoryRecipeMatcher');
+const factoryCraftingEngine = require('../services/factoryCraftingEngine');
+const factoryOutputRouter = require('../services/factoryOutputRouter');
+
 // Track Lore Keeper engagement timers per connectionId
 const loreKeeperEngagementTimers = new Map();
 
@@ -1634,11 +1642,12 @@ async function factoryWidgetAddItem(ctx, data) {
     // Stack: increase quantity by actualQuantity
     currentSlot.quantity += actualQuantity;
   } else {
-    // New item in slot - include item_type and rune_color for display
+    // New item in slot - include item_type, rune_type, and rune_color for display and craft detection
     factoryState.slots[slotIndex] = {
       itemName: canonicalItemName,
       quantity: actualQuantity,
       itemType: itemData.item_type,
+      runeType: itemData.rune_type || null,
       runeColor: itemData.rune_color || null
     };
   }
@@ -1728,6 +1737,285 @@ async function factoryWidgetRemoveItem(ctx, data) {
   await sendPlayerStats(connectedPlayers, db, connectionId);
   
   console.log(`[Factory] Player ${playerName} emptied slot ${slotIndex}, returned ${slot.quantity}x ${slot.itemName} to inventory`);
+}
+
+/**
+ * Handle factory craft command
+ * Validates recipe match, calculates success/crit, executes craft, handles fizzle, routes outputs
+ * 
+ * IMPORTANT: Production Rune (slot 2) is a machine requirement, NOT part of recipes.
+ * Fixed semantic slots: 0-1 = ingredients, 2 = production rune, 3 = speed rune, 4 = efficiency rune
+ */
+async function factoryCraft(ctx, data) {
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId, playerName } = ctx;
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const currentRoom = await db.getRoomById(player.current_room_id);
+  if (!currentRoom) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Current room not found' }));
+    return;
+  }
+  
+  // Validate player is in factory room
+  if (currentRoom.room_type !== 'factory') {
+    ws.send(JSON.stringify({ type: 'error', message: 'You must be in a factory room to craft.' }));
+    return;
+  }
+  
+  // Get factory widget state
+  let factoryState = factoryWidgetState.get(connectionId);
+  if (!factoryState || factoryState.roomId !== currentRoom.id) {
+    factoryState = {
+      roomId: currentRoom.id,
+      slots: [null, null, null, null, null]
+    };
+    factoryWidgetState.set(connectionId, factoryState);
+  }
+  
+  const slots = factoryState.slots;
+  
+  // MACHINE REQUIREMENT: Check for Production Rune in slot 2
+  if (!factoryRuneSystem.hasProductionRune(slots)) {
+    ws.send(JSON.stringify({ type: 'error', message: 'A Production Rune is required in the production slot to craft.' }));
+    return;
+  }
+  
+  // Get room tier and quirk
+  const roomTier = currentRoom.factory_tier || 1;
+  const quirk = factoryQuirks.getFactoryQuirk(currentRoom);
+  
+  // Get player stats
+  const playerStats = db.getPlayerStats(player);
+  
+  // Calculate efficiency modifier (for ingredient reduction)
+  const efficiencyRune = factoryRuneSystem.getEfficiencyRune(slots);
+  const efficiencyModifier = factoryRuneSystem.calculateEfficiencyModifier(efficiencyRune, playerStats, quirk);
+  
+  // Get all active recipes for this tier
+  const recipes = await db.getFactoryRecipes({ tier: roomTier, active: true });
+  
+  if (!recipes || recipes.length === 0) {
+    // No recipes available - fizzle
+    await handleCraftFizzle(ctx, factoryState, player, currentRoom, 'No recipes are available for this factory.');
+    return;
+  }
+  
+  // Find matching recipe
+  const matchResult = factoryRecipeMatcher.findMatchingRecipe(
+    recipes,
+    slots,
+    playerStats,
+    roomTier,
+    efficiencyModifier
+  );
+  
+  if (!matchResult) {
+    // No recipe matched - fizzle
+    await handleCraftFizzle(ctx, factoryState, player, currentRoom, 'The ingredients in the machine don\'t form a valid recipe.');
+    return;
+  }
+  
+  const recipe = matchResult.recipe;
+  
+  console.log(`[Factory] Player ${playerName} starting craft: ${recipe.name}`);
+  
+  // Execute the craft
+  const craftResult = factoryCraftingEngine.executeCraft({
+    recipe,
+    slots,
+    playerStats,
+    quirk,
+    matchResult
+  });
+  
+  // Emit craft started event
+  await factoryOutputRouter.emitCraftStarted(db, player.id, currentRoom.id, recipe.recipe_id, recipe.name);
+  
+  // Send craft started message to client (for progress bar)
+  ws.send(JSON.stringify({
+    type: 'factoryCraftStarted',
+    recipeName: recipe.name,
+    craftTimeMs: craftResult.craftTimeMs,
+    successRate: craftResult.successRate.rate.toFixed(1),
+    critChance: craftResult.critChance.chance.toFixed(1)
+  }));
+  
+  // Wait for craft time (simulated production delay)
+  await new Promise(resolve => setTimeout(resolve, craftResult.craftTimeMs));
+  
+  // Process result
+  if (craftResult.success) {
+    // Route outputs to inventory or floor
+    const routingResult = await factoryOutputRouter.routeOutputs(
+      db,
+      craftResult.outputs.items,
+      player,
+      currentRoom,
+      true // player is in room (they initiated the craft)
+    );
+    
+    // Also route byproducts
+    if (craftResult.outputs.byproducts && craftResult.outputs.byproducts.length > 0) {
+      await factoryOutputRouter.routeOutputs(
+        db,
+        craftResult.outputs.byproducts,
+        player,
+        currentRoom,
+        true
+      );
+    }
+    
+    // Consume ingredients from slots
+    const ingredientSlots = factoryConfig.SLOTS.INGREDIENT_SLOTS;
+    for (const slotIndex of ingredientSlots) {
+      factoryState.slots[slotIndex] = null;
+    }
+    
+    // Keep runes in slots (per design requirement)
+    // Runes are NOT consumed on success
+    
+    // Build success message
+    const message = factoryOutputRouter.buildCraftResultMessage(craftResult, routingResult);
+    
+    // Emit success event
+    await factoryOutputRouter.emitCraftSuccess(
+      db,
+      player.id,
+      currentRoom.id,
+      recipe.recipe_id,
+      routingResult.results,
+      craftResult.critical
+    );
+    
+    // Emit output created events (for automation hooks)
+    await factoryOutputRouter.emitOutputCreated(
+      db,
+      player.id,
+      currentRoom.id,
+      recipe.recipe_id,
+      craftResult.outputs.items
+    );
+    
+    // Send craft complete message
+    ws.send(JSON.stringify({
+      type: 'factoryCraftComplete',
+      success: true,
+      critical: craftResult.critical,
+      recipeName: recipe.name,
+      outputs: craftResult.outputs.items,
+      byproducts: craftResult.outputs.byproducts,
+      message,
+      wornTriggered: craftResult.outputs.wornTriggered
+    }));
+    
+    console.log(`[Factory] Player ${playerName} ${craftResult.critical ? 'CRITICAL ' : ''}crafted ${recipe.name}`);
+    
+  } else {
+    // Craft failed
+    
+    // Return ingredients based on return rate
+    if (craftResult.returnedIngredients && craftResult.returnedIngredients.length > 0) {
+      await factoryOutputRouter.returnIngredients(db, craftResult.returnedIngredients, player);
+    }
+    
+    // Clear ingredient slots
+    const ingredientSlots = factoryConfig.SLOTS.INGREDIENT_SLOTS;
+    for (const slotIndex of ingredientSlots) {
+      factoryState.slots[slotIndex] = null;
+    }
+    
+    // Keep runes in slots (per design requirement)
+    // Runes are NOT consumed on failure either
+    
+    // Emit failure event
+    await factoryOutputRouter.emitCraftFailed(
+      db,
+      player.id,
+      currentRoom.id,
+      recipe.recipe_id,
+      craftResult.returnedIngredients
+    );
+    
+    // Send craft complete message (failure)
+    ws.send(JSON.stringify({
+      type: 'factoryCraftComplete',
+      success: false,
+      critical: false,
+      recipeName: recipe.name,
+      message: craftResult.message,
+      returnedIngredients: craftResult.returnedIngredients
+    }));
+    
+    console.log(`[Factory] Player ${playerName} FAILED crafting ${recipe.name}`);
+  }
+  
+  // Send updated factory widget state
+  ws.send(JSON.stringify({
+    type: 'factoryWidgetState',
+    state: {
+      slots: factoryState.slots
+    }
+  }));
+  
+  // Send updated inventory
+  const updatedItems = await db.getPlayerItems(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+  
+  // Send updated player stats (encumbrance may have changed)
+  await sendPlayerStats(connectedPlayers, db, connectionId);
+  
+  // Send updated room (items on floor may have changed)
+  await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom);
+}
+
+/**
+ * Handle craft fizzle (invalid recipe or no Production Rune)
+ * Returns Production Rune to inventory and clears all slots
+ */
+async function handleCraftFizzle(ctx, factoryState, player, room, reason) {
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId } = ctx;
+  
+  // Get production rune from slot 2 to return it
+  const productionRune = factoryOutputRouter.getProductionRuneForReturn(factoryState.slots);
+  
+  if (productionRune) {
+    // Return production rune to inventory
+    await db.addPlayerItem(player.id, productionRune.itemName, productionRune.quantity);
+  }
+  
+  // Clear all slots
+  factoryState.slots = factoryOutputRouter.clearAllSlots(factoryState.slots);
+  
+  // Emit fizzle event
+  await factoryOutputRouter.emitCraftFizzle(db, player.id, room.id, reason);
+  
+  // Send fizzle message
+  ws.send(JSON.stringify({
+    type: 'factoryCraftFizzle',
+    message: reason + (productionRune ? ` Your ${productionRune.itemName} has been returned.` : '')
+  }));
+  
+  // Send updated factory widget state
+  ws.send(JSON.stringify({
+    type: 'factoryWidgetState',
+    state: {
+      slots: factoryState.slots
+    }
+  }));
+  
+  // Send updated inventory
+  const updatedItems = await db.getPlayerItems(player.id);
+  ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+  
+  // Send updated player stats
+  await sendPlayerStats(connectedPlayers, db, connectionId);
+  
+  console.log(`[Factory] Player ${player.name} craft fizzled: ${reason}`);
 }
 
 /**
@@ -6106,6 +6394,7 @@ module.exports = {
   drop,
   factoryWidgetAddItem,
   factoryWidgetRemoveItem,
+  factoryCraft,
   harvest,
   attune,
   resonate,

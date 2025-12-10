@@ -1,0 +1,835 @@
+/**
+ * Editor Core CSS - Unified styles for all game editors
+ * 
+ * This file provides shared styling for:
+ * - Crafting Editor
+ * - NPC Editor
+ * - Map Editor
+ * - Item Editor
+ * - Player Editor
+ * - Future editors (Lore, Merchant, Quest, etc.)
+ * 
+ * Components:
+ * - Editor Layout (two-pane system)
+ * - SectionBox (grouped fields with title)
+ * - FieldGrid (2/3-column grid layouts)
+ * - ToggleSwitch (standardized toggle component)
+ * - ListSidebar (search + list + actions)
+ * - JSONGridEditor (dynamic row management)
+ * - ItemSelector/RuneSelector dropdowns
+ */
+
+/* ============================================
+   CSS VARIABLES (Theme Tokens)
+   ============================================ */
+:root {
+    /* Core colors */
+    --editor-bg: #0a0a0a;
+    --editor-bg-dark: #050505;
+    --editor-bg-subtle: #1a1a1a;
+    --editor-bg-hover: #0a3a0a;
+    --editor-bg-selected: #004400;
+    
+    /* Accent colors */
+    --editor-primary: #00ff00;
+    --editor-primary-dim: #006600;
+    --editor-primary-glow: rgba(0, 255, 0, 0.5);
+    --editor-secondary: #00ffff;
+    --editor-warning: #ffff00;
+    --editor-danger: #ff0000;
+    --editor-danger-dim: #660000;
+    --editor-danger-glow: rgba(255, 0, 0, 0.5);
+    
+    /* Text colors */
+    --editor-text: #00ff00;
+    --editor-text-dim: #888;
+    --editor-text-label: #00ffff;
+    --editor-text-heading: #ffff00;
+    
+    /* Border colors */
+    --editor-border: #00ff00;
+    --editor-border-dim: #333;
+    --editor-border-subtle: #006600;
+    
+    /* Spacing */
+    --editor-spacing-xs: 4px;
+    --editor-spacing-sm: 8px;
+    --editor-spacing-md: 12px;
+    --editor-spacing-lg: 16px;
+    --editor-spacing-xl: 20px;
+    
+    /* Border radius */
+    --editor-radius-sm: 2px;
+    --editor-radius-md: 4px;
+    --editor-radius-lg: 8px;
+    
+    /* Sidebar width */
+    --editor-sidebar-width: 25%;
+    --editor-sidebar-min-width: 280px;
+    --editor-sidebar-max-width: 400px;
+    
+    /* Toggle dimensions */
+    --toggle-width: 44px;
+    --toggle-height: 22px;
+    --toggle-knob-size: 16px;
+    --toggle-knob-offset: 2px;
+}
+
+/* ============================================
+   EDITOR LAYOUT - Two-Pane System
+   ============================================ */
+.editor-layout {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--editor-bg);
+}
+
+/* Left sidebar - fixed width */
+.editor-sidebar {
+    width: var(--editor-sidebar-width);
+    min-width: var(--editor-sidebar-min-width);
+    max-width: var(--editor-sidebar-max-width);
+    background: var(--editor-bg-subtle);
+    border-right: 2px solid var(--editor-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Right main panel - fluid */
+.editor-main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--editor-bg);
+}
+
+/* Scrollable content area */
+.editor-main-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--editor-spacing-xl);
+}
+
+/* ============================================
+   EDITOR HEADER (Title + Actions)
+   ============================================ */
+.editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--editor-spacing-md) var(--editor-spacing-lg);
+    border-bottom: 2px solid var(--editor-border);
+    background: var(--editor-bg);
+    flex-shrink: 0;
+}
+
+.editor-header-left {
+    display: flex;
+    align-items: center;
+    gap: var(--editor-spacing-md);
+}
+
+.editor-header h2 {
+    color: var(--editor-primary);
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase;
+    margin: 0;
+    font-size: 16px;
+    letter-spacing: 1px;
+}
+
+.editor-header-actions {
+    display: flex;
+    gap: var(--editor-spacing-sm);
+}
+
+/* Navigation buttons */
+.editor-nav-btn {
+    background: var(--editor-bg);
+    border: 2px solid var(--editor-border);
+    color: var(--editor-text);
+    font-family: 'Courier New', monospace;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.editor-nav-btn:hover {
+    background: var(--editor-bg-hover);
+    box-shadow: 0 0 8px var(--editor-primary-glow);
+    transform: scale(1.05);
+}
+
+/* Close button */
+.editor-close-btn {
+    background: var(--editor-bg);
+    border: 2px solid var(--editor-danger);
+    color: var(--editor-danger);
+    font-family: 'Courier New', monospace;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.editor-close-btn:hover {
+    background: var(--editor-danger-dim);
+    box-shadow: 0 0 10px var(--editor-danger-glow);
+}
+
+/* ============================================
+   STICKY SAVE BAR
+   ============================================ */
+.editor-sticky-save {
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(to top, var(--editor-bg) 70%, transparent);
+    padding: var(--editor-spacing-lg) var(--editor-spacing-xl);
+    padding-top: var(--editor-spacing-xl);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--editor-spacing-md);
+    z-index: 10;
+}
+
+/* ============================================
+   LIST SIDEBAR Component
+   ============================================ */
+.list-sidebar {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.list-sidebar-header {
+    padding: var(--editor-spacing-md);
+    border-bottom: 1px solid var(--editor-border-dim);
+    flex-shrink: 0;
+}
+
+.list-sidebar-title {
+    color: var(--editor-text-heading);
+    font-size: 14px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: var(--editor-spacing-sm);
+}
+
+.list-sidebar-search {
+    width: 100%;
+    background: var(--editor-bg);
+    border: 1px solid var(--editor-border);
+    color: var(--editor-text);
+    font-family: 'Courier New', monospace;
+    padding: var(--editor-spacing-sm);
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.list-sidebar-search:focus {
+    outline: none;
+    box-shadow: 0 0 5px var(--editor-primary-glow);
+}
+
+.list-sidebar-search::placeholder {
+    color: var(--editor-text-dim);
+}
+
+.list-sidebar-actions {
+    display: flex;
+    gap: var(--editor-spacing-xs);
+    margin-top: var(--editor-spacing-sm);
+}
+
+.list-sidebar-btn {
+    flex: 1;
+    background: var(--editor-bg);
+    border: 1px solid var(--editor-border);
+    color: var(--editor-text);
+    font-family: 'Courier New', monospace;
+    padding: var(--editor-spacing-xs) var(--editor-spacing-sm);
+    cursor: pointer;
+    font-size: 10px;
+    text-transform: uppercase;
+    font-weight: bold;
+    transition: all 0.2s;
+}
+
+.list-sidebar-btn:hover:not(:disabled) {
+    background: var(--editor-bg-hover);
+    box-shadow: 0 0 5px var(--editor-primary-glow);
+}
+
+.list-sidebar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.list-sidebar-btn--danger {
+    border-color: var(--editor-danger);
+    color: var(--editor-danger);
+}
+
+.list-sidebar-btn--danger:hover:not(:disabled) {
+    background: var(--editor-danger-dim);
+    box-shadow: 0 0 5px var(--editor-danger-glow);
+}
+
+.list-sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--editor-spacing-sm);
+}
+
+/* List items */
+.list-item {
+    padding: var(--editor-spacing-sm) var(--editor-spacing-md);
+    border-bottom: 1px solid var(--editor-border-dim);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.list-item:hover {
+    background: var(--editor-bg-hover);
+}
+
+.list-item.selected {
+    background: var(--editor-bg-selected);
+    border-left: 3px solid var(--editor-primary);
+}
+
+.list-item-name {
+    color: var(--editor-text);
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+
+.list-item-meta {
+    color: var(--editor-text-dim);
+    font-size: 10px;
+}
+
+.list-item-meta.inactive {
+    color: var(--editor-danger);
+}
+
+/* ============================================
+   SECTION BOX Component
+   ============================================ */
+.section-box {
+    border: 2px solid var(--editor-border);
+    border-radius: var(--editor-radius-md);
+    margin-bottom: var(--editor-spacing-lg);
+    background: var(--editor-bg);
+    overflow: hidden;
+}
+
+.section-box-header {
+    background: rgba(0, 255, 0, 0.08);
+    padding: var(--editor-spacing-sm) var(--editor-spacing-md);
+    border-bottom: 1px solid var(--editor-border-subtle);
+}
+
+.section-box-title {
+    color: var(--editor-text-heading);
+    font-size: 13px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0;
+}
+
+.section-box-content {
+    padding: var(--editor-spacing-md);
+}
+
+/* Collapsible section boxes */
+.section-box.collapsible .section-box-header {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.section-box.collapsible .section-box-header::after {
+    content: '▼';
+    font-size: 10px;
+    color: var(--editor-primary);
+    transition: transform 0.2s;
+}
+
+.section-box.collapsible.collapsed .section-box-header::after {
+    transform: rotate(-90deg);
+}
+
+.section-box.collapsible.collapsed .section-box-content {
+    display: none;
+}
+
+/* ============================================
+   FIELD GRID Component
+   ============================================ */
+.field-grid {
+    display: grid;
+    gap: var(--editor-spacing-md);
+}
+
+.field-grid--2col {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.field-grid--3col {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.field-grid--4col {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+/* Responsive - collapse to fewer columns on narrow screens */
+@media (max-width: 900px) {
+    .field-grid--3col,
+    .field-grid--4col {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .field-grid--2col,
+    .field-grid--3col,
+    .field-grid--4col {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Full-width field */
+.field-full {
+    grid-column: 1 / -1;
+}
+
+/* Field group */
+.field-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.field-label {
+    color: var(--editor-text-label);
+    font-size: 11px;
+    margin-bottom: var(--editor-spacing-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.field-label .required {
+    color: var(--editor-danger);
+}
+
+/* ============================================
+   FORM INPUTS (Unified)
+   ============================================ */
+.editor-input,
+.editor-select,
+.editor-textarea {
+    width: 100%;
+    background: var(--editor-bg);
+    border: 1px solid var(--editor-border);
+    color: var(--editor-text);
+    font-family: 'Courier New', monospace;
+    padding: var(--editor-spacing-sm);
+    font-size: 12px;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.editor-input:focus,
+.editor-select:focus,
+.editor-textarea:focus {
+    outline: none;
+    border-color: var(--editor-primary);
+    box-shadow: 0 0 5px var(--editor-primary-glow);
+}
+
+.editor-input::placeholder {
+    color: var(--editor-text-dim);
+}
+
+.editor-textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.editor-select {
+    cursor: pointer;
+}
+
+.editor-select option {
+    background: var(--editor-bg);
+    color: var(--editor-text);
+}
+
+/* Inline input (for small values) */
+.editor-input--inline {
+    width: auto;
+    min-width: 60px;
+    max-width: 100px;
+}
+
+/* ============================================
+   TOGGLE SWITCH Component
+   ============================================ */
+.toggle-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--editor-spacing-sm);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.toggle-slider {
+    position: relative;
+    width: var(--toggle-width);
+    height: var(--toggle-height);
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 2px solid var(--editor-border-dim);
+    border-radius: var(--toggle-height);
+    transition: all 0.3s;
+}
+
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: var(--toggle-knob-size);
+    width: var(--toggle-knob-size);
+    left: var(--toggle-knob-offset);
+    bottom: var(--toggle-knob-offset);
+    background-color: var(--editor-border-dim);
+    border-radius: 50%;
+    transition: all 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: rgba(0, 255, 0, 0.2);
+    border-color: var(--editor-primary);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(calc(var(--toggle-width) - var(--toggle-knob-size) - var(--toggle-knob-offset) * 2 - 4px));
+    background-color: var(--editor-primary);
+    box-shadow: 0 0 8px var(--editor-primary-glow);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 5px var(--editor-primary-glow);
+}
+
+.toggle-label {
+    color: var(--editor-text);
+    font-size: 12px;
+}
+
+/* Small toggle variant */
+.toggle-switch--small {
+    --toggle-width: 36px;
+    --toggle-height: 18px;
+    --toggle-knob-size: 12px;
+    --toggle-knob-offset: 2px;
+}
+
+.toggle-switch--small .toggle-label {
+    font-size: 11px;
+}
+
+/* ============================================
+   JSON GRID EDITOR Component
+   ============================================ */
+.json-grid-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--editor-spacing-sm);
+}
+
+.json-grid-row {
+    display: flex;
+    gap: var(--editor-spacing-sm);
+    padding: var(--editor-spacing-sm);
+    background: rgba(0, 50, 0, 0.2);
+    border-radius: var(--editor-radius-sm);
+    align-items: center;
+}
+
+.json-grid-row .field-group {
+    flex: 1;
+}
+
+.json-grid-row .editor-input--inline {
+    flex: 0 0 auto;
+}
+
+.json-grid-add-btn {
+    width: 100%;
+    background: var(--editor-bg);
+    border: 2px dashed var(--editor-border-dim);
+    color: var(--editor-text-dim);
+    font-family: 'Courier New', monospace;
+    padding: var(--editor-spacing-sm);
+    cursor: pointer;
+    font-size: 12px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+}
+
+.json-grid-add-btn:hover {
+    border-color: var(--editor-primary);
+    color: var(--editor-primary);
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.json-grid-remove-btn {
+    background: var(--editor-danger-dim);
+    border: 1px solid var(--editor-danger);
+    color: #ff6666;
+    padding: var(--editor-spacing-xs) var(--editor-spacing-sm);
+    cursor: pointer;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    flex-shrink: 0;
+}
+
+.json-grid-remove-btn:hover {
+    background: #880000;
+    box-shadow: 0 0 5px var(--editor-danger-glow);
+}
+
+.json-grid-empty {
+    padding: var(--editor-spacing-md);
+    text-align: center;
+    color: var(--editor-text-dim);
+    font-size: 11px;
+    font-style: italic;
+}
+
+/* ============================================
+   ITEM/RUNE SELECTOR Component
+   ============================================ */
+.item-selector,
+.rune-selector {
+    position: relative;
+}
+
+.item-selector .editor-select,
+.rune-selector .editor-select {
+    padding-right: 30px;
+}
+
+/* ============================================
+   ACTION BUTTONS
+   ============================================ */
+.editor-btn {
+    background: var(--editor-bg);
+    border: 2px solid var(--editor-border);
+    color: var(--editor-text);
+    font-family: 'Courier New', monospace;
+    padding: var(--editor-spacing-sm) var(--editor-spacing-lg);
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 12px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+}
+
+.editor-btn:hover:not(:disabled) {
+    background: var(--editor-bg-hover);
+    box-shadow: 0 0 10px var(--editor-primary-glow);
+}
+
+.editor-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.editor-btn--primary {
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.editor-btn--danger {
+    border-color: var(--editor-danger);
+    color: var(--editor-danger);
+}
+
+.editor-btn--danger:hover:not(:disabled) {
+    background: var(--editor-danger-dim);
+    box-shadow: 0 0 10px var(--editor-danger-glow);
+}
+
+.editor-btn--small {
+    padding: var(--editor-spacing-xs) var(--editor-spacing-sm);
+    font-size: 10px;
+}
+
+/* ============================================
+   NOTIFICATION
+   ============================================ */
+.editor-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border: 2px solid var(--editor-primary);
+    background: #003300;
+    color: var(--editor-primary);
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    z-index: 10000;
+    max-width: 400px;
+    word-wrap: break-word;
+    animation: slideIn 0.3s ease-out;
+}
+
+.editor-notification--error {
+    background: var(--editor-danger-dim);
+    border-color: var(--editor-danger);
+    color: #ff6666;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* ============================================
+   LIVE PREVIEW Panel
+   ============================================ */
+.preview-panel {
+    background: rgba(0, 50, 50, 0.2);
+    border: 1px solid var(--editor-secondary);
+    border-radius: var(--editor-radius-md);
+    padding: var(--editor-spacing-md);
+}
+
+.preview-panel-title {
+    color: var(--editor-secondary);
+    font-size: 13px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: var(--editor-spacing-sm);
+}
+
+.preview-panel-content {
+    font-size: 12px;
+    color: var(--editor-text-dim);
+    line-height: 1.6;
+}
+
+.preview-panel-content strong {
+    color: var(--editor-text);
+}
+
+/* ============================================
+   EDITOR OVERLAY (Full-screen container)
+   ============================================ */
+.editor-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.editor-overlay.hidden {
+    display: none;
+}
+
+.editor-container {
+    width: 95%;
+    height: 95%;
+    background: var(--editor-bg);
+    border: 3px solid var(--editor-border);
+    border-radius: var(--editor-radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ============================================
+   HINT TEXT
+   ============================================ */
+.editor-hint {
+    color: var(--editor-text-dim);
+    font-size: 11px;
+    font-style: italic;
+    padding: var(--editor-spacing-lg);
+    text-align: center;
+}
+
+/* ============================================
+   FORM TITLE
+   ============================================ */
+.editor-form-title {
+    color: var(--editor-text-heading);
+    font-size: 16px;
+    text-transform: uppercase;
+    margin-bottom: var(--editor-spacing-lg);
+    padding-bottom: var(--editor-spacing-sm);
+    border-bottom: 1px solid var(--editor-border-dim);
+}
+
+/* ============================================
+   SCROLLBAR STYLING
+   ============================================ */
+.editor-main-scroll::-webkit-scrollbar,
+.list-sidebar-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.editor-main-scroll::-webkit-scrollbar-track,
+.list-sidebar-content::-webkit-scrollbar-track {
+    background: var(--editor-bg);
+}
+
+.editor-main-scroll::-webkit-scrollbar-thumb,
+.list-sidebar-content::-webkit-scrollbar-thumb {
+    background: var(--editor-border-dim);
+    border-radius: 4px;
+}
+
+.editor-main-scroll::-webkit-scrollbar-thumb:hover,
+.list-sidebar-content::-webkit-scrollbar-thumb:hover {
+    background: var(--editor-border-subtle);
+}
+

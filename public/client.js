@@ -7337,6 +7337,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.location.href = '/items';
             } else if (action === 'player') {
                 window.location.href = '/player';
+            } else if (action === 'crafting') {
+                window.location.href = '/crafting-editor';
             }
         });
     });

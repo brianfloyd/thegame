@@ -97,3 +97,5 @@ Opening port 3434 to your local network is generally safe, but be aware:
 - For production deployments, consider using proper authentication and HTTPS
 
 
+
+

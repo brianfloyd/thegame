@@ -1349,6 +1349,233 @@ async function getItemEncumbrance(itemName) {
 }
 
 // ============================================================
+// Factory Recipes Functions
+// ============================================================
+
+/**
+ * Get all factory recipes with optional filters
+ * @param {Object} options - Filter options
+ * @param {number} options.tier - Filter by factory tier required
+ * @param {boolean} options.active - Filter by active status (default: true)
+ * @returns {Promise<Array>} Array of recipe objects
+ */
+async function getFactoryRecipes(options = {}) {
+  const { tier, active = true } = options;
+  
+  let sql = 'SELECT * FROM factory_recipes WHERE 1=1';
+  const params = [];
+  let paramIndex = 1;
+  
+  if (active !== undefined && active !== null) {
+    sql += ` AND active = $${paramIndex++}`;
+    params.push(active);
+  }
+  
+  if (tier !== undefined && tier !== null) {
+    sql += ` AND factory_tier_required <= $${paramIndex++}`;
+    params.push(tier);
+  }
+  
+  sql += ' ORDER BY name';
+  
+  return getAll(sql, params);
+}
+
+/**
+ * Get a single factory recipe by ID
+ * @param {number} recipeId - The recipe ID
+ * @returns {Promise<Object|null>} Recipe object or null
+ */
+async function getFactoryRecipeById(recipeId) {
+  return getOne('SELECT * FROM factory_recipes WHERE recipe_id = $1', [recipeId]);
+}
+
+/**
+ * Get a single factory recipe by name
+ * @param {string} name - The recipe name
+ * @returns {Promise<Object|null>} Recipe object or null
+ */
+async function getFactoryRecipeByName(name) {
+  return getOne('SELECT * FROM factory_recipes WHERE LOWER(name) = LOWER($1)', [name]);
+}
+
+/**
+ * Create a new factory recipe
+ * IMPORTANT: required_runes should NEVER include PRODUCTION runes
+ * @param {Object} recipe - Recipe data
+ * @returns {Promise<Object>} Created recipe
+ */
+async function createFactoryRecipe(recipe) {
+  // Validate that required_runes doesn't include PRODUCTION
+  const requiredRunes = recipe.required_runes || [];
+  if (Array.isArray(requiredRunes) && requiredRunes.includes('PRODUCTION')) {
+    throw new Error('required_runes cannot include PRODUCTION runes. PRODUCTION runes are a machine requirement, not a recipe requirement.');
+  }
+  
+  const result = await query(
+    `INSERT INTO factory_recipes (
+      name, description, required_ingredients, required_runes, output_items,
+      success_rate, required_stats, crafting_time_ms, return_rate_on_fail,
+      factory_tier_required, byproducts, allow_rune_substitution, allow_wildcard_runes, active
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING recipe_id`,
+    [
+      recipe.name,
+      recipe.description || '',
+      JSON.stringify(recipe.required_ingredients || []),
+      JSON.stringify(recipe.required_runes || []),
+      JSON.stringify(recipe.output_items || []),
+      recipe.success_rate || 70.00,
+      recipe.required_stats ? JSON.stringify(recipe.required_stats) : null,
+      recipe.crafting_time_ms || 5000,
+      recipe.return_rate_on_fail || 0.50,
+      recipe.factory_tier_required || 1,
+      recipe.byproducts ? JSON.stringify(recipe.byproducts) : null,
+      recipe.allow_rune_substitution || false,
+      recipe.allow_wildcard_runes || false,
+      recipe.active !== undefined ? recipe.active : true
+    ]
+  );
+  
+  return getFactoryRecipeById(result.rows[0].recipe_id);
+}
+
+/**
+ * Update an existing factory recipe
+ * @param {number} recipeId - Recipe ID to update
+ * @param {Object} updates - Fields to update
+ * @returns {Promise<Object>} Updated recipe
+ */
+async function updateFactoryRecipe(recipeId, updates) {
+  // Validate that required_runes doesn't include PRODUCTION
+  if (updates.required_runes) {
+    const requiredRunes = updates.required_runes;
+    if (Array.isArray(requiredRunes) && requiredRunes.includes('PRODUCTION')) {
+      throw new Error('required_runes cannot include PRODUCTION runes. PRODUCTION runes are a machine requirement, not a recipe requirement.');
+    }
+  }
+  
+  const existingRecipe = await getFactoryRecipeById(recipeId);
+  if (!existingRecipe) {
+    throw new Error(`Recipe with ID ${recipeId} not found`);
+  }
+  
+  await query(
+    `UPDATE factory_recipes SET
+      name = COALESCE($1, name),
+      description = COALESCE($2, description),
+      required_ingredients = COALESCE($3, required_ingredients),
+      required_runes = COALESCE($4, required_runes),
+      output_items = COALESCE($5, output_items),
+      success_rate = COALESCE($6, success_rate),
+      required_stats = COALESCE($7, required_stats),
+      crafting_time_ms = COALESCE($8, crafting_time_ms),
+      return_rate_on_fail = COALESCE($9, return_rate_on_fail),
+      factory_tier_required = COALESCE($10, factory_tier_required),
+      byproducts = COALESCE($11, byproducts),
+      allow_rune_substitution = COALESCE($12, allow_rune_substitution),
+      allow_wildcard_runes = COALESCE($13, allow_wildcard_runes),
+      active = COALESCE($14, active)
+    WHERE recipe_id = $15`,
+    [
+      updates.name,
+      updates.description,
+      updates.required_ingredients ? JSON.stringify(updates.required_ingredients) : null,
+      updates.required_runes ? JSON.stringify(updates.required_runes) : null,
+      updates.output_items ? JSON.stringify(updates.output_items) : null,
+      updates.success_rate,
+      updates.required_stats ? JSON.stringify(updates.required_stats) : null,
+      updates.crafting_time_ms,
+      updates.return_rate_on_fail,
+      updates.factory_tier_required,
+      updates.byproducts ? JSON.stringify(updates.byproducts) : null,
+      updates.allow_rune_substitution,
+      updates.allow_wildcard_runes,
+      updates.active,
+      recipeId
+    ]
+  );
+  
+  return getFactoryRecipeById(recipeId);
+}
+
+/**
+ * Delete a factory recipe
+ * @param {number} recipeId - Recipe ID to delete
+ * @returns {Promise<boolean>} True if deleted
+ */
+async function deleteFactoryRecipe(recipeId) {
+  const result = await query('DELETE FROM factory_recipes WHERE recipe_id = $1', [recipeId]);
+  return result.rowCount > 0;
+}
+
+// ============================================================
+// Factory Events Functions
+// ============================================================
+
+/**
+ * Log a factory event
+ * @param {Object} eventData - Event data
+ * @returns {Promise<Object>} Created event
+ */
+async function logFactoryEvent(eventData) {
+  const result = await query(
+    `INSERT INTO factory_events (
+      event_type, factory_room_id, player_id, recipe_id, item_id, quantity, metadata
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING id`,
+    [
+      eventData.event_type,
+      eventData.factory_room_id || null,
+      eventData.player_id || null,
+      eventData.recipe_id || null,
+      eventData.item_id || null,
+      eventData.quantity || null,
+      eventData.metadata ? JSON.stringify(eventData.metadata) : null
+    ]
+  );
+  
+  return getOne('SELECT * FROM factory_events WHERE id = $1', [result.rows[0].id]);
+}
+
+/**
+ * Get recent factory events
+ * @param {Object} options - Filter options
+ * @param {number} options.playerId - Filter by player
+ * @param {number} options.roomId - Filter by room
+ * @param {string} options.eventType - Filter by event type
+ * @param {number} options.limit - Max events to return (default 50)
+ * @returns {Promise<Array>} Array of event objects
+ */
+async function getFactoryEvents(options = {}) {
+  const { playerId, roomId, eventType, limit = 50 } = options;
+  
+  let sql = 'SELECT * FROM factory_events WHERE 1=1';
+  const params = [];
+  let paramIndex = 1;
+  
+  if (playerId) {
+    sql += ` AND player_id = $${paramIndex++}`;
+    params.push(playerId);
+  }
+  
+  if (roomId) {
+    sql += ` AND factory_room_id = $${paramIndex++}`;
+    params.push(roomId);
+  }
+  
+  if (eventType) {
+    sql += ` AND event_type = $${paramIndex++}`;
+    params.push(eventType);
+  }
+  
+  sql += ` ORDER BY timestamp DESC LIMIT $${paramIndex}`;
+  params.push(limit);
+  
+  return getAll(sql, params);
+}
+
+// ============================================================
 // Room Type Colors Functions
 // ============================================================
 
@@ -3361,5 +3588,17 @@ module.exports = {
   // Ticket System
   getOpenTickets,
   updateTicketPriority,
-  addTicketTag
+  addTicketTag,
+  
+  // Factory Recipes
+  getFactoryRecipes,
+  getFactoryRecipeById,
+  getFactoryRecipeByName,
+  createFactoryRecipe,
+  updateFactoryRecipe,
+  deleteFactoryRecipe,
+  
+  // Factory Events
+  logFactoryEvent,
+  getFactoryEvents
 };
