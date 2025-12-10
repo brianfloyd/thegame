@@ -2037,11 +2037,28 @@ body {
     color: #888;
 }
 
-.widget-icon.active {
+.widget-icon.active,
+.widget-icon.widget-active {
     border-color: #00ff00;
     color: #00ff00;
     background: #0a2a0a;
     box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+}
+
+.widget-icon.widget-inactive {
+    opacity: 0.5;
+    filter: grayscale(50%);
+    border-color: #333;
+    color: #444;
+    background: #0a0a0a;
+    box-shadow: none;
+}
+
+.widget-icon.widget-inactive:hover {
+    opacity: 0.7;
+    filter: grayscale(30%);
+    border-color: #555;
+    color: #666;
 }
 
 .widget-icon svg {

@@ -18,6 +18,7 @@ const {
 const { findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
 const { verifyGodMode } = require('../utils/broadcast');
 const messageCache = require('../utils/messageCache');
+const { isZorkEnabled, enableZork, disableZork } = require('../utils/zorkFlag');
 
 // Factory crafting system services
 const factoryConfig = require('../config/factoryConfig');
@@ -411,6 +412,14 @@ async function authenticateSession(ctx, data) {
     console.log(`Registered/updated window ${windowId} for player ${player.name} (playerId: ${player.id})`);
   }
 
+  // Editor connections: Send sessionAuthenticated and skip game-specific setup
+  if (data.isEditor === true) {
+    ws.send(JSON.stringify({ type: 'sessionAuthenticated' }));
+    console.log(`Editor connection authenticated for player ${effectivePlayerName} (${connectionId})`);
+    return { authenticated: true, connectionId };
+  }
+
+  // Game connections: Continue with game-specific setup
   // Send initial room update (with full info for first display)
   await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, room, true);
 
@@ -4835,6 +4844,74 @@ async function pulseEcho(ctx, data) {
 }
 
 /**
+ * Handle /zork command - toggle ZORK AI on/off
+ * If ZORK is in the game: disconnect him and disable auto-reconnect
+ * If ZORK is not in the game: enable auto-reconnect (ZORK will connect)
+ */
+async function zork(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  const ZORK_NAME = '@ZORK THE AI LORD@';
+  
+  try {
+    // Check if ZORK is currently connected
+    let zorkConnectionId = null;
+    for (const [connId, playerData] of connectedPlayers.entries()) {
+      if (playerData.playerName === ZORK_NAME && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+        zorkConnectionId = connId;
+        break;
+      }
+    }
+    
+    if (zorkConnectionId) {
+      // ZORK is connected - disconnect him and disable flag
+      const zorkWs = connectedPlayers.get(zorkConnectionId).ws;
+      
+      // Disable the flag first (prevents reconnection)
+      disableZork();
+      
+      // Close the WebSocket connection
+      if (zorkWs && zorkWs.readyState === WebSocket.OPEN) {
+        zorkWs.close(1000, 'ZORK disabled by /zork command');
+      }
+      
+      // Remove from connected players
+      connectedPlayers.delete(zorkConnectionId);
+      
+      // Broadcast that ZORK left
+      const { broadcastToAll } = require('../utils/broadcast');
+      const displayPlayerName = 'ZORK THE AI LORD';
+      const leftMessage = messageCache.getFormattedMessage('player_left_game', { playerName: displayPlayerName });
+      broadcastToAll(connectedPlayers, {
+        type: 'systemMessage',
+        message: leftMessage
+      });
+      
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: 'ZORK has been disconnected and will not reconnect until /zork is used again.',
+        messageType: 'info'
+      }));
+      
+      console.log(`[ZORK] Disconnected by /zork command from ${ctx.playerName}`);
+    } else {
+      // ZORK is not connected - enable flag (will allow connection)
+      enableZork();
+      
+      ws.send(JSON.stringify({ 
+        type: 'message', 
+        message: 'ZORK has been enabled. ZORK will connect to the game shortly.',
+        messageType: 'info'
+      }));
+      
+      console.log(`[ZORK] Enabled by /zork command from ${ctx.playerName}`);
+    }
+  } catch (err) {
+    console.error('ZORK command error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to toggle ZORK: ' + err.message }));
+  }
+}
+
+/**
  * Escape HTML to prevent XSS
  */
 function escapeHtml(text) {
@@ -6075,6 +6152,98 @@ async function createZorkTicket(ctx, data) {
 }
 
 /**
+ * Create a new ticket (for god mode/editor use)
+ */
+async function createTicket(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  
+  if (!playerData) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  // Require god mode for creating tickets via editor
+  if (!playerData.isGodMode) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required to create tickets via editor' }));
+    return;
+  }
+  
+  const { 
+    title, 
+    description = '', 
+    priority = 2, 
+    ticket_type = 'bug',
+    status = 'open',
+    repro_steps = null,
+    resolution_notes = null,
+    tags = [],
+    created_by = 'god_mode'
+  } = data;
+  
+  if (!title || !title.trim()) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Ticket title is required' }));
+    return;
+  }
+  
+  // Validate priority
+  if (priority < 1 || priority > 4) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Priority must be between 1 (low) and 4 (critical)' }));
+    return;
+  }
+  
+  // Validate ticket type
+  const validTypes = ['bug', 'feature', 'debug', 'manual', 'user'];
+  if (!validTypes.includes(ticket_type)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Ticket type must be one of: ${validTypes.join(', ')}` }));
+    return;
+  }
+  
+  // Validate status
+  const validStatuses = ['open', 'backlog', 'in_progress', 'resolved'];
+  if (!validStatuses.includes(status)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Status must be one of: ${validStatuses.join(', ')}` }));
+    return;
+  }
+  
+  try {
+    const ticket = await db.createDebugTodo({
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      reproSteps: repro_steps,
+      priority: priority,
+      ticketType: ticket_type,
+      createdBy: created_by,
+      playerId: playerData.playerId,
+      playerName: playerData.playerName
+    });
+    
+    // Update with additional fields if provided
+    if (tags.length > 0 || resolution_notes || status !== 'open') {
+      const updates = {};
+      if (tags.length > 0) updates.tags = tags;
+      if (resolution_notes) updates.resolutionNotes = resolution_notes;
+      if (status !== 'open') updates.status = status;
+      
+      await db.updateDebugTodo(ticket.id, updates);
+      ticket.tags = tags;
+      ticket.resolution_notes = resolution_notes;
+      ticket.status = status;
+    }
+    
+    ws.send(JSON.stringify({
+      type: 'ticketCreated',
+      ticket: ticket
+    }));
+    
+    console.log(`[Ticket Editor] Ticket #${ticket.id} created by ${playerData.playerName}`);
+  } catch (error) {
+    console.error('[Ticket Editor] Error creating ticket:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to create ticket: ' + error.message }));
+  }
+}
+
+/**
  * Get tickets for user (with filters)
  */
 async function getTickets(ctx, data) {
@@ -6426,8 +6595,10 @@ module.exports = {
   observeBug,
   clientDebugEvent,
   createZorkTicket,
+  createTicket,
   getTickets,
   updateTicket,
-  addTicketFeedback
+  addTicketFeedback,
+  zork
 };
 

@@ -33,6 +33,9 @@ logs/
 # Auto-ticket processing
 .tickets/
 
+# ZORK flag
+.zork-enabled
+
 # Build files
 dist/
 build/

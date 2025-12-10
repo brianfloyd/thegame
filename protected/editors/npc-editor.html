@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPC Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/npc-editor.css">
+</head>
+<body>
+    <div id="npcEditor" class="editor-container" x-data="npcEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>NPC Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="saveNpc()" :disabled="(!selectedNpc && !isCreating) || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <select class="editor-select" x-model="filters.type" @change="applyFilter()">
+                    <option value="all">All Types</option>
+                    <template x-for="type in NPC_TYPES" :key="type">
+                        <option :value="type" x-text="getNpcTypeLabel(type)"></option>
+                    </template>
+                </select>
+                <label class="checkbox-label">
+                    <input type="checkbox" x-model="filters.harvestableOnly" @change="applyFilter()">
+                    <span>Harvestable Only</span>
+                </label>
+                <input type="text" class="editor-input search-input" placeholder="Search NPCs..." x-model="filters.search" @input="applyFilter()">
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadNpcs()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+                <button class="editor-btn editor-btn-primary" @click="createNpc()">+ New NPC</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: NPC List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'NPCs: ' + filteredNpcs.length"></span>
+                </div>
+                <div class="npc-list">
+                    <template x-for="npc in filteredNpcs" :key="npc.id">
+                        <div class="npc-list-item" 
+                             :class="{ 'selected': selectedNpc && selectedNpc.id === npc.id, 'inactive': !npc.active }"
+                             @click="selectNpc(npc)">
+                            <div class="npc-list-header">
+                                <span class="npc-id" x-text="'#' + npc.id"></span>
+                                <span class="npc-type-badge" x-text="getNpcTypeLabel(npc.npc_type)"></span>
+                                <span class="npc-status" :class="npc.active ? 'active' : 'inactive'" x-text="npc.active ? 'Active' : 'Inactive'"></span>
+                            </div>
+                            <div class="npc-list-title" x-text="npc.name"></div>
+                            <div class="npc-color-preview" :style="'background-color: ' + npc.display_color"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredNpcs.length === 0">
+                        <span x-show="loading">Loading NPCs...</span>
+                        <span x-show="!loading">No NPCs found matching filters.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: NPC Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedNpc && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select an NPC or click "+ New NPC" to create one.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedNpc || isCreating">
+                    <div class="npc-form">
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <template x-if="selectedNpc && !isCreating">
+                                <button class="editor-btn editor-btn-danger" @click="deleteNpc()" :disabled="loading">Delete</button>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedNpc = null; isCreating = false; resetForm()">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="saveNpc()" :disabled="loading">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Tabs -->
+                        <div class="editor-tabs">
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'basic' }" @click="activeTab = 'basic'">Basic</button>
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'timing' }" @click="activeTab = 'timing'">Timing</button>
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'output' }" @click="activeTab = 'output'">Output</button>
+                        </div>
+
+                        <!-- Basic Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'basic' }">
+                            <div class="form-section">
+                                <div class="section-header">Basic Information</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-2">
+                                        <label>Name *</label>
+                                        <input type="text" class="editor-input" x-model="formData.name" placeholder="NPC name">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>NPC Type</label>
+                                        <select class="editor-select" x-model="formData.npc_type">
+                                            <template x-for="type in NPC_TYPES" :key="type">
+                                                <option :value="type" x-text="getNpcTypeLabel(type)"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Description *</label>
+                                        <textarea class="editor-textarea" x-model="formData.description" rows="3" placeholder="NPC description..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Display & State</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Display Color</label>
+                                        <input type="color" class="editor-input color-input" x-model="formData.display_color">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Active</label>
+                                        <select class="editor-select" x-model="formData.active">
+                                            <option :value="true">Active</option>
+                                            <option :value="false">Inactive</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Scriptable</label>
+                                        <select class="editor-select" x-model="formData.scriptable">
+                                            <option :value="true">Yes</option>
+                                            <option :value="false">No</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Difficulty</label>
+                                        <input type="number" class="editor-input" x-model="formData.difficulty" min="1">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Pulse Echo Yield</label>
+                                        <input type="number" class="editor-input" x-model="formData.pulse_echo_yield" min="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Timing Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'timing' }">
+                            <div class="form-section">
+                                <div class="section-header">Timing Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Base Cycle Time (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.base_cycle_time" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Harvestable Time (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.harvestable_time" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Cooldown Time (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.cooldown_time" min="0" step="1000">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Required Stats (JSON)</div>
+                                <div class="form-field">
+                                    <textarea class="editor-textarea json-input" 
+                                              x-model="formData.required_stats"
+                                              :value="JSON.stringify(formData.required_stats, null, 2)"
+                                              @input="try { formData.required_stats = JSON.parse($event.target.value) } catch(e) {}"
+                                              rows="4" 
+                                              placeholder='{"stat_ingenuity": 5}'></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Output Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'output' }">
+                            <div class="form-section">
+                                <div class="section-header">
+                                    <span>Output Items</span>
+                                    <button class="section-add-btn" @click="addOutputItem()">+ Add</button>
+                                </div>
+                                <div class="json-grid">
+                                    <template x-for="(item, index) in formData.output_items" :key="index">
+                                        <div class="json-grid-row">
+                                            <select class="editor-select" x-model="item.item_name">
+                                                <option value="">Select item...</option>
+                                                <template x-for="dbItem in allItems" :key="dbItem.id">
+                                                    <option :value="dbItem.name" x-text="dbItem.name"></option>
+                                                </template>
+                                            </select>
+                                            <input type="number" class="editor-input qty-input" x-model="item.quantity" min="1" placeholder="Qty">
+                                            <input type="number" class="editor-input chance-input" x-model="item.chance" min="0" max="1" step="0.1" placeholder="Chance">
+                                            <button class="grid-remove-btn" @click="removeOutputItem(index)">x</button>
+                                        </div>
+                                    </template>
+                                    <div class="empty-grid" x-show="formData.output_items.length === 0">
+                                        No output items configured.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Output Distribution</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Distribution Method</label>
+                                        <div class="toggle-container">
+                                            <button type="button" 
+                                                    class="toggle-btn" 
+                                                    :class="{ 'toggle-on': formData.output_distribution === 'player', 'toggle-off': formData.output_distribution === 'ground' }"
+                                                    @click="formData.output_distribution = formData.output_distribution === 'player' ? 'ground' : 'player'">
+                                                <span class="toggle-slider"></span>
+                                                <span class="toggle-label" x-show="formData.output_distribution === 'ground'">Ground</span>
+                                                <span class="toggle-label" x-show="formData.output_distribution === 'player'">Player</span>
+                                            </button>
+                                        </div>
+                                        <div class="toggle-description" x-text="formData.output_distribution === 'player' ? 'Items go to player inventory' : 'Items drop on the ground'"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">
+                                    <span>Harvest Prerequisites</span>
+                                    <button class="section-add-btn" @click="addHarvestPrerequisite()">+ Add</button>
+                                </div>
+                                <div class="json-grid">
+                                    <template x-for="(item, index) in formData.harvest_prerequisite_items" :key="index">
+                                        <div class="json-grid-row">
+                                            <select class="editor-select" x-model="item.item_name">
+                                                <option value="">Select item...</option>
+                                                <template x-for="dbItem in allItems" :key="dbItem.id">
+                                                    <option :value="dbItem.name" x-text="dbItem.name"></option>
+                                                </template>
+                                            </select>
+                                            <button class="grid-remove-btn" @click="removeHarvestPrerequisite(index)">x</button>
+                                        </div>
+                                    </template>
+                                    <div class="empty-grid" x-show="formData.harvest_prerequisite_items.length === 0">
+                                        No harvest prerequisites configured.
+                                    </div>
+                                </div>
+                                <div class="form-field" style="margin-top: 15px;">
+                                    <label>Prerequisite Message</label>
+                                    <input type="text" class="editor-input" x-model="formData.harvest_prerequisite_message" 
+                                           placeholder="Message shown when prerequisite is missing">
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Failure States (JSON)</div>
+                                <div class="form-field">
+                                    <textarea class="editor-textarea json-input" 
+                                              :value="JSON.stringify(formData.failure_states, null, 2)"
+                                              @input="try { formData.failure_states = JSON.parse($event.target.value) } catch(e) {}"
+                                              rows="3" 
+                                              placeholder='["exhausted", "damaged"]'></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/npc-editor.js');
+        console.log('[NPCEditor] Module loaded, npcEditor available:', typeof window.npcEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

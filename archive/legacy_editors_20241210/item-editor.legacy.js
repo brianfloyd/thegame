@@ -1,10 +1,7 @@
 // Item Editor - Standalone page
 // Session-based authentication (no URL params needed)
 
-// WebSocket connection
-let ws = null;
-const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsUrl = wsProtocol + location.host;
+import { EditorBase } from './js/editorShared/EditorBase.js';
 
 // Item Editor State
 let allItems = [];
@@ -41,43 +38,6 @@ function showEditorNotification(message, type = 'info') {
     setTimeout(() => {
         if (notification.parentNode) notification.remove();
     }, 5000);
-}
-
-// Track if we're intentionally navigating away
-let isNavigatingAway = false;
-
-// Connect to WebSocket server
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        // Authenticate with session
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
-            // Request items and item types
-            ws.send(JSON.stringify({ type: 'getAllItems' }));
-            ws.send(JSON.stringify({ type: 'getAllItemTypes' }));
-            ws.send(JSON.stringify({ type: 'getMerchantRooms' }));
-        }
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        // Only auto-reconnect if we're not intentionally navigating away
-        if (!isNavigatingAway) {
-            setTimeout(connectWebSocket, 3000);
-        }
-    };
 }
 
 // Handle messages from server
@@ -132,8 +92,8 @@ function handleMessage(data) {
         case 'merchantItemUpdated':
         case 'merchantItemRemoved':
             // Reload merchant items for the current item
-            if (selectedItemId && ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'getMerchantItems', itemId: selectedItemId }));
+            if (selectedItemId) {
+                EditorBase.send({ type: 'getMerchantItems', itemId: selectedItemId });
             }
             break;
         case 'warehouseRooms':
@@ -234,9 +194,7 @@ function selectItem(itemId) {
     if (item) {
         showItemForm(item);
         // Load merchant items for this item
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getMerchantItems', itemId: itemId }));
-        }
+        EditorBase.send({ type: 'getMerchantItems', itemId: itemId });
     }
 }
 
@@ -424,16 +382,14 @@ function showItemForm(item = null) {
             }
             
             // Add with default unlimited=true
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ 
-                    type: 'addItemToMerchant', 
-                    itemId: item.id, 
-                    roomId: roomId,
-                    unlimited: true,
-                    maxQty: null,
-                    regenHours: null
-                }));
-            }
+            EditorBase.send({ 
+                type: 'addItemToMerchant', 
+                itemId: item.id, 
+                roomId: roomId,
+                unlimited: true,
+                maxQty: null,
+                regenHours: null
+            });
         });
     }
     
@@ -448,12 +404,10 @@ function setupMerchantItemHandlers() {
         btn.addEventListener('click', (e) => {
             const merchantItemId = parseInt(e.target.dataset.merchantItemId);
             if (confirm('Remove this item from the merchant room?')) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ 
-                        type: 'removeItemFromMerchant', 
-                        merchantItemId: merchantItemId
-                    }));
-                }
+                EditorBase.send({ 
+                    type: 'removeItemFromMerchant', 
+                    merchantItemId: merchantItemId
+                });
             }
         });
     });
@@ -523,10 +477,10 @@ function saveItem(itemId) {
     if (itemId) {
         // Update existing
         item.id = itemId;
-        ws.send(JSON.stringify({ type: 'updateItem', item }));
+        EditorBase.send({ type: 'updateItem', item });
     } else {
         // Create new
-        ws.send(JSON.stringify({ type: 'createItem', item }));
+        EditorBase.send({ type: 'createItem', item });
     }
 }
 
@@ -552,9 +506,7 @@ function generateItemTypeOptions(selectedType) {
     // If we don't have item types yet, request them and use defaults as fallback
     if (allItemTypes.length === 0) {
         // Request item types from server
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllItemTypes' }));
-        }
+        EditorBase.send({ type: 'getAllItemTypes' });
         // Use defaults as fallback until database responds
         const defaults = ['ingredient', 'rune', 'deed'];
         return defaults.map(type => {
@@ -576,9 +528,7 @@ function generateItemTypeOptions(selectedType) {
 function generateWarehouseRoomOptions(selectedLocationKey) {
     // If we don't have warehouse rooms yet, request them
     if (warehouseRooms.length === 0) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getWarehouseRooms' }));
-        }
+        EditorBase.send({ type: 'getWarehouseRooms' });
         return '<option value="">Loading warehouse rooms...</option>';
     }
     
@@ -595,9 +545,7 @@ function generateWarehouseRoomOptions(selectedLocationKey) {
 function generateMerchantRoomOptions(selectedRoomId) {
     // If we don't have merchant rooms yet, request them
     if (merchantRooms.length === 0) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getMerchantRooms' }));
-        }
+        EditorBase.send({ type: 'getMerchantRooms' });
         return '<option value="">Loading merchant rooms...</option>';
     }
     
@@ -640,8 +588,6 @@ function renderMerchantItemsList() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    connectWebSocket();
-    
     // Close button
     const closeItemEditorBtn = document.getElementById('closeItemEditor');
     if (closeItemEditorBtn) {
@@ -661,12 +607,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetEditor = btn.getAttribute('data-editor');
             
             // Mark that we're intentionally navigating away
-            isNavigatingAway = true;
-            
-            // Close WebSocket gracefully before navigating
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close(1000, 'Navigating to another editor');
-            }
+            EditorBase.setNavigatingAway(true);
+            EditorBase.close();
             
             // Small delay to ensure close message is sent
             setTimeout(() => {
@@ -690,11 +632,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Request item list after WebSocket connects
-    setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllItems' }));
+    // Initialize EditorBase - requests data after authentication
+    EditorBase.init({
+        onReady: (socket) => {
+            console.log('[ItemEditor] Editor ready, requesting initial data...');
+            socket.send(JSON.stringify({ type: 'getAllItems' }));
+            socket.send(JSON.stringify({ type: 'getAllItemTypes' }));
+            socket.send(JSON.stringify({ type: 'getMerchantRooms' }));
+        },
+        onMessage: (data) => {
+            handleMessage(data);
+        },
+        onError: (error) => {
+            showEditorNotification(error.message || 'Connection error', 'error');
         }
-    }, 500);
+    });
 });
 

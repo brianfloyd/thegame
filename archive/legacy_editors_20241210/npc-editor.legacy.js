@@ -1,10 +1,7 @@
 // NPC Editor - Standalone page
 // Session-based authentication (no URL params needed)
 
-// WebSocket connection
-let ws = null;
-const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsUrl = wsProtocol + location.host;
+import { EditorBase } from './js/editorShared/EditorBase.js';
 
 // NPC Editor Variables
 let npcEditor = null;
@@ -44,39 +41,6 @@ function showEditorNotification(message, type = 'info') {
     setTimeout(() => {
         if (notification.parentNode) notification.remove();
     }, 5000);
-}
-
-// Track if we're intentionally navigating away
-let isNavigatingAway = false;
-
-// Connect to WebSocket server
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        // Authenticate with session
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
-        }
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        // Only auto-reconnect if we're not intentionally navigating away
-        if (!isNavigatingAway) {
-            setTimeout(connectWebSocket, 3000);
-        }
-    };
 }
 
 // Restore persisted NPC selection from localStorage
@@ -258,11 +222,12 @@ function renderNpcList() {
 }
 
 function loadNpcPlacements(npcId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    EditorBase.send({
         type: 'getNpcPlacements',
         npcId
-    }));
+    });
 }
 
 function populateNpcPlacementRooms() {
@@ -316,16 +281,18 @@ function populateNpcPlacementMaps() {
 }
 
 function loadRoomsForMap(mapId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    EditorBase.send({
         type: 'getNpcPlacementRooms',
         mapId: mapId
     }));
 }
 
 function loadAllPlacementMaps() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    EditorBase.send({
         type: 'getNpcPlacementMaps'
     }));
 }
@@ -352,8 +319,9 @@ function renderNpcPlacements() {
         removeBtn.textContent = 'Remove';
         removeBtn.className = 'npc-placement-remove';
         removeBtn.addEventListener('click', () => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
-            ws.send(JSON.stringify({
+            const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            EditorBase.send({
                 type: 'removeNpcFromRoom',
                 placementId: p.id,
                 npcId: selectedNpc ? selectedNpc.id : null
@@ -1186,11 +1154,12 @@ function renderNpcForm() {
                 alert('Select a room first.');
                 return;
             }
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
+            const socket = EditorBase.getSocket();
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
                 alert('Not connected to server. Please wait...');
                 return;
             }
-            ws.send(JSON.stringify({
+            EditorBase.send({
                 type: 'addNpcToRoom',
                 npcId: selectedNpc.id,
                 roomId,
@@ -1516,7 +1485,7 @@ function saveNpc() {
 
     if (npcEditorMode === 'edit' && selectedNpc && selectedNpc.id) {
         payloadNpc.id = selectedNpc.id;
-        ws.send(JSON.stringify({
+        EditorBase.send({
             type: 'updateNPC',
             npc: payloadNpc
         }));
@@ -1524,7 +1493,7 @@ function saveNpc() {
             loadNpcPlacements(selectedNpc.id);
         }
     } else {
-        ws.send(JSON.stringify({
+        EditorBase.send({
             type: 'createNPC',
             npc: payloadNpc
         }));
@@ -1557,8 +1526,9 @@ document.addEventListener('DOMContentLoaded', () => {
             isNavigatingAway = true;
             
             // Close WebSocket gracefully before navigating
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close(1000, 'Navigating to another editor');
+            const socket = EditorBase.getSocket();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+                EditorBase.close();
             }
             
             // Small delay to ensure close message is sent
@@ -1592,17 +1562,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start in list mode
     enterNpcListMode();
     
-    // Connect to WebSocket and initialize
-    connectWebSocket();
-    
-    // Request NPC list, placement maps/rooms, and items from server
-    setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllNPCs' }));
-            ws.send(JSON.stringify({ type: 'getNpcPlacementMaps' }));
-            ws.send(JSON.stringify({ type: 'getAllItems' }));
+    // Initialize EditorBase - requests data after authentication
+    EditorBase.init({
+        onReady: (socket) => {
+            console.log('[NPCEditor] Editor ready, requesting initial data...');
+            socket.send(JSON.stringify({ type: 'getAllNPCs' }));
+            socket.send(JSON.stringify({ type: 'getNpcPlacementMaps' }));
+            socket.send(JSON.stringify({ type: 'getAllItems' }));
+        },
+        onMessage: (data) => {
+            handleMessage(data);
+        },
+        onError: (error) => {
+            showEditorNotification(error.message || 'Connection error', 'error');
         }
-    }, 500);
+    });
     
     // Add output item button handler
     document.addEventListener('click', (e) => {
@@ -1620,8 +1594,9 @@ let formulaConfigs = [];
 
 function openFormulaConfigEditor() {
     // Request formula configs from server
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'getHarvestFormulaConfigs' }));
+    const socket = EditorBase.getSocket();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        EditorBase.send({ type: 'getHarvestFormulaConfigs' }));
     } else {
         showEditorNotification('Not connected to server', 'error');
     }
@@ -2003,27 +1978,27 @@ function saveFormulaConfigs() {
         curve_exponent: parseFloat(document.getElementById('vitalisDrainCurveExponent')?.value) || 2
     };
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: cycleConfig
     }));
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: hitConfig
     }));
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: cooldownConfig
     }));
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: harvestableConfig
     }));
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: vitalisDrainConfig
     }));

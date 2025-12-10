@@ -2808,6 +2808,16 @@ function executeCommand(command) {
         return;
     }
 
+    // /ZORK - Toggle ZORK AI on/off
+    if (base === '/zork' || base === 'zork') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            addToTerminal('Not connected to server. Please wait...', 'error');
+            return;
+        }
+        ws.send(JSON.stringify({ type: 'zork' }));
+        return;
+    }
+
     // HELP / ? - display available commands
     if (base === 'help' || base === '?') {
         displayHelp();
@@ -7338,7 +7348,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (action === 'player') {
                 window.location.href = '/player';
             } else if (action === 'crafting') {
-                window.location.href = '/crafting-editor';
+                window.location.href = '/crafting';
             }
         });
     });

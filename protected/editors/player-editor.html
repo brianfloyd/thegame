@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/player-editor.css">
+</head>
+<body>
+    <div id="playerEditor" class="editor-container" x-data="playerEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Player Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="savePlayer()" :disabled="!selectedPlayer || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <input type="text" class="editor-input search-input" placeholder="Search players..." x-model="filters.search" @input="applyFilter()">
+                <label class="checkbox-label">
+                    <input type="checkbox" x-model="filters.godModeOnly" @change="applyFilter()">
+                    <span>God Mode Only</span>
+                </label>
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadPlayers()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Player List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Players: ' + filteredPlayers.length"></span>
+                </div>
+                <div class="player-list">
+                    <template x-for="player in filteredPlayers" :key="player.id">
+                        <div class="player-list-item" 
+                             :class="{ 'selected': selectedPlayer && selectedPlayer.id === player.id }"
+                             @click="selectPlayer(player)">
+                            <div class="player-list-header">
+                                <span class="player-id" x-text="'#' + player.id"></span>
+                                <span class="player-god-badge" x-show="player.flag_god_mode === 1">GOD</span>
+                            </div>
+                            <div class="player-list-title" x-text="player.name"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredPlayers.length === 0 && !loading">
+                        No players found.
+                    </div>
+                    <div class="empty-list" x-show="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Right: Player Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedPlayer">
+                    <div class="empty-detail">
+                        <p>Select a player to edit.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedPlayer">
+                    <div class="player-form">
+                        <!-- Tabs -->
+                        <div class="editor-tabs">
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'stats' }" @click="activeTab = 'stats'">Stats</button>
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'abilities' }" @click="activeTab = 'abilities'">Abilities</button>
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'resources' }" @click="activeTab = 'resources'">Resources</button>
+                            <button class="editor-tab" :class="{ 'active': activeTab === 'settings' }" @click="activeTab = 'settings'">Settings</button>
+                        </div>
+
+                        <!-- Stats Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'stats' }">
+                            <div class="form-section">
+                                <div class="section-header">Player Stats (stat_*)</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>🔧 Ingenuity</label>
+                                        <input type="number" class="editor-input" x-model="formData.stat_ingenuity" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>🎵 Resonance</label>
+                                        <input type="number" class="editor-input" x-model="formData.stat_resonance" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>🛡️ Fortitude</label>
+                                        <input type="number" class="editor-input" x-model="formData.stat_fortitude" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>👁️ Acumen</label>
+                                        <input type="number" class="editor-input" x-model="formData.stat_acumen" min="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Assignable Points</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Available Points</label>
+                                        <input type="number" class="editor-input" x-model="formData.assignable_points" min="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Abilities Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'abilities' }">
+                            <div class="form-section">
+                                <div class="section-header">Player Abilities (ability_*)</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>⚒️ Crafting</label>
+                                        <input type="number" class="editor-input" x-model="formData.ability_crafting" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>✨ Attunement</label>
+                                        <input type="number" class="editor-input" x-model="formData.ability_attunement" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>💪 Endurance</label>
+                                        <input type="number" class="editor-input" x-model="formData.ability_endurance" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>💰 Commerce</label>
+                                        <input type="number" class="editor-input" x-model="formData.ability_commerce" min="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Resources Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'resources' }">
+                            <div class="form-section">
+                                <div class="section-header">Vitalis (resource_*)</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>💚 Vitalis</label>
+                                        <input type="number" class="editor-input" x-model="formData.resource_vitalis" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>💚 Max Vitalis</label>
+                                        <input type="number" class="editor-input" x-model="formData.resource_max_vitalis" min="1">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>📦 Max Encumbrance</label>
+                                        <input type="number" class="editor-input" x-model="formData.resource_max_encumbrance" min="1">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Pulse Echoes</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>🔮 Pulse Echoes</label>
+                                        <input type="number" class="editor-input" x-model="formData.pulse_echoes" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>📊 Pulse Echo Tier</label>
+                                        <input type="number" class="editor-input" x-model="formData.pulse_echo_tier" min="1">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Attunement Settings</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Base Attunement Points</label>
+                                        <input type="number" class="editor-input" x-model="formData.base_attunement_points" min="0">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Attunement Cooldown (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.base_attunement_cooldown_ms" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Attunement Delay (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.base_attunement_delay_ms" min="0" step="100">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Settings Tab -->
+                        <div class="tab-content" :class="{ 'active': activeTab === 'settings' }">
+                            <div class="form-section">
+                                <div class="section-header">Flags (flag_*)</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>👁️ God Mode</label>
+                                        <select class="editor-select" x-model="formData.flag_god_mode">
+                                            <option value="0">Disabled (0)</option>
+                                            <option value="1">Enabled (1)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>🌟 Always First Time</label>
+                                        <select class="editor-select" x-model="formData.flag_always_first_time">
+                                            <option value="0">Disabled (0)</option>
+                                            <option value="1">Enabled (1)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Timing Settings</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Auto Navigation Time (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.auto_navigation_time_ms" min="100" step="100">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Loop Delay (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.loop_delay_ms" min="100" step="100">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Room Update Interval (ms)</label>
+                                        <input type="number" class="editor-input" x-model="formData.room_update_interval_ms" min="1000" step="1000">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">Metadata</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Player ID</label>
+                                        <input type="text" class="editor-input" :value="selectedPlayer.id" readonly>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Name</label>
+                                        <input type="text" class="editor-input" :value="selectedPlayer.name" readonly>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Current Room ID</label>
+                                        <input type="text" class="editor-input" :value="selectedPlayer.current_room_id" readonly>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Save Button -->
+                        <div class="form-actions">
+                            <button class="editor-btn editor-btn-success" @click="savePlayer()" :disabled="loading">Save Changes</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/player-editor.js');
+        console.log('[PlayerEditor] Module loaded, playerEditor available:', typeof window.playerEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

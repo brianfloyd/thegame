@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Item Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/item-editor.css">
+</head>
+<body>
+    <div id="itemEditor" class="editor-container" x-data="itemEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Item Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="saveItem()" :disabled="(!selectedItem && !isCreating) || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <select class="editor-select" x-model="filters.type" @change="applyFilter()">
+                    <option value="all">All Types</option>
+                    <template x-for="type in ITEM_TYPES" :key="type">
+                        <option :value="type" x-text="getItemTypeLabel(type)"></option>
+                    </template>
+                </select>
+                <label class="checkbox-label">
+                    <input type="checkbox" x-model="filters.activeOnly" @change="applyFilter()">
+                    <span>Active Only</span>
+                </label>
+                <input type="text" class="editor-input search-input" placeholder="Search items..." x-model="filters.search" @input="applyFilter()">
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadItems()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+                <button class="editor-btn editor-btn-primary" @click="createItem()">+ New Item</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Item List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Items: ' + filteredItems.length"></span>
+                </div>
+                <div class="item-list">
+                    <template x-for="item in filteredItems" :key="item.id">
+                        <div class="item-list-item" 
+                             :class="{ 'selected': selectedItem && selectedItem.id === item.id, 'inactive': !item.active }"
+                             @click="selectItem(item)">
+                            <div class="item-list-header">
+                                <span class="item-id" x-text="'#' + item.id"></span>
+                                <span class="item-type-badge" x-text="getItemTypeLabel(item.item_type)"></span>
+                                <span class="item-status" :class="item.active ? 'active' : 'inactive'" x-text="item.active ? 'Active' : 'Inactive'"></span>
+                            </div>
+                            <div class="item-list-title" x-text="item.name"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredItems.length === 0">
+                        <span x-show="loading">Loading items...</span>
+                        <span x-show="!loading">No items found matching filters.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Item Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedItem && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select an item or click "+ New Item" to create one.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedItem || isCreating">
+                    <div class="item-form">
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <template x-if="selectedItem && !isCreating">
+                                <button class="editor-btn editor-btn-danger" @click="deleteItem()" :disabled="loading">Delete</button>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedItem = null; isCreating = false; resetForm()">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="saveItem()" :disabled="loading">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Basic Info Section -->
+                        <div class="form-section">
+                            <div class="section-header">Basic Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Name *</label>
+                                    <input type="text" class="editor-input" x-model="formData.name" placeholder="Item name">
+                                </div>
+                                <div class="form-field">
+                                    <label>Item Type</label>
+                                    <select class="editor-select" x-model="formData.item_type">
+                                        <template x-for="type in ITEM_TYPES" :key="type">
+                                            <option :value="type" x-text="getItemTypeLabel(type)"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" x-model="formData.description" rows="3" placeholder="Item description..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Properties Section -->
+                        <div class="form-section">
+                            <div class="section-header">Properties</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Encumbrance</label>
+                                    <input type="number" class="editor-input" x-model="formData.encumbrance" min="0">
+                                </div>
+                                <div class="form-field">
+                                    <label>Active</label>
+                                    <select class="editor-select" x-model="formData.active">
+                                        <option :value="true">Active</option>
+                                        <option :value="false">Inactive</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Poofable</label>
+                                    <select class="editor-select" x-model="formData.poofable">
+                                        <option :value="false">No</option>
+                                        <option :value="true">Yes</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Rune Section (only for rune type) -->
+                        <div class="form-section" x-show="isRune()">
+                            <div class="section-header">Rune Properties</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Rune Type</label>
+                                    <select class="editor-select" x-model="formData.rune_type">
+                                        <option value="">None</option>
+                                        <template x-for="type in RUNE_TYPES" :key="type">
+                                            <option :value="type" x-text="getRuneTypeLabel(type)"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Rune Color</label>
+                                    <input type="color" class="editor-input color-input" x-model="formData.rune_color">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Deed Section (only for deed type) -->
+                        <div class="form-section" x-show="isDeed()">
+                            <div class="section-header">Deed Properties</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Warehouse Location Key</label>
+                                    <input type="text" class="editor-input" x-model="formData.deed_warehouse_location_key" placeholder="e.g. bank_vault_1">
+                                </div>
+                                <div class="form-field">
+                                    <label>Upgrade Tier</label>
+                                    <input type="number" class="editor-input" x-model="formData.deed_upgrade_tier" min="1">
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Item Types</label>
+                                    <input type="number" class="editor-input" x-model="formData.deed_base_max_item_types" min="1">
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Qty Per Type</label>
+                                    <input type="number" class="editor-input" x-model="formData.deed_base_max_quantity_per_type" min="1">
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Total Items</label>
+                                    <input type="number" class="editor-input" x-model="formData.deed_max_total_items" min="1">
+                                </div>
+                                <div class="form-field">
+                                    <label>Automation Enabled</label>
+                                    <select class="editor-select" x-model="formData.deed_automation_enabled">
+                                        <option :value="false">No</option>
+                                        <option :value="true">Yes</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Metadata Section -->
+                        <div class="form-section" x-show="selectedItem && !isCreating">
+                            <div class="section-header">Metadata</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Item ID</label>
+                                    <input type="text" class="editor-input" :value="selectedItem?.id" readonly>
+                                </div>
+                                <div class="form-field span-2">
+                                    <label>Created At</label>
+                                    <input type="text" class="editor-input" :value="selectedItem?.created_at ? new Date(selectedItem.created_at).toLocaleString() : 'N/A'" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/item-editor.js');
+        console.log('[ItemEditor] Module loaded, itemEditor available:', typeof window.itemEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crafting Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/crafting-editor.css">
+</head>
+<body>
+    <div id="craftingEditor" class="editor-container" x-data="craftingEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Crafting Recipe Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" 
+                        @click="saveRecipe()" 
+                        :disabled="!canSave() || loading">
+                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                </button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <input type="text" class="editor-input search-input" 
+                       placeholder="Search recipes..." 
+                       x-model="filters.search" 
+                       @input="applyFilter()">
+                <select class="editor-select" x-model="filters.tier" @change="applyFilter()">
+                    <option value="">All Tiers</option>
+                    <option value="1">Tier 1</option>
+                    <option value="2">Tier 2</option>
+                    <option value="3">Tier 3</option>
+                </select>
+                <label class="checkbox-label">
+                    <input type="checkbox" x-model="filters.activeOnly" @change="applyFilter()">
+                    <span>Active Only</span>
+                </label>
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadData()" :disabled="loading">Refresh</button>
+                <button class="editor-btn editor-btn-primary" @click="createRecipe()">+ New Recipe</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Recipe List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Recipes: ' + filteredRecipes.length"></span>
+                </div>
+                <div class="recipe-list">
+                    <template x-for="recipe in filteredRecipes" :key="recipe.recipe_id">
+                        <div class="recipe-list-item" 
+                             :class="{ 'selected': selectedRecipe && selectedRecipe.recipe_id === recipe.recipe_id, 'inactive': !recipe.active }"
+                             @click="selectRecipe(recipe)">
+                            <div class="recipe-list-header">
+                                <span class="recipe-id" x-text="'#' + recipe.recipe_id"></span>
+                                <span class="recipe-tier-badge" x-text="'T' + recipe.factory_tier_required"></span>
+                                <span class="recipe-status" :class="recipe.active ? 'active' : 'inactive'" x-text="recipe.active ? 'Active' : 'Inactive'"></span>
+                            </div>
+                            <div class="recipe-list-title" x-text="recipe.name"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredRecipes.length === 0 && !loading">
+                        No recipes found.
+                    </div>
+                    <div class="empty-list" x-show="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Right: Recipe Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedRecipe && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select a recipe or click "+ New Recipe" to create one.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedRecipe || isCreating">
+                    <div class="recipe-form">
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <template x-if="selectedRecipe && !isCreating">
+                                <div class="action-buttons-left">
+                                    <button class="editor-btn editor-btn-warning" @click="cloneRecipe()" :disabled="loading">Clone</button>
+                                    <button class="editor-btn editor-btn-danger" @click="deleteRecipe()" :disabled="loading">Delete</button>
+                                </div>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedRecipe = null; isCreating = false; resetForm()">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="saveRecipe()" :disabled="!canSave() || loading">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Core Details Section -->
+                        <div class="form-section">
+                            <div class="section-header">Core Details</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Recipe Name *</label>
+                                    <input type="text" class="editor-input" x-model="formData.name" placeholder="Enter recipe name">
+                                </div>
+                                <div class="form-field">
+                                    <label>Status</label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" x-model="formData.active">
+                                        <span class="toggle-slider"></span>
+                                        <span class="toggle-label" x-text="formData.active ? 'Active' : 'Inactive'"></span>
+                                    </label>
+                                </div>
+                                <div class="form-field">
+                                    <label>Factory Tier</label>
+                                    <input type="number" class="editor-input" x-model="formData.factory_tier_required" min="1" max="5">
+                                </div>
+                                <div class="form-field">
+                                    <label>Craft Time (ms)</label>
+                                    <input type="number" class="editor-input" x-model="formData.crafting_time_ms" min="1000" step="100" @input="updatePreview()">
+                                </div>
+                                <div class="form-field">
+                                    <label>Base Success Rate (%)</label>
+                                    <input type="number" class="editor-input" x-model="formData.success_rate" min="0" max="100" step="0.1" @input="updatePreview()">
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" x-model="formData.description" rows="2" placeholder="Recipe description..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Required Ingredients -->
+                        <div class="form-section">
+                            <div class="section-header">
+                                <span>Required Ingredients</span>
+                                <button class="section-add-btn" @click="addIngredient()">+ Add</button>
+                            </div>
+                            <div class="json-grid">
+                                <template x-for="(ingredient, index) in formData.required_ingredients" :key="index">
+                                    <div class="json-grid-row">
+                                        <select class="editor-select" x-model="ingredient.item_id">
+                                            <option value="">Select item...</option>
+                                            <template x-for="item in getIngredientItems()" :key="item.id">
+                                                <option :value="item.id" x-text="item.name"></option>
+                                            </template>
+                                        </select>
+                                        <input type="number" class="editor-input qty-input" x-model="ingredient.quantity" min="1" placeholder="Qty">
+                                        <button class="grid-remove-btn" @click="removeIngredient(index)">x</button>
+                                    </div>
+                                </template>
+                                <div class="empty-grid" x-show="formData.required_ingredients.length === 0">
+                                    No ingredients added.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Required Runes -->
+                        <div class="form-section">
+                            <div class="section-header">
+                                <span>Required Runes (PRODUCTION excluded)</span>
+                                <button class="section-add-btn" @click="addRune()">+ Add</button>
+                            </div>
+                            <div class="json-grid">
+                                <template x-for="(rune, index) in formData.required_runes" :key="index">
+                                    <div class="json-grid-row">
+                                        <select class="editor-select" x-model="rune.type">
+                                            <option value="">Select rune type...</option>
+                                            <template x-for="rt in RUNE_TYPES" :key="rt.value">
+                                                <option :value="rt.value" x-text="rt.label"></option>
+                                            </template>
+                                        </select>
+                                        <button class="grid-remove-btn" @click="removeRune(index)">x</button>
+                                    </div>
+                                </template>
+                                <div class="empty-grid" x-show="formData.required_runes.length === 0">
+                                    No runes required (PRODUCTION is machine requirement).
+                                </div>
+                            </div>
+                            <div class="rune-toggles">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" x-model="formData.allow_rune_substitution">
+                                    <span>Allow Rune Substitution</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" x-model="formData.allow_wildcard_runes">
+                                    <span>Allow Wildcard Runes</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Output Items -->
+                        <div class="form-section">
+                            <div class="section-header">
+                                <span>Output Items</span>
+                                <button class="section-add-btn" @click="addOutput()">+ Add</button>
+                            </div>
+                            <div class="json-grid">
+                                <template x-for="(output, index) in formData.output_items" :key="index">
+                                    <div class="json-grid-row">
+                                        <select class="editor-select" x-model="output.item_id" @change="updatePreview()">
+                                            <option value="">Select item...</option>
+                                            <template x-for="item in allItems" :key="item.id">
+                                                <option :value="item.id" x-text="item.name"></option>
+                                            </template>
+                                        </select>
+                                        <input type="number" class="editor-input qty-input" x-model="output.quantity" min="1" placeholder="Qty" @input="updatePreview()">
+                                        <button class="grid-remove-btn" @click="removeOutput(index)">x</button>
+                                    </div>
+                                </template>
+                                <div class="empty-grid" x-show="formData.output_items.length === 0">
+                                    No output items added.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Byproducts (Collapsible) -->
+                        <div class="form-section collapsible" x-data="{ collapsed: true }">
+                            <div class="section-header" @click="collapsed = !collapsed">
+                                <span>Byproducts (Optional)</span>
+                                <span class="collapse-icon" x-text="collapsed ? '+' : '-'"></span>
+                            </div>
+                            <div x-show="!collapsed">
+                                <div class="json-grid">
+                                    <template x-for="(bp, index) in formData.byproducts" :key="index">
+                                        <div class="json-grid-row">
+                                            <select class="editor-select" x-model="bp.item_id">
+                                                <option value="">Select item...</option>
+                                                <template x-for="item in allItems" :key="item.id">
+                                                    <option :value="item.id" x-text="item.name"></option>
+                                                </template>
+                                            </select>
+                                            <input type="number" class="editor-input qty-input" x-model="bp.quantity" min="1" placeholder="Qty">
+                                            <input type="number" class="editor-input chance-input" x-model="bp.chance" min="0" max="1" step="0.01" placeholder="Chance">
+                                            <button class="grid-remove-btn" @click="removeByproduct(index)">x</button>
+                                        </div>
+                                    </template>
+                                    <div class="empty-grid" x-show="formData.byproducts.length === 0">
+                                        No byproducts added.
+                                    </div>
+                                </div>
+                                <button class="editor-btn" @click="addByproduct()" style="margin-top: 10px;">+ Add Byproduct</button>
+                            </div>
+                        </div>
+
+                        <!-- Live Preview -->
+                        <div class="form-section preview-section">
+                            <div class="section-header">Live Preview</div>
+                            <div class="preview-content">
+                                <div class="preview-stats">
+                                    <div><strong>Success Rate:</strong> <span x-text="preview.successRate"></span>% (Base: <span x-text="formData.success_rate"></span>% + Stats: <span x-text="preview.statBonus"></span>%)</div>
+                                    <div><strong>Crit Chance:</strong> <span x-text="preview.critChance"></span>%</div>
+                                    <div><strong>Craft Time:</strong> <span x-text="preview.craftTime"></span>s → <span x-text="preview.craftTimeWithSpeed"></span>s with Speed Rune</div>
+                                    <div><strong>Efficiency:</strong> <span x-text="preview.efficiencyModifier"></span>% ingredient use with Efficiency Rune</div>
+                                    <div><strong>Expected Output:</strong> <span x-text="preview.totalOutput"></span> items (<span x-text="preview.critOutput"></span> on crit)</div>
+                                </div>
+                                <div class="preview-test-stats">
+                                    <div class="form-grid">
+                                        <div class="form-field">
+                                            <label>Test Ingenuity</label>
+                                            <input type="number" class="editor-input" x-model="testStats.ingenuity" min="0" @input="updatePreview()">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Test Resonance</label>
+                                            <input type="number" class="editor-input" x-model="testStats.resonance" min="0" @input="updatePreview()">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Test Acumen</label>
+                                            <input type="number" class="editor-input" x-model="testStats.acumen" min="0" @input="updatePreview()">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/crafting-editor.js');
+        console.log('[CraftingEditor] Module loaded, craftingEditor available:', typeof window.craftingEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

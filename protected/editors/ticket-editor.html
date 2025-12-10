@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/ticket-editor.css">
+</head>
+<body>
+    <!-- Ticket Editor -->
+    <div id="ticketEditor" class="editor-container" x-data="ticketEditor()" x-init="init()">
+        <!-- Top Navigation Bar -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>🎫 Ticket Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="saveTicket()" :disabled="!selectedTicket || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <select class="editor-select" x-model="filters.status" @change="applyFilter()">
+                    <option value="all">All Statuses</option>
+                    <option value="open">Open</option>
+                    <option value="backlog">Backlog</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                </select>
+                <select class="editor-select" x-model="filters.priority" @change="applyFilter()">
+                    <option value="">All Priorities</option>
+                    <option value="4">Critical</option>
+                    <option value="3">High</option>
+                    <option value="2">Medium</option>
+                    <option value="1">Low</option>
+                </select>
+                <select class="editor-select" x-model="filters.ticketType" @change="applyFilter()">
+                    <option value="">All Types</option>
+                    <option value="bug">🐛 Bug</option>
+                    <option value="feature">✨ Feature</option>
+                    <option value="debug">🔍 Debug</option>
+                    <option value="manual">📝 Manual</option>
+                    <option value="user">👤 User</option>
+                </select>
+                <input type="text" class="editor-input search-input" placeholder="Search tickets..." 
+                       x-model="filters.search" @input="applyFilter()">
+            </div>
+            <div class="toolbar-actions">
+                <label class="auto-refresh-toggle">
+                    <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()">
+                    <span>Auto-refresh</span>
+                </label>
+                <button class="editor-btn" @click="loadTickets()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+                <button class="editor-btn editor-btn-primary" @click="createTicket()">+ New Ticket</button>
+            </div>
+        </div>
+
+        <!-- Main Content (Two-Pane Layout) -->
+        <div class="editor-content">
+            <!-- Left Pane: Ticket List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Tickets: ' + filteredTickets.length"></span>
+                </div>
+                <div class="ticket-list">
+                    <template x-for="ticket in filteredTickets" :key="ticket.id">
+                        <div class="ticket-list-item" 
+                             :class="{ 'selected': selectedTicket && selectedTicket.id === ticket.id }"
+                             @click="selectTicket(ticket)">
+                            <div class="ticket-list-header">
+                                <span class="ticket-status-emoji" x-text="getStatusEmoji(ticket.status)"></span>
+                                <span class="ticket-id" x-text="'#' + ticket.id"></span>
+                                <span class="ticket-priority-badge" 
+                                      :class="'priority-' + ticket.priority"
+                                      x-text="getPriorityLabel(ticket.priority)"></span>
+                            </div>
+                            <div class="ticket-list-title" x-text="ticket.title"></div>
+                            <div class="ticket-list-meta">
+                                <span class="ticket-type" x-text="getTypeLabel(ticket.ticket_type)"></span>
+                                <span class="ticket-date" x-text="formatDate(ticket.created_at)"></span>
+                            </div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredTickets.length === 0">
+                        <span x-show="loading">Loading tickets...</span>
+                        <span x-show="!loading">No tickets found matching filters.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Pane: Ticket Detail Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedTicket && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select a ticket from the list or create a new ticket.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedTicket || isCreating">
+                    <div class="ticket-form">
+                        <!-- Action Buttons -->
+                        <div class="form-actions">
+                            <template x-if="!isCreating">
+                                <div class="action-buttons-left">
+                                    <button class="editor-btn editor-btn-warning" 
+                                            @click="cloneTicket()" 
+                                            :disabled="loading">Clone</button>
+                                    <button class="editor-btn editor-btn-danger" 
+                                            @click="deleteTicket()" 
+                                            :disabled="loading">Delete</button>
+                                </div>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="cancelEdit()" :disabled="loading">Cancel</button>
+                                <button class="editor-btn editor-btn-success" 
+                                        @click="saveTicket()" 
+                                        :disabled="loading || !canSave()">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Basic Info Section -->
+                        <div class="form-section">
+                            <div class="section-header">Basic Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <label>Title</label>
+                                    <input type="text" class="editor-input" 
+                                           x-model="formData.title" 
+                                           placeholder="Brief description of the ticket"
+                                           maxlength="200">
+                                </div>
+                                <div class="form-field">
+                                    <label>Status</label>
+                                    <select class="editor-select" x-model="formData.status">
+                                        <option value="open">🔴 Open</option>
+                                        <option value="backlog">📋 Backlog</option>
+                                        <option value="in_progress">🟡 In Progress</option>
+                                        <option value="resolved">✅ Resolved</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Priority</label>
+                                    <select class="editor-select" x-model="formData.priority">
+                                        <option value="1">Low</option>
+                                        <option value="2">Medium</option>
+                                        <option value="3">High</option>
+                                        <option value="4">Critical</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Type</label>
+                                    <select class="editor-select" x-model="formData.ticket_type">
+                                        <option value="bug">🐛 Bug</option>
+                                        <option value="feature">✨ Feature</option>
+                                        <option value="debug">🔍 Debug</option>
+                                        <option value="manual">📝 Manual</option>
+                                        <option value="user">👤 User</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Description Section -->
+                        <div class="form-section">
+                            <div class="section-header">Description</div>
+                            <div class="form-field">
+                                <textarea class="editor-textarea" 
+                                          x-model="formData.description"
+                                          rows="6"
+                                          placeholder="Detailed description of the ticket..."></textarea>
+                            </div>
+                        </div>
+
+                        <!-- Reproduction Steps Section -->
+                        <div class="form-section">
+                            <div class="section-header">Reproduction Steps</div>
+                            <div class="form-field">
+                                <textarea class="editor-textarea" 
+                                          x-model="formData.repro_steps"
+                                          rows="4"
+                                          placeholder="1. Step one&#10;2. Step two&#10;3. Step three"></textarea>
+                            </div>
+                        </div>
+
+                        <!-- Resolution Notes Section -->
+                        <div class="form-section">
+                            <div class="section-header">Resolution Notes & Context</div>
+                            <div class="form-field">
+                                <textarea class="editor-textarea" 
+                                          x-model="formData.resolution_notes"
+                                          rows="6"
+                                          placeholder="Add context, implementation notes, or resolution details..."></textarea>
+                            </div>
+                        </div>
+
+                        <!-- Tags Section -->
+                        <div class="form-section">
+                            <div class="section-header">Tags</div>
+                            <div class="form-field">
+                                <div class="tags-container">
+                                    <template x-for="(tag, index) in formData.tags" :key="index">
+                                        <span class="tag">
+                                            <span x-text="tag"></span>
+                                            <button class="tag-remove" @click="removeTag(index)">×</button>
+                                        </span>
+                                    </template>
+                                    <input type="text" class="tag-input" 
+                                           placeholder="Add tag..."
+                                           @keydown.enter.prevent="addTag($event)"
+                                           @keydown.comma.prevent="addTag($event)">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Metadata Section (Read-only) -->
+                        <div class="form-section" x-show="!isCreating">
+                            <div class="section-header">Metadata</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Created By</label>
+                                    <input type="text" class="editor-input" 
+                                           :value="selectedTicket?.created_by || 'N/A'" 
+                                           readonly>
+                                </div>
+                                <div class="form-field">
+                                    <label>Created At</label>
+                                    <input type="text" class="editor-input" 
+                                           :value="selectedTicket ? formatDateTime(selectedTicket.created_at) : 'N/A'" 
+                                           readonly>
+                                </div>
+                                <div class="form-field">
+                                    <label>Updated At</label>
+                                    <input type="text" class="editor-input" 
+                                           :value="selectedTicket ? formatDateTime(selectedTicket.updated_at) : 'N/A'" 
+                                           readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification Area -->
+        <div id="editorNotification" class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module, then Alpine.js -->
+    <script type="module">
+        // Import the editor module first
+        await import('/ticket-editor.js');
+        console.log('[TicketEditor] Module loaded, ticketEditor available:', typeof window.ticketEditor);
+        
+        // Now load Alpine.js
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
+

@@ -709,6 +709,13 @@ let godMode = false;
 let hasWarehouseDeed = false;
 let npcWidgetVisible = false; // NPC widget is special - auto-managed
 
+// Expose global game state for widget manager
+window.gameState = window.gameState || {};
+window.gameState.isGod = godMode;
+window.gameState.hasWarehouseDeed = hasWarehouseDeed;
+window.gameState.inFactoryRoom = false;
+window.gameState.currentRoom = null;
+
 // Update godMode and hasWarehouseDeed from server messages
 game.messageBus.on('player:stats', (data) => {
     if (data.stats) {
@@ -716,6 +723,10 @@ game.messageBus.on('player:stats', (data) => {
         if (data.stats.godMode !== undefined) {
             const wasGodMode = godMode;
             godMode = data.stats.godMode.value === true || data.stats.godMode === true;
+            // Update global game state
+            window.gameState = window.gameState || {};
+            window.gameState.isGod = godMode;
+            window.godMode = godMode; // Legacy support
             // Only update widget display if godMode status changed
             if (wasGodMode !== godMode) {
                 updateWidgetDisplay();
@@ -752,10 +763,20 @@ game.messageBus.on('room:update', (data) => {
     if (data.hasWarehouseDeed !== undefined) {
         const wasWarehouseDeed = hasWarehouseDeed;
         hasWarehouseDeed = data.hasWarehouseDeed;
+        // Update global game state
+        window.gameState = window.gameState || {};
+        window.gameState.hasWarehouseDeed = hasWarehouseDeed;
+        window.hasWarehouseDeed = hasWarehouseDeed; // Legacy support
         // Only update widget display if warehouse deed status changed
         if (wasWarehouseDeed !== hasWarehouseDeed) {
             updateWidgetDisplay();
         }
+    }
+    // Track room type for factory detection
+    if (data.room) {
+        window.gameState = window.gameState || {};
+        window.gameState.currentRoom = data.room;
+        window.gameState.inFactoryRoom = data.room.room_type === 'factory';
     }
 });
 
@@ -908,9 +929,11 @@ function updateWidgetDisplay() {
         
         // Update active state (only for visible icons)
         if (activeWidgets.includes(widgetName)) {
-            icon.classList.add('active');
+            icon.classList.add('active', 'widget-active');
+            icon.classList.remove('widget-inactive');
         } else {
-            icon.classList.remove('active');
+            icon.classList.remove('active', 'widget-active');
+            icon.classList.add('widget-inactive');
         }
     });
     
@@ -1055,7 +1078,9 @@ function initGodModeEditors() {
             } else if (action === 'player') {
                 window.location.href = '/player';
             } else if (action === 'crafting') {
-                window.location.href = '/crafting-editor';
+                window.location.href = '/crafting';
+            } else if (action === 'tickets') {
+                window.location.href = '/tickets';
             }
         });
     });

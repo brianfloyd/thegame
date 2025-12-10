@@ -511,27 +511,40 @@ function setupRoutes(app, options) {
     res.sendFile(path.join(__dirname, '..', 'public', 'game.html'));
   });
   
-  // Protected routes for god mode editors
+  // ===========================================
+  // GOD MODE EDITORS (protected from static serving)
+  // All editors are in /protected/editors/ folder
+  // Routes: /map, /npc, /items, /player, /tickets, /crafting
+  // ===========================================
+  
   app.get('/map', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'map-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'map-editor.html'));
   });
   
   app.get('/npc', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'npc-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'npc-editor.html'));
   });
   
   app.get('/items', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'item-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'item-editor.html'));
   });
   
-  // Crafting Recipe Editor route (God Mode only)
-  app.get('/crafting-editor', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'crafting-editor.html'));
+  app.get('/crafting', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'crafting-editor.html'));
   });
   
-  // Player Editor route (God Mode only)
   app.get('/player', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'player-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'player-editor.html'));
+  });
+  
+  app.get('/tickets', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'ticket-editor.html'));
+  });
+  
+  // Serve editor CSS and JS files (these need to be accessible after auth)
+  app.get('/:file(map|npc|item|player|ticket|crafting)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
+    const file = `${req.params.file}-editor.${req.params.ext}`;
+    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', file));
   });
   
   // Password reset page (public route)
@@ -730,6 +743,7 @@ function setupRoutes(app, options) {
     }
   }
   
+  // Dev backdoor routes for all editors
   app.get('/dev-map-editor', optionalSession, (req, res) => {
     createDevEditorSession(req, res, '/map');
   });
@@ -744,6 +758,14 @@ function setupRoutes(app, options) {
   
   app.get('/dev-npc-editor', optionalSession, (req, res) => {
     createDevEditorSession(req, res, '/npc');
+  });
+  
+  app.get('/dev-ticket-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/tickets');
+  });
+  
+  app.get('/dev-crafting-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/crafting');
   });
 
   // ============================================================

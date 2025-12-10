@@ -16,18 +16,13 @@ import {
     ListSidebar, 
     JSONGridEditor 
 } from './js/editorComponents/index.js';
-
-// WebSocket connection
-let ws = null;
-const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsUrl = wsProtocol + location.host;
+import { EditorBase } from './js/editorShared/EditorBase.js';
 
 // Editor State
 let allRecipes = [];
 let allItems = [];
 let selectedRecipeId = null;
 let sidebarEl = null;
-let isNavigatingAway = false;
 
 // ============================================
 // NOTIFICATION SYSTEM
@@ -45,37 +40,6 @@ function showNotification(message, type = 'info') {
     setTimeout(() => {
         if (notification.parentNode) notification.remove();
     }, 5000);
-}
-
-// ============================================
-// WEBSOCKET CONNECTION
-// ============================================
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        // Authenticate with session
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
-        }
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        if (!isNavigatingAway) {
-            setTimeout(connectWebSocket, 3000);
-        }
-    };
 }
 
 // ============================================
@@ -625,7 +589,7 @@ function deleteRecipe() {
 
 function deleteRecipeById(recipeId) {
     if (!recipeId) return;
-    ws.send(JSON.stringify({ type: 'deleteFactoryRecipe', recipe_id: recipeId }));
+    EditorBase.send({ type: 'deleteFactoryRecipe', recipe_id: recipeId });
 }
 
 function saveRecipe(recipeId) {
@@ -726,9 +690,9 @@ function saveRecipe(recipeId) {
     
     if (recipeId) {
         recipe.recipe_id = recipeId;
-        ws.send(JSON.stringify({ type: 'updateFactoryRecipe', recipe }));
+        EditorBase.send({ type: 'updateFactoryRecipe', recipe });
     } else {
-        ws.send(JSON.stringify({ type: 'createFactoryRecipe', recipe }));
+        EditorBase.send({ type: 'createFactoryRecipe', recipe });
     }
 }
 
@@ -736,7 +700,7 @@ function saveRecipe(recipeId) {
 // NAVIGATION
 // ============================================
 function closeCraftingEditor() {
-    isNavigatingAway = true;
+    EditorBase.setNavigatingAway(true);
     window.location.href = '/game';
 }
 
@@ -754,7 +718,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.editor-nav-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const targetEditor = btn.getAttribute('data-editor');
-            isNavigatingAway = true;
+            EditorBase.setNavigatingAway(true);
             
             if (targetEditor === 'map-editor') {
                 window.location.href = '/map';
@@ -769,16 +733,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize sidebar
     initSidebar();
     
-    // Connect WebSocket
-    connectWebSocket();
-    
-    // Request editor data after a short delay to allow authentication to complete
-    // (Same pattern as map-editor.js uses)
-    setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            console.log('[CraftingEditor] Requesting initial data after authentication delay...');
-            ws.send(JSON.stringify({ type: 'getFactoryRecipes' }));
-            ws.send(JSON.stringify({ type: 'getAllItems' }));
+    // Initialize EditorBase - requests data after authentication
+    EditorBase.init({
+        onReady: (socket) => {
+            console.log('[CraftingEditor] Editor ready, requesting initial data...');
+            socket.send(JSON.stringify({ type: 'getFactoryRecipes' }));
+            socket.send(JSON.stringify({ type: 'getAllItems' }));
+        },
+        onMessage: (data) => {
+            handleMessage(data);
+        },
+        onError: (error) => {
+            showNotification(error.message || 'Connection error', 'error');
         }
-    }, 500);
+    });
 });

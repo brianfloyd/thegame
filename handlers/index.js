@@ -46,6 +46,7 @@ const handlerMap = {
   wealth: gameHandlers.wealth,
   who: gameHandlers.who,
   pulseEcho: gameHandlers.pulseEcho,
+  zork: gameHandlers.zork,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
   assignAttributePoint: gameHandlers.assignAttributePoint,
   getAutoPathMaps: gameHandlers.getAutoPathMaps,
@@ -71,6 +72,7 @@ const handlerMap = {
   // Debug observer handlers
   observeBug: gameHandlers.observeBug,
   createZorkTicket: gameHandlers.createZorkTicket,
+  createTicket: gameHandlers.createTicket,
   getTickets: gameHandlers.getTickets,
   updateTicket: gameHandlers.updateTicket,
   addTicketFeedback: gameHandlers.addTicketFeedback,

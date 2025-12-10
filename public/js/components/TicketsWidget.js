@@ -3,9 +3,24 @@
  * 
  * Displays and manages tickets (bugs, feature requests, work tickets)
  * Allows viewing past tickets, closing tickets, adding feedback
+ * 
+ * Uses shared ticket model from /js/models/ticket.js for consistent
+ * field handling across the application.
  */
 
 import Component from '../core/Component.js';
+import {
+    TICKET_STATUSES,
+    TICKET_TYPES,
+    TICKET_PRIORITIES,
+    PRIORITY_LABELS,
+    STATUS_EMOJIS,
+    TYPE_LABELS,
+    mapRowToTicket,
+    mapRowsToTickets,
+    getPriorityColor,
+    getStatusColor
+} from '../models/ticket.js';
 
 export default class TicketsWidget extends Component {
     constructor(game) {
@@ -199,7 +214,8 @@ export default class TicketsWidget extends Component {
             }
             
             // Always update tickets array with fresh data from server
-            this.tickets = data.tickets;
+            // Use mapRowsToTickets for consistent normalization
+            this.tickets = mapRowsToTickets(data.tickets);
             this.lastSuccessfulLoad = Date.now();
             
             // CRITICAL: Verify filter is still correct after updating tickets
@@ -354,9 +370,9 @@ export default class TicketsWidget extends Component {
             html += `<div class="tickets-empty">No ${tabTitle.toLowerCase()} tickets found.</div>`;
         } else {
             tabTickets.forEach(ticket => {
-                const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'backlog' ? '📋' : ticket.status === 'in_progress' ? '🟡' : '✅';
-                const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
-                const ticketTypeText = ticket.ticket_type === 'bug' ? '🐛 Bug' : ticket.ticket_type === 'feature' ? '✨ Feature' : '🔍 Debug';
+                const statusEmoji = STATUS_EMOJIS[ticket.status] || '❓';
+                const priorityText = PRIORITY_LABELS[ticket.priority] || 'Medium';
+                const ticketTypeText = TYPE_LABELS[ticket.ticket_type] || TYPE_LABELS['debug'];
                 
                 // Check if Cursor is working on this (in_progress status means Cursor is working)
                 const cursorWorking = ticket.status === 'in_progress';
@@ -578,8 +594,8 @@ export default class TicketsWidget extends Component {
             console.log('[TicketsWidget] Using existing ticket details dialog');
         }
         
-        const statusEmoji = ticket.status === 'open' ? '🔴' : ticket.status === 'in_progress' ? '🟡' : '✅';
-        const priorityText = ['', 'Low', 'Medium', 'High', 'Critical'][ticket.priority || 2];
+        const statusEmoji = STATUS_EMOJIS[ticket.status] || '❓';
+        const priorityText = PRIORITY_LABELS[ticket.priority] || 'Medium';
         
         const content = dialog.querySelector('.ticket-details-content');
         content.innerHTML = `

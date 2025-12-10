@@ -18,6 +18,7 @@ require('dotenv').config();
 // Import database and knowledge utilities
 const db = require('../database');
 const { generateEmbedding } = require('../utils/zorkKnowledge');
+const { isZorkEnabled } = require('../utils/zorkFlag');
 
 // ============================================================================
 // CONFIGURATION
@@ -160,6 +161,12 @@ async function verifyZorkExists() {
  * Connect to the game server as ZORK
  */
 async function connect() {
+  // Check if ZORK is enabled before connecting
+  if (!isZorkEnabled()) {
+    console.log('[ZORK] ZORK is disabled. Not connecting. Use /zork command in-game to enable.');
+    return;
+  }
+  
   try {
     // Clean up existing connection
     if (client) {
@@ -386,6 +393,14 @@ function handleDisconnect(code, reason) {
  * Attempt to reconnect
  */
 async function attemptReconnect() {
+  // Check if ZORK is enabled before reconnecting
+  if (!isZorkEnabled()) {
+    console.log('[ZORK] ZORK is disabled. Not reconnecting. Use /zork command in-game to enable.');
+    isReconnecting = false;
+    reconnectAttempts = 0; // Reset attempts when disabled
+    return;
+  }
+  
   // If we're already connected, don't reconnect
   if (client?.connected) {
     console.log('[ZORK] Already connected, skipping reconnect');
@@ -3430,6 +3445,12 @@ async function main() {
   console.log('\n' + '='.repeat(60));
   console.log('    ZORK THE AI LORD - Autonomous AI Agent');
   console.log('='.repeat(60) + '\n');
+  
+  // Check if ZORK is enabled before starting
+  if (!isZorkEnabled()) {
+    console.log('[ZORK] ZORK is disabled. Exiting. Use /zork command in-game to enable.');
+    process.exit(0);
+  }
   
   // Load system prompt
   loadSystemPrompt();

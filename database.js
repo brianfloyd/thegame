@@ -72,10 +72,19 @@ async function createRoom(name, description, x, y, mapId, roomType = 'normal') {
   return result.rows[0].id;
 }
 
-async function updateRoom(roomId, name, description, roomType) {
+async function updateRoom(roomId, name, description, roomType, factoryTier, connectedMapId, connectedRoomX, connectedRoomY, connectionDirection) {
   await query(
-    'UPDATE rooms SET name = $1, description = $2, room_type = $3 WHERE id = $4',
-    [name, description, roomType, roomId]
+    `UPDATE rooms 
+     SET name = $1, 
+         description = $2, 
+         room_type = $3,
+         factory_tier = $5,
+         connected_map_id = $6,
+         connected_room_x = $7,
+         connected_room_y = $8,
+         connection_direction = $9
+     WHERE id = $4`,
+    [name, description, roomType, roomId, factoryTier, connectedMapId, connectedRoomX, connectedRoomY, connectionDirection]
   );
 }
 
@@ -750,7 +759,7 @@ async function createScriptableNPC(npc) {
     puzzle_award_after_delay = false,
     puzzle_award_delay_seconds = null,
     puzzle_award_delay_response = null,
-    harvest_prerequisite_item = null,
+    harvest_prerequisite_items = null,
     harvest_prerequisite_message = null,
     enable_resonance_bonuses = true,
     enable_fortitude_bonuses = true,
@@ -767,7 +776,7 @@ async function createScriptableNPC(npc) {
   const result = await query(
     `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, scriptable, active)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield]
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_items ? JSON.stringify(harvest_prerequisite_items) : null, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield]
   );
 
   return result.rows[0].id;
@@ -826,12 +835,12 @@ async function updateScriptableNPC(npc) {
       puzzle_reward_item = $22, puzzle_hint_responses = $23, puzzle_followup_responses = $24,
       puzzle_incorrect_attempt_responses = $25, puzzle_award_once_only = $26, puzzle_award_after_delay = $27,
       puzzle_award_delay_seconds = $28, puzzle_award_delay_response = $29,
-      harvest_prerequisite_item = $30, harvest_prerequisite_message = $31,
+      harvest_prerequisite_item = COALESCE($30, harvest_prerequisite_item), harvest_prerequisite_message = COALESCE($31, harvest_prerequisite_message),
       enable_resonance_bonuses = $32, enable_fortitude_bonuses = $33,
       status_message_idle = $34, status_message_ready = $35, status_message_harvesting = $36, status_message_cooldown = $37,
       hit_vitalis = $38, miss_vitalis = $39, pulse_echo_yield = $40
      WHERE id = $41`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_item || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, id]
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_items ? JSON.stringify(npc.harvest_prerequisite_items) : (npc.harvest_prerequisite_item || null), npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, id]
   );
 }
 

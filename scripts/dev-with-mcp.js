@@ -5,6 +5,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const { isZorkEnabled } = require('../utils/zorkFlag');
 
 const PORT = process.env.PORT || 3434;
 const isPort3434 = PORT === 3434 || PORT === '3434';
@@ -44,19 +45,32 @@ gameServer.stdout.on('data', (data) => {
   if (output.includes('Server running on') || output.includes(`http://`) || output.includes(`:${PORT}`)) {
     if (serverRestarting) {
       serverRestarting = false;
-      // Server is back up, restart ZORK after a delay
+      // Server is back up, restart ZORK after a delay (if enabled)
       setTimeout(() => {
-        if (isPort3434 && autoFollow) {
-          console.log('[dev-with-mcp] Server restarted, restarting ZORK...');
-          if (autoFollow) {
-            try {
-              autoFollow.kill('SIGTERM');
-            } catch (e) {
-              // Ignore
+        if (isPort3434) {
+          // Only restart if ZORK is enabled
+          if (isZorkEnabled()) {
+            if (autoFollow) {
+              console.log('[dev-with-mcp] Server restarted, restarting ZORK...');
+              try {
+                autoFollow.kill('SIGTERM');
+              } catch (e) {
+                // Ignore
+              }
+              autoFollow = null;
             }
-            autoFollow = null;
+            startZork();
+          } else {
+            // ZORK is disabled, kill any existing process
+            if (autoFollow) {
+              try {
+                autoFollow.kill('SIGTERM');
+              } catch (e) {
+                // Ignore
+              }
+              autoFollow = null;
+            }
           }
-          startZork();
         }
       }, 3000); // Wait 3 seconds after server is ready
     }
@@ -107,6 +121,12 @@ if (isPort3434) {
   let zorkStartTimeout = null;
   
   function startZork() {
+    // Check if ZORK is enabled before starting
+    if (!isZorkEnabled()) {
+      console.log('[dev-with-mcp] ZORK is disabled. Not starting. Use /zork command in-game to enable.');
+      return;
+    }
+    
     if (autoFollow) {
       // Kill existing ZORK process if it exists
       try {

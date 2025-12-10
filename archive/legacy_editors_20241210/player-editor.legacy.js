@@ -1,10 +1,7 @@
 // Player Editor - God Mode page
 // Session-based authentication (no URL params needed)
 
-// WebSocket connection
-let ws = null;
-const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsUrl = wsProtocol + location.host;
+import { EditorBase } from './js/editorShared/EditorBase.js';
 
 // Player Editor State
 let allPlayers = [];
@@ -43,43 +40,12 @@ function showEditorNotification(message, type = 'info') {
     }, 5000);
 }
 
-// Connect to WebSocket server
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        // Authenticate with session
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
-        }
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        setTimeout(connectWebSocket, 3000);
-    };
-}
-
 // Handle messages from server
 function handleMessage(data) {
     switch (data.type) {
         case 'roomUpdate':
         case 'playerStats':
-            // Authentication succeeded - now request player list and items
-            if (allPlayers.length === 0) {
-                ws.send(JSON.stringify({ type: 'getAllPlayers' }));
-                ws.send(JSON.stringify({ type: 'getAllItems' }));
-            }
+            // These messages are for game clients, not editors - ignore them
             break;
         case 'playerList':
             allPlayers = data.players;
@@ -96,7 +62,7 @@ function handleMessage(data) {
             showPlayerForm(data.player);
             // Reload inventory after player update
             if (data.player.id === selectedPlayerId) {
-                ws.send(JSON.stringify({ type: 'getPlayerInventory', playerId: data.player.id }));
+                EditorBase.send({ type: 'getPlayerInventory', playerId: data.player.id });
             }
             showEditorNotification('Player updated successfully', 'info');
             break;
@@ -190,7 +156,7 @@ function selectPlayer(playerId) {
     if (player) {
         showPlayerForm(player);
         // Request player inventory
-        ws.send(JSON.stringify({ type: 'getPlayerInventory', playerId }));
+        EditorBase.send({ type: 'getPlayerInventory', playerId });
     }
 }
 
@@ -362,7 +328,7 @@ function showPlayerForm(player) {
     
     // Request inventory if player is selected
     if (player.id === selectedPlayerId) {
-        ws.send(JSON.stringify({ type: 'getPlayerInventory', playerId: player.id }));
+        EditorBase.send({ type: 'getPlayerInventory', playerId: player.id });
     }
 }
 
@@ -389,7 +355,7 @@ function savePlayer(playerId) {
         flag_god_mode: document.getElementById('flag_god_mode')?.checked ? 1 : 0
     };
     
-    ws.send(JSON.stringify({ type: 'updatePlayer', player }));
+    EditorBase.send({ type: 'updatePlayer', player });
 }
 
 // Update item selector dropdown
@@ -507,12 +473,12 @@ function addItemToInventory() {
         return;
     }
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'addPlayerInventoryItem',
         playerId: selectedPlayerId,
         itemName: itemName,
         quantity: quantity
-    }));
+    });
     
     // Reset
     selector.value = '';
@@ -521,12 +487,12 @@ function addItemToInventory() {
 
 // Remove item from player inventory
 function removeItemFromInventory(itemName) {
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'removePlayerInventoryItem',
         playerId: selectedPlayerId,
         itemName: itemName,
         quantity: 1
-    }));
+    });
 }
 
 // Escape HTML for safe display
@@ -539,7 +505,20 @@ function escapeHtml(text) {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    connectWebSocket();
+    // Initialize EditorBase - requests data after authentication
+    EditorBase.init({
+        onReady: (socket) => {
+            console.log('[PlayerEditor] Editor ready, requesting initial data...');
+            socket.send(JSON.stringify({ type: 'getAllPlayers' }));
+            socket.send(JSON.stringify({ type: 'getAllItems' }));
+        },
+        onMessage: (data) => {
+            handleMessage(data);
+        },
+        onError: (error) => {
+            showEditorNotification(error.message || 'Connection error', 'error');
+        }
+    });
     
     // Close button
     const closePlayerEditorBtn = document.getElementById('closePlayerEditor');
@@ -570,11 +549,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function openFormulaConfigEditor() {
     // Request formula configs from server
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'getHarvestFormulaConfigs' }));
-    } else {
-        showEditorNotification('Not connected to server', 'error');
-    }
+    EditorBase.send({ type: 'getHarvestFormulaConfigs' });
 }
 
 function showFormulaConfigModal(configs) {
@@ -813,7 +788,8 @@ function updateFormulaPreview() {
 }
 
 function saveFormulaConfigs() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
         showEditorNotification('Not connected to server', 'error');
         return;
     }
@@ -858,25 +834,25 @@ function saveFormulaConfigs() {
         curve_exponent: 0
     };
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: cooldownConfig
-    }));
+    });
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: restoreConfig
-    }));
+    });
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: delayConfig
-    }));
+    });
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateHarvestFormulaConfig',
         config: roomUpdateConfig
-    }));
+    });
     
     showEditorNotification('Attunement formula configurations and game settings saved!');
 }

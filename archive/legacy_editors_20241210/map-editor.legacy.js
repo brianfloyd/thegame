@@ -1,10 +1,7 @@
 // Map Editor - Standalone page
 // Session-based authentication (no URL params needed)
 
-// WebSocket connection
-let ws = null;
-const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const wsUrl = wsProtocol + location.host;
+import { EditorBase } from './js/editorShared/EditorBase.js';
 
 // Map Editor Variables
 let mapEditor = null;
@@ -76,39 +73,6 @@ function showEditorNotification(message, type = 'info') {
             notification.remove();
         }
     }, 5000);
-}
-
-// Track if we're intentionally navigating away
-let isNavigatingAway = false;
-
-// Connect to WebSocket server
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        // Authenticate with session
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'authenticateSession' }));
-        }
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-    };
-
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        // Only auto-reconnect if we're not intentionally navigating away
-        if (!isNavigatingAway) {
-            setTimeout(connectWebSocket, 3000);
-        }
-    };
 }
 
 // Handle messages from server
@@ -362,7 +326,8 @@ function closeMapEditor() {
 
 // Load map for editor
 function loadMapForEditor(mapId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
     currentEditorMapId = mapId;
 
@@ -381,17 +346,18 @@ function loadMapForEditor(mapId) {
         editorPanY = 0;
     }
 
-    ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
+    EditorBase.send({ type: 'getMapEditorData', mapId: mapId });
     // Also request room types if we don't have them yet
     if (allRoomTypes.length === 0) {
-        ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
+        EditorBase.send({ type: 'getAllRoomTypes' });
     }
 }
 
 // Load NPC list from server
 function loadNPCs() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'getAllNPCs' }));
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    EditorBase.send({ type: 'getAllNPCs' });
 }
 
 // Add NPC to selected room (supports quantity)
@@ -401,7 +367,8 @@ function addNPCToSelectedRoom(npcId, quantity = 1) {
         return;
     }
     
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
         showEditorNotification('Not connected to server', 'error');
         return;
     }
@@ -411,12 +378,12 @@ function addNPCToSelectedRoom(npcId, quantity = 1) {
     let addedCount = 0;
     const addNextNPC = () => {
         if (addedCount < quantity) {
-            ws.send(JSON.stringify({
+            EditorBase.send({
                 type: 'addNpcToRoom',
                 npcId: npcId,
                 roomId: selectedRoom.id,
                 slot: addedCount // Use quantity index as slot to allow multiple
-            }));
+            });
             addedCount++;
             
             // If there are more to add, wait a bit before next request to avoid overwhelming the server
@@ -462,8 +429,9 @@ function showRoomTypeColorsDialog() {
     
     // If we don't have room types yet, request them
     if (allRoomTypes.length === 0) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
+        const socket = EditorBase.getSocket();
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            EditorBase.send({ type: 'getAllRoomTypes' });
         }
         // Show message and return - will refresh when room types arrive
         const message = document.createElement('div');
@@ -526,13 +494,11 @@ function showRoomTypeColorsDialog() {
             const newColor = colorSelect.value;
             colorPreview.style.backgroundColor = newColor;
             // Save immediately
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'setRoomTypeColor',
-                    roomType: rt.type,
-                    color: newColor
-                }));
-            }
+            EditorBase.send({
+                type: 'setRoomTypeColor',
+                roomType: rt.type,
+                color: newColor
+            });
         });
         
         colorRow.appendChild(colorSelect);
@@ -556,9 +522,7 @@ function generateRoomTypeOptions(selectedType) {
     // If we don't have room types yet, request them and use defaults as fallback
     if (allRoomTypes.length === 0) {
         // Request room types from server
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
-        }
+        EditorBase.send({ type: 'getAllRoomTypes' });
         // Use defaults as fallback until database responds
         const defaults = ['normal', 'merchant', 'factory', 'warehouse'];
         return defaults.map(type => {
@@ -586,15 +550,16 @@ function createNewMap() {
         return;
     }
     
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'createMap',
         name: name,
         width: 100,
         height: 100,
         description: description
-    }));
+    });
     
     hideCreateMapDialog();
 }
@@ -1117,14 +1082,12 @@ function updateRoomItemsSection(roomId, roomItems, allItems) {
         section.querySelectorAll('.remove-item-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const itemName = btn.dataset.item;
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'removeItemFromRoom',
-                        roomId: roomId,
-                        itemName: itemName,
-                        quantity: 1
-                    }));
-                }
+                EditorBase.send({
+                    type: 'removeItemFromRoom',
+                    roomId: roomId,
+                    itemName: itemName,
+                    quantity: 1
+                });
             });
         });
         
@@ -1132,12 +1095,10 @@ function updateRoomItemsSection(roomId, roomItems, allItems) {
         const clearAllBtn = document.getElementById('clearAllItemsBtn');
         if (clearAllBtn) {
             clearAllBtn.addEventListener('click', () => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'clearAllItemsFromRoom',
-                        roomId: roomId
-                    }));
-                }
+                EditorBase.send({
+                    type: 'clearAllItemsFromRoom',
+                    roomId: roomId
+                });
             });
         }
     } else {
@@ -1230,13 +1191,11 @@ function updateMerchantInventorySection(roomId, merchantItems) {
         section.querySelectorAll('.remove-merchant-item-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const merchantItemId = parseInt(btn.dataset.merchantItemId);
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'removeMerchantItem',
-                        merchantItemId: merchantItemId,
-                        roomId: roomId
-                    }));
-                }
+                EditorBase.send({
+                    type: 'removeMerchantItem',
+                    merchantItemId: merchantItemId,
+                    roomId: roomId
+                });
             });
         });
     } else {
@@ -1344,14 +1303,12 @@ function showMerchantItemConfigEditor(merchantItemId, itemName, configJson, room
             if (parsedConfig.price === undefined) parsedConfig.price = 0;
             
             // Send to server
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'updateMerchantItemConfig',
-                    merchantItemId: merchantItemId,
-                    config: parsedConfig,
-                    roomId: roomId
-                }));
-            }
+            EditorBase.send({
+                type: 'updateMerchantItemConfig',
+                merchantItemId: merchantItemId,
+                config: parsedConfig,
+                roomId: roomId
+            });
             
             // Close modal
             overlay.remove();
@@ -1471,9 +1428,7 @@ function updateSidePanel() {
                 </div>
             `;
             
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'getAllMaps' }));
-            }
+            EditorBase.send({ type: 'getAllMaps' });
             
             const targetMapSelect = document.getElementById('targetMapSelect');
             if (targetMapSelect) {
@@ -1722,14 +1677,12 @@ function updateSidePanel() {
             const itemSelect = document.getElementById('itemToAdd');
             const itemName = itemSelect.value;
             if (itemName && selectedRoom.id) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'addItemToRoom',
-                        roomId: selectedRoom.id,
-                        itemName: itemName,
-                        quantity: 1
-                    }));
-                }
+                EditorBase.send({
+                    type: 'addItemToRoom',
+                    roomId: selectedRoom.id,
+                    itemName: itemName,
+                    quantity: 1
+                });
             }
         });
         
@@ -1779,19 +1732,19 @@ function updateSidePanel() {
         }
         
         // Request room items for this room
-        if (selectedRoom.id && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
+        if (selectedRoom.id) {
+            EditorBase.send({
                 type: 'getRoomItemsForEditor',
                 roomId: selectedRoom.id
-            }));
+            });
         }
         
         // Request merchant inventory if this is a merchant room
-        if (selectedRoom.roomType === 'merchant' && selectedRoom.id && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
+        if (selectedRoom.roomType === 'merchant' && selectedRoom.id) {
+            EditorBase.send({
                 type: 'getMerchantInventory',
                 roomId: selectedRoom.id
-            }));
+            });
             
             // Populate merchant item dropdown
             const merchantItemSelect = document.getElementById('merchantItemToAdd');
@@ -1807,13 +1760,11 @@ function updateSidePanel() {
                     const itemSelect = document.getElementById('merchantItemToAdd');
                     const itemId = parseInt(itemSelect.value);
                     if (itemId && selectedRoom.id) {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                type: 'addItemToMerchantRoom',
-                                roomId: selectedRoom.id,
-                                itemId: itemId
-                            }));
-                        }
+                        EditorBase.send({
+                            type: 'addItemToMerchantRoom',
+                            roomId: selectedRoom.id,
+                            itemId: itemId
+                        });
                     }
                 });
             }
@@ -1823,12 +1774,10 @@ function updateSidePanel() {
             const disconnectBtn = document.getElementById('disconnectMapBtn');
             if (disconnectBtn) {
                 disconnectBtn.addEventListener('click', () => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({
-                            type: 'disconnectMap',
-                            roomId: selectedRoom.id
-                        }));
-                    }
+                    EditorBase.send({
+                        type: 'disconnectMap',
+                        roomId: selectedRoom.id
+                    });
                 });
             }
         }
@@ -1843,8 +1792,9 @@ function updateSidePanel() {
 // Create room
 function createRoom(mapId, name, description, x, y, roomType) {
     if (arguments.length >= 5) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
+        const socket = EditorBase.getSocket();
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        EditorBase.send({
             type: 'createRoom',
             mapId: mapId,
             name: name,
@@ -1852,7 +1802,7 @@ function createRoom(mapId, name, description, x, y, roomType) {
             x: x,
             y: y,
             roomType: roomType || 'normal'
-        }));
+        });
         return;
     }
     
@@ -1872,9 +1822,10 @@ function createRoom(mapId, name, description, x, y, roomType) {
         return;
     }
     
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'createRoom',
         mapId: currentEditorMapId,
         name: name,
@@ -1882,7 +1833,7 @@ function createRoom(mapId, name, description, x, y, roomType) {
         x: x,
         y: y,
         roomType: roomType
-    }));
+    });
     
     selectedRoom = null;
     selectedRooms = [];
@@ -1910,15 +1861,16 @@ function updateRoom() {
         return;
     }
     
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'updateRoom',
         roomId: selectedRoom.id,
         name: name,
         description: description,
         roomType: roomType
-    }));
+    });
     
     selectedRoom = null;
     selectedRooms = [];
@@ -1944,13 +1896,13 @@ function updateMultipleRooms() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     
     selectedRooms.forEach(room => {
-        ws.send(JSON.stringify({
+        EditorBase.send({
             type: 'updateRoom',
             roomId: room.id,
             name: name,
             description: description,
             roomType: roomType
-        }));
+        });
     });
     
     selectedRoom = null;
@@ -1980,17 +1932,18 @@ function deleteRooms(roomsToDelete) {
     }
     
     roomsToDelete.forEach(room => {
-        ws.send(JSON.stringify({
+        EditorBase.send({
             type: 'deleteRoom',
             roomId: room.id
-        }));
+        });
     });
 }
 
 // Load rooms for target map
 function loadTargetMapRooms(mapId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'getMapEditorData', mapId: mapId }));
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    EditorBase.send({ type: 'getMapEditorData', mapId: mapId });
 }
 
 // Connect maps
@@ -2010,16 +1963,17 @@ function connectMaps() {
         return;
     }
     
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const socket = EditorBase.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     
-    ws.send(JSON.stringify({
+    EditorBase.send({
         type: 'connectMaps',
         sourceRoomId: connectionSourceRoom.id,
         sourceDirection: direction,
         targetMapId: targetMapId,
         targetX: targetX,
         targetY: targetY
-    }));
+    });
     
     connectionSourceRoom = null;
     editorMode = 'edit';
@@ -2172,21 +2126,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetEditor = btn.getAttribute('data-editor');
             
             // Mark that we're intentionally navigating away
-            isNavigatingAway = true;
+            EditorBase.setNavigatingAway(true);
+            EditorBase.close();
             
-            // Close WebSocket gracefully before navigating
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close(1000, 'Navigating to another editor');
+            if (targetEditor === 'npc-editor') {
+                window.location.href = '/npc';
+            } else if (targetEditor === 'item-editor') {
+                window.location.href = '/items';
+            } else if (targetEditor === 'crafting-editor') {
+                window.location.href = '/crafting-editor';
             }
-            
-            // Small delay to ensure close message is sent
-            setTimeout(() => {
-                if (targetEditor === 'npc-editor') {
-                    window.location.href = '/npc-editor.html';
-                } else if (targetEditor === 'item-editor') {
-                    window.location.href = '/item-editor.html';
-                }
-            }, 100);
         });
     });
 
@@ -2220,10 +2169,8 @@ document.addEventListener('DOMContentLoaded', () => {
         roomTypeColorsBtn.addEventListener('click', () => {
             showRoomTypeColorsDialog();
             // Request current room type colors and room types from server
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'getAllRoomTypeColors' }));
-                ws.send(JSON.stringify({ type: 'getAllRoomTypes' }));
-            }
+            EditorBase.send({ type: 'getAllRoomTypeColors' });
+            EditorBase.send({ type: 'getAllRoomTypes' });
         });
     }
 
@@ -2286,15 +2233,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Connect to WebSocket and initialize
-    connectWebSocket();
-    
-    // Load all maps and NPCs
-    setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'getAllMaps' }));
+    // Initialize EditorBase - requests data after authentication
+    EditorBase.init({
+        onReady: (socket) => {
+            console.log('[MapEditor] Editor ready, requesting initial data...');
+            socket.send(JSON.stringify({ type: 'getAllMaps' }));
             loadNPCs();
+        },
+        onMessage: (data) => {
+            handleMessage(data);
+        },
+        onError: (error) => {
+            showEditorNotification(error.message || 'Connection error', 'error');
         }
-    }, 500);
+    });
 });
 

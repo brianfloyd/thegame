@@ -234,15 +234,16 @@ async function updateRoom(ctx, data) {
     return;
   }
 
-  const { roomId, name, description, roomType } = data;
+  // Accept both camelCase and snake_case for room_type
+  const { roomId, name, description, roomType, room_type, factory_tier, connected_map_id, connected_room_x, connected_room_y, connection_direction } = data;
   if (!roomId || !name) {
     ws.send(JSON.stringify({ type: 'error', message: 'Missing required fields' }));
     return;
   }
 
-  // Validate room type - must be one of the 4 allowed types
-  const validRoomType = roomType || 'normal';
-  const allowedTypes = ['normal', 'merchant', 'bank', 'warehouse'];
+  // Validate room type - must be one of the allowed types
+  const validRoomType = room_type || roomType || 'normal';
+  const allowedTypes = ['normal', 'merchant', 'bank', 'warehouse', 'factory'];
   if (!allowedTypes.includes(validRoomType)) {
     ws.send(JSON.stringify({ type: 'error', message: `Invalid room type: ${validRoomType}. Valid types: ${allowedTypes.join(', ')}` }));
     return;
@@ -257,7 +258,18 @@ async function updateRoom(ctx, data) {
   }
 
   try {
-    await db.updateRoom(roomId, name, description || '', validRoomType);
+    // Update room with all fields
+    await db.updateRoom(
+      roomId, 
+      name, 
+      description || '', 
+      validRoomType,
+      factory_tier || null,
+      connected_map_id || null,
+      connected_room_x || null,
+      connected_room_y || null,
+      connection_direction || null
+    );
     const room = await db.getRoomById(roomId);
     
     ws.send(JSON.stringify({
@@ -269,7 +281,15 @@ async function updateRoom(ctx, data) {
         x: room.x,
         y: room.y,
         roomType: room.room_type || 'normal',
-        mapId: room.map_id
+        room_type: room.room_type || 'normal',
+        mapId: room.map_id,
+        map_id: room.map_id,
+        factory_tier: room.factory_tier || null,
+        factory_quirks: room.factory_quirks || null,
+        connected_map_id: room.connected_map_id || null,
+        connected_room_x: room.connected_room_x || null,
+        connected_room_y: room.connected_room_y || null,
+        connection_direction: room.connection_direction || null
       }
     }));
   } catch (err) {
