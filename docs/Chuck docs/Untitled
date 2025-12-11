@@ -1,0 +1,22 @@
+# Frontend Architecture One-Liner Canonical Questions
+
+1. Define the canonical purpose of the frontend layer.
+2. List all required frontend modules/components at the architectural level.
+3. Specify the state management strategy (local, global store, server-driven).
+4. Declare how the frontend syncs with server state.
+5. Define the canonical event/message handling model.
+6. State which responsibilities belong only to the client (never server).
+7. Specify how UI updates and reactivity must behave.
+8. Define rendering rules for widgets and dynamic components.
+9. Declare how Alpine.js (or equivalent) should be used.
+10. Specify boundaries between gameplay UI and editor UI.
+11. Define how the frontend loads schemas, formulas, or config.
+12. State error display and user feedback standards.
+13. Specify network interaction rules (polling, websockets, fetch).
+14. Define canonical lifecycle hooks for pages/widgets.
+15. State performance expectations and optimization priorities.
+16. Declare how components communicate with one another.
+17. Define mutability rules for client-side state.
+18. Specify how the UI should behave when desynced.
+19. Declare theming and style system responsibilities.
+20. State enforcement level: guideline, standard, or canonical law.

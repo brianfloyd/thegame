@@ -104,6 +104,8 @@ const handlerMap = {
   
   // NPC editor handlers
   getAllNPCs: npcEditorHandlers.getAllNPCs,
+  getLoreKeeperHistory: npcEditorHandlers.getLoreKeeperHistory,
+  clearLoreKeeperHistory: npcEditorHandlers.clearLoreKeeperHistory,
   createNPC: npcEditorHandlers.createNPC,
   updateNPC: npcEditorHandlers.updateNPC,
   getNpcPlacements: npcEditorHandlers.getNpcPlacements,

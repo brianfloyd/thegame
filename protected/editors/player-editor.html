@@ -63,7 +63,7 @@
                                 <span class="player-id" x-text="'#' + player.id"></span>
                                 <span class="player-god-badge" x-show="player.flag_god_mode === 1">GOD</span>
                             </div>
-                            <div class="player-list-title" x-text="player.name"></div>
+                            <div class="player-list-title" x-html="formatPlayerName(player.name)"></div>
                         </div>
                     </template>
                     <div class="empty-list" x-show="filteredPlayers.length === 0 && !loading">
@@ -199,6 +199,71 @@
                                     <div class="form-field">
                                         <label>Attunement Delay (ms)</label>
                                         <input type="number" class="editor-input" x-model="formData.base_attunement_delay_ms" min="0" step="100">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div class="section-header">
+                                    <span>Inventory</span>
+                                    <span class="encumbrance-info" x-show="inventoryData.currentEncumbrance !== undefined">
+                                        (<span x-text="inventoryData.currentEncumbrance"></span> / <span x-text="formData.resource_max_encumbrance"></span> encumbrance)
+                                    </span>
+                                </div>
+                                
+                                <!-- Add Item Section -->
+                                <div class="inventory-add-section">
+                                    <div class="form-grid">
+                                        <div class="form-field">
+                                            <label>Item</label>
+                                            <select class="editor-select" x-model="newInventoryItem.itemName">
+                                                <option value="">Select item...</option>
+                                                <template x-for="item in allItems" :key="item.id">
+                                                    <option :value="item.name" x-text="item.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Quantity</label>
+                                            <input type="number" class="editor-input" x-model="newInventoryItem.quantity" min="1" value="1">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>&nbsp;</label>
+                                            <button class="editor-btn editor-btn-success" 
+                                                    @click="addInventoryItem()" 
+                                                    :disabled="!newInventoryItem.itemName || !selectedPlayer || loading">
+                                                + Add Item
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Inventory List -->
+                                <div class="inventory-list">
+                                    <template x-for="(item, index) in inventoryData.inventory" :key="index">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="item.item_name"></span>
+                                                <span class="inventory-item-quantity" x-text="'x' + item.quantity"></span>
+                                            </div>
+                                            <div class="inventory-item-actions">
+                                                <input type="number" 
+                                                       class="editor-input qty-input" 
+                                                       x-model="item.removeQuantity" 
+                                                       min="1" 
+                                                       :max="item.quantity"
+                                                       placeholder="Qty"
+                                                       style="width: 60px; margin-right: 5px;">
+                                                <button class="editor-btn editor-btn-danger" 
+                                                        @click="removeInventoryItem(item.item_name, item.removeQuantity || 1)"
+                                                        :disabled="!item.removeQuantity || item.removeQuantity < 1 || item.removeQuantity > item.quantity || loading">
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div class="empty-list" x-show="!inventoryData.inventory || inventoryData.inventory.length === 0">
+                                        No items in inventory.
                                     </div>
                                 </div>
                             </div>

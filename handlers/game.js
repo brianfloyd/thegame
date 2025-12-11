@@ -3047,26 +3047,46 @@ async function talk(ctx, data) {
   
   // Check for Lore Keeper keyword triggers (both dialogue and puzzle types)
   for (const lk of loreKeepers) {
-    // Both dialogue and puzzle types support keywords/responses
-    if (!lk.keywordsResponses) {
-      continue;
+    let foundKeyword = false;
+    
+    // Check keywords_responses for dialogue-type lorekeepers
+    if (lk.keywordsResponses) {
+      for (const [keyword, response] of Object.entries(lk.keywordsResponses)) {
+        if (messageLower.includes(keyword.toLowerCase())) {
+          // Found matching keyword - send response to room
+          broadcastToRoom(connectedPlayers, currentRoom.id, {
+            type: 'loreKeeperMessage',
+            npcName: lk.name,
+            npcColor: lk.displayColor,
+            message: response,
+            messageColor: lk.initialMessageColor,
+            keywordColor: lk.keywordColor
+          });
+          foundKeyword = true;
+          break; // Only respond once per Lore Keeper
+        }
+      }
     }
     
-    // Check each keyword
-    let foundKeyword = false;
-    for (const [keyword, response] of Object.entries(lk.keywordsResponses)) {
-      if (messageLower.includes(keyword.toLowerCase())) {
-        // Found matching keyword - send response to room
-        broadcastToRoom(connectedPlayers, currentRoom.id, {
-          type: 'loreKeeperMessage',
-          npcName: lk.name,
-          npcColor: lk.displayColor,
-          message: response,
-          messageColor: lk.initialMessageColor,
-          keywordColor: lk.keywordColor
-        });
-        foundKeyword = true;
-        break; // Only respond once per Lore Keeper
+    // Check puzzle_clues for puzzle-type lorekeepers (array format: [{"keyword": "key", "answer": "value"}])
+    if (!foundKeyword && lk.loreType === 'puzzle' && lk.puzzleClues && Array.isArray(lk.puzzleClues)) {
+      for (const clueObj of lk.puzzleClues) {
+        if (clueObj && clueObj.keyword && clueObj.answer) {
+          const keywordLower = clueObj.keyword.toLowerCase();
+          if (messageLower.includes(keywordLower)) {
+            // Found matching keyword in puzzle clues - send answer to room
+            broadcastToRoom(connectedPlayers, currentRoom.id, {
+              type: 'loreKeeperMessage',
+              npcName: lk.name,
+              npcColor: lk.displayColor,
+              message: clueObj.answer,
+              messageColor: lk.initialMessageColor,
+              keywordColor: lk.keywordColor
+            });
+            foundKeyword = true;
+            break; // Only respond once per Lore Keeper
+          }
+        }
       }
     }
     
@@ -3094,8 +3114,19 @@ async function talk(ctx, data) {
  * Format: ask <npc> <question>
  */
 async function ask(ctx, data) {
-  // Extract NPC name and question from message
-  const fullMessage = (data.message || '').trim();
+  // Handle both formats:
+  // 1. { type: 'ask', message: "Calder test" } - from client.js
+  // 2. { type: 'ask', target: "Calder", question: "test" } - from main.js
+  let fullMessage = '';
+  
+  if (data.target && data.question) {
+    // Format 2: Combine target and question
+    fullMessage = `${data.target} ${data.question}`.trim();
+  } else {
+    // Format 1: Use message directly
+    fullMessage = (data.message || '').trim();
+  }
+  
   if (!fullMessage) {
     ctx.ws.send(JSON.stringify({ type: 'error', message: 'Ask what? (ask <npc> <question>)' }));
     return;
@@ -3330,8 +3361,8 @@ async function clue(ctx, data) {
   
   const lk = puzzleKeepers[0];
   
-  // Check if puzzle has clues configured
-  if (!lk.puzzleClues || lk.puzzleClues.length === 0) {
+  // Check if puzzle has clues configured (array format: [{"keyword": "key", "answer": "value"}])
+  if (!lk.puzzleClues || !Array.isArray(lk.puzzleClues) || lk.puzzleClues.length === 0) {
     ws.send(JSON.stringify({ type: 'message', message: `${lk.name} offers no clues.` }));
     return;
   }
@@ -3339,7 +3370,22 @@ async function clue(ctx, data) {
   // Get clue index from player data or room_npcs state (for now just cycle through)
   // Simple implementation: cycle through clues based on a hash of player+npc+time
   const clueIndex = Math.floor(Date.now() / 30000) % lk.puzzleClues.length;
-  const clueText = lk.puzzleClues[clueIndex];
+  const clueObj = lk.puzzleClues[clueIndex];
+  
+  // Extract clue text from array format
+  let clueText = '';
+  if (clueObj && typeof clueObj === 'object') {
+    // New format: {"keyword": "key", "answer": "value"}
+    if (clueObj.keyword && clueObj.answer) {
+      clueText = `${clueObj.keyword}: ${clueObj.answer}`;
+    } else {
+      // Fallback: if it's just a string in the array (legacy format)
+      clueText = typeof clueObj === 'string' ? clueObj : JSON.stringify(clueObj);
+    }
+  } else {
+    // Legacy format: array of strings
+    clueText = clueObj;
+  }
   
   // Send clue to player only
   ws.send(JSON.stringify({

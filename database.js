@@ -1083,7 +1083,7 @@ async function getLoreKeepersInRoom(roomId) {
     keywordColor: row.keyword_color,
     incorrectResponse: row.incorrect_response,
     puzzleMode: row.puzzle_mode,
-    puzzleClues: row.puzzle_clues ? JSON.parse(row.puzzle_clues) : [],
+    puzzleClues: row.puzzle_clues ? JSON.parse(row.puzzle_clues) : [], // Array format: [{"keyword": "key", "answer": "value"}]
     puzzleSolution: row.puzzle_solution,
     puzzleSuccessMessage: row.puzzle_success_message,
     puzzleFailureMessage: row.puzzle_failure_message,
@@ -1283,6 +1283,60 @@ async function getGreetedLoreKeepersForPlayer(playerId) {
     [playerId]
   );
   return rows.map(row => row.npc_id);
+}
+
+/**
+ * Get all greetings for a specific Lore Keeper NPC
+ * Returns list of players who have been greeted with timestamps
+ */
+async function getLoreKeeperGreetings(npcId) {
+  const rows = await getAll(
+    `SELECT lkg.id, lkg.player_id, lkg.npc_id, lkg.first_greeted_at, lkg.last_greeted_at,
+            p.name as player_name
+     FROM lore_keeper_greetings lkg
+     JOIN players p ON lkg.player_id = p.id
+     WHERE lkg.npc_id = $1
+     ORDER BY lkg.last_greeted_at DESC`,
+    [npcId]
+  );
+  return rows;
+}
+
+/**
+ * Get all item awards for a specific Lore Keeper NPC
+ * Returns list of players who have received items with item names and timestamps
+ */
+async function getLoreKeeperItemAwards(npcId) {
+  const rows = await getAll(
+    `SELECT lkia.id, lkia.player_id, lkia.npc_id, lkia.item_name, lkia.awarded_at,
+            p.name as player_name
+     FROM lore_keeper_item_awards lkia
+     JOIN players p ON lkia.player_id = p.id
+     WHERE lkia.npc_id = $1
+     ORDER BY lkia.awarded_at DESC`,
+    [npcId]
+  );
+  return rows;
+}
+
+/**
+ * Clear all greetings for a specific Lore Keeper NPC
+ */
+async function clearLoreKeeperGreetings(npcId) {
+  await query(
+    'DELETE FROM lore_keeper_greetings WHERE npc_id = $1',
+    [npcId]
+  );
+}
+
+/**
+ * Clear all item awards for a specific Lore Keeper NPC
+ */
+async function clearLoreKeeperItemAwards(npcId) {
+  await query(
+    'DELETE FROM lore_keeper_item_awards WHERE npc_id = $1',
+    [npcId]
+  );
 }
 
 // ============================================================
@@ -3443,6 +3497,10 @@ module.exports = {
   hasPlayerBeenAwardedItemByLoreKeeper,
   recordLoreKeeperItemAward,
   getLastLoreKeeperItemAwardTime,
+  getLoreKeeperGreetings,
+  getLoreKeeperItemAwards,
+  clearLoreKeeperGreetings,
+  clearLoreKeeperItemAwards,
   
   // Items
   getAllItems,

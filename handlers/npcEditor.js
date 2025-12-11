@@ -393,6 +393,80 @@ async function updateHarvestFormulaConfig(ctx, data) {
   }
 }
 
+/**
+ * Get lorekeeper history (greetings and item awards) for a specific NPC
+ */
+async function getLoreKeeperHistory(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { npcId } = data;
+  if (!npcId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'NPC id required' }));
+    return;
+  }
+
+  try {
+    const greetings = await db.getLoreKeeperGreetings(npcId);
+    const itemAwards = await db.getLoreKeeperItemAwards(npcId);
+    
+    ws.send(JSON.stringify({
+      type: 'loreKeeperHistory',
+      npcId,
+      greetings,
+      itemAwards
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get lorekeeper history: ' + err.message }));
+  }
+}
+
+/**
+ * Clear lorekeeper history (greetings and/or item awards) for a specific NPC
+ */
+async function clearLoreKeeperHistory(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { npcId, clearGreetings, clearItemAwards } = data;
+  if (!npcId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'NPC id required' }));
+    return;
+  }
+
+  try {
+    if (clearGreetings) {
+      await db.clearLoreKeeperGreetings(npcId);
+    }
+    if (clearItemAwards) {
+      await db.clearLoreKeeperItemAwards(npcId);
+    }
+    
+    // Return updated history
+    const greetings = await db.getLoreKeeperGreetings(npcId);
+    const itemAwards = await db.getLoreKeeperItemAwards(npcId);
+    
+    ws.send(JSON.stringify({
+      type: 'loreKeeperHistory',
+      npcId,
+      greetings,
+      itemAwards
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to clear lorekeeper history: ' + err.message }));
+  }
+}
+
 module.exports = {
   getAllNPCs,
   createNPC,
@@ -403,6 +477,8 @@ module.exports = {
   addNpcToRoom,
   removeNpcFromRoom,
   getHarvestFormulaConfigs,
-  updateHarvestFormulaConfig
+  updateHarvestFormulaConfig,
+  getLoreKeeperHistory,
+  clearLoreKeeperHistory
 };
 

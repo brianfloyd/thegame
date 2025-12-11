@@ -82,11 +82,30 @@ function normalizeOutputItems(outputItems) {
     }
     
     // If it's an object, convert to array format
-    if (typeof outputItems === 'object') {
+    if (typeof outputItems === 'object' && outputItems !== null) {
         const items = [];
         for (const [itemName, value] of Object.entries(outputItems)) {
+            // Handle double-encoded JSON: {"{\"item_name\":\"Pulse Resin\",\"quantity\":1}": null}
+            // This happens when the database has malformed data
+            if (itemName.trim().startsWith('{') || itemName.trim().startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(itemName);
+                    if (typeof parsed === 'object' && parsed !== null && parsed.item_name) {
+                        // It's a parsed item object from double-encoded JSON
+                        items.push({
+                            item_name: parsed.item_name || '',
+                            quantity: parsed.quantity || 1,
+                            chance: parsed.chance !== undefined ? parsed.chance : 1.0
+                        });
+                        continue;
+                    }
+                } catch (e) {
+                    // Not valid JSON, treat as item name below
+                }
+            }
+            
+            // Normal legacy format: {"Pulse Resin": 1} or {"aether_bud": 1}
             if (typeof value === 'number') {
-                // Simple format: {"Pulse Resin": 1} -> quantity
                 items.push({
                     item_name: itemName,
                     quantity: value,
@@ -99,6 +118,23 @@ function normalizeOutputItems(outputItems) {
                     quantity: value.quantity || 1,
                     chance: value.chance !== undefined ? value.chance : 1.0
                 });
+            } else if (value === null || value === undefined) {
+                // Key might be a JSON string (double-encoded), try parsing it
+                if (itemName.trim().startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(itemName);
+                        if (parsed && parsed.item_name) {
+                            items.push({
+                                item_name: parsed.item_name || '',
+                                quantity: parsed.quantity || 1,
+                                chance: parsed.chance !== undefined ? parsed.chance : 1.0
+                            });
+                        }
+                    } catch (e) {
+                        // Ignore parse errors - treat as regular item name with null value
+                        // This shouldn't happen, but handle gracefully
+                    }
+                }
             }
         }
         return items;
@@ -174,7 +210,11 @@ export function mapRowToNpc(row) {
             }
             return normalized;
         })(),
-        harvest_prerequisite_message: row.harvest_prerequisite_message || null
+        harvest_prerequisite_message: row.harvest_prerequisite_message || null,
+        
+        // Lorekeeper data (attached by handler if npc_type === 'lorekeeper')
+        // Preserve the lorekeeper object if it exists on the row
+        lorekeeper: row.lorekeeper || null
     };
 }
 

@@ -1,0 +1,423 @@
+# 15 — God Mode Editors (Canonical Specification)
+
+God Mode editors are **administrative tools** used to create, modify, and tune game content and systems at runtime.  
+They are **never** available to normal players and require:
+
+- `flag_god_mode = 1` on the player record  
+- Access via either:
+  - The **God Widget** (for most editors)
+  - The **Ticket Editor hotkey** (`Z` from the command line)
+
+This document defines:
+
+- Which editors exist
+- What each editor can edit
+- Which database tables are affected
+- Canonical safety & usage rules
+
+Deeper UI and architectural patterns for widgets, services, and DB access are defined in:
+
+- `13-widgets-overview.md` (widget behavior)
+- `20-system-architecture.md` (overall architecture)
+- `21-backend-services.md` (service layer patterns)
+
+This file focuses on **what editors do**, not how the UI is implemented.
+
+---
+
+## 1. Editor Design Pattern (Canonical)
+
+All God Mode editors share a common design pattern:
+
+1. **God-only access**
+   - Editors are never visible or executable unless `flag_god_mode = 1`.
+   - Ticket Editor is triggered by the `Z` key, but still validated against God Mode.
+
+2. **Service-layer operations**
+   - Editors must call service functions (e.g., `MapService`, `PlayerService`, `NpcService`) rather than touching the database directly.
+   - All writes should flow through centralized logic for validation and logging.
+
+3. **No game logic in editors**
+   - Editors manipulate **data**, not **runtime behavior**.
+   - They should not contain combat logic, harvest logic, or crafting engine code; those live in their own systems (e.g., Harvest Engine, Factory Engine).
+
+4. **Clear separation from player-facing widgets**
+   - Editors may be launched from the God Widget, but they are not the same as player widgets.
+   - Editors can modify data that player widgets *read* (e.g., stats, recipes, NPCs).
+
+5. **Auditability**
+   - Editor actions should be loggable (even if the logging system is implemented later).
+   - Future systems may capture “who changed what, and when.”
+
+Any new editor must follow this pattern.
+
+---
+
+## 2. Map Editor
+
+### 2.1 Purpose
+
+The Map Editor is used to create and modify:
+
+- Maps
+- Rooms
+- Room connections
+- Room types and colors
+- Room contents (items, merchants)
+
+It is the primary tool for building the physical world layout.
+
+### 2.2 Editable Properties
+
+**Room metadata**
+
+- `room.name`
+- `room.description`
+- `room.x`, `room.y` (coordinates on the map grid)
+- `room.map_id`
+- `room.room_type`  
+  - `normal`, `merchant`, `bank`, `warehouse`, `factory`, etc.
+- `room.factory_tier` (for factory rooms)
+- `room_type_colors` mapping (visual cues in UI)
+
+**Map-level properties**
+
+- `map.name`
+- `map.description`
+- `map.width`
+- `map.height`
+
+**Connections**
+
+- `connected_map_id`
+- `connected_room_x`
+- `connected_room_y`
+- `connection_direction` (N, S, E, W, NE, NW, SE, SW, U, D)
+
+**Room content**
+
+- Room items (add/remove/clear)
+- Merchant inventory in that room
+
+### 2.3 Database Tables
+
+- `rooms` — Room metadata and types
+- `maps` — Map definitions and dimensions
+- `room_type_colors` — Visual color mapping for room types
+- `room_items` — Items placed in rooms
+- `merchant_items` — Merchant inventory configuration
+
+---
+
+## 3. Player Editor
+
+### 3.1 Purpose
+
+The Player Editor is used to:
+
+- Tune player stats and abilities
+- Adjust resources (Vitalis, encumbrance)
+- Teleport players
+- Modify inventory
+- Configure automation timings
+
+It is the primary tool for testing builds, debugging, and sandbox tuning.
+
+### 3.2 Editable Properties
+
+**Stats**
+
+- `stat_ingenuity`
+- `stat_resonance`
+- `stat_fortitude`
+- `stat_acumen`
+
+**Abilities**
+
+- `ability_crafting`
+- `ability_attunement`
+- `ability_endurance`
+- `ability_commerce`
+
+**Resources**
+
+- `resource_vitalis`
+- `resource_max_vitalis`
+- `resource_max_encumbrance`
+
+**Flags**
+
+- `flag_god_mode` (enable/disable god mode)
+
+**Location & timing**
+
+- `current_room_id` (teleportation)
+- `auto_navigation_time_ms`
+- `auto_loop_time_ms`
+- `room_update_interval_ms`
+- `last_attune_time`
+
+**Points**
+
+- `assignable_points` (unspent points that can be allocated by the Player Stats widget)
+
+**Inventory**
+
+- Add/remove items from `player_items`
+- Must respect encumbrance rules (Editor shows warnings when exceeding max)
+
+### 3.3 Database Tables
+
+- `players` — Player core stats, flags, and config
+- `player_items` — Player inventory (through service functions like `addPlayerItem` / `removePlayerItem`)
+
+---
+
+## 4. NPC Editor
+
+### 4.1 Purpose
+
+The NPC Editor is used to:
+
+- Create and modify NPCs
+- Configure harvestable NPCs
+- Configure lorekeeper NPCs and their puzzle/dialogue behavior
+- Place NPCs into rooms
+- Adjust harvest formula parameters
+
+It is the canonical tool for NPC behavior, including your Harvest Engine and Lore Keeper systems.
+
+### 4.2 Editable Properties
+
+**NPC metadata**
+
+- `name`
+- `description`
+- `npc_type`  
+  - `rhythm`, `stability`, `worker`, `tending`, `rotation`, `economic`, `farm`, `patrol`, `threshold`, `lorekeeper`
+- Cycle & timing:
+  - `base_cycle_time`
+  - `harvestable_time`
+  - `cooldown_time`
+- Difficulty and appearance:
+  - `difficulty`
+  - `display_color`
+- Requirements:
+  - `required_stats` (JSON)
+  - `required_buffs` (JSON array)
+  - `input_items` (JSON)
+  - `output_items` (JSON)
+  - `failure_states` (JSON array)
+- `active` flag
+
+**Lorekeeper configuration** (for `npc_type = 'lorekeeper'`)
+
+- `lore_type`
+- `engagement_enabled`
+- `engagement_delay`
+- `initial_message`
+- `initial_message_color`
+- `keywords_responses` (keyword → response mapping)
+- `keyword_color`
+- `incorrect_response`
+- Puzzle settings:
+  - `puzzle_mode`
+  - `puzzle_clues`
+  - `puzzle_solution`
+  - `puzzle_success_message`
+  - `puzzle_failure_message`
+  - `puzzle_reward_item`
+  - `puzzle_award_once_only`
+  - `puzzle_award_after_delay`
+  - `puzzle_award_delay_seconds`
+  - `puzzle_award_delay_response`
+
+**NPC placement**
+
+- Add/remove NPCs from rooms
+- Positioning within room slots (e.g., NPC slot index)
+
+**Harvest formula configuration**
+
+- `harvest_formula_configs` fields that control:
+  - success rates
+  - Vitalis drain scaling
+  - resonance/other stat contributions
+  - overcharge behavior
+
+### 4.3 Database Tables
+
+- `scriptable_npcs` — Core NPC definitions
+- `lore_keepers` — Lorekeeper-specific configuration
+- `room_npcs` — Placement of NPCs in rooms
+- `harvest_formula_configs` — Global harvest formula parameters
+
+---
+
+## 5. Item Editor
+
+### 5.1 Purpose
+
+The Item Editor is used to define and maintain:
+
+- Base item definitions
+- Rune properties
+- Deed properties (warehouse deed, etc.)
+- Merchant inventory assignments
+
+It is the foundation for all item-based systems (inventory, factory, warehouse, merchants).
+
+### 5.2 Editable Properties
+
+**Base properties**
+
+- `name`
+- `description`
+- `item_type` (`ingredient`, `rune`, `deed`, etc.)
+- `active`
+- `poofable` (whether it can be removed/cleaned up)
+- `encumbrance`
+
+**Deed properties** (for `item_type = 'deed'`)
+
+- `deed_warehouse_location_key`
+- `deed_base_max_item_types`
+- `deed_max_total_items`
+- `deed_automation_enabled`
+
+**Rune properties** (for `item_type = 'rune'`)
+
+- `rune_color`
+- `rune_type` (e.g., `PRODUCTION`, `SPEED`, `EFFICIENCY`)
+
+**Merchant configuration**
+
+- Assign/remove items to merchants in specific rooms
+- Configure merchant inventory entries
+
+### 5.3 Database Tables
+
+- `items` — Core item definitions
+- `merchant_items` — Merchant inventory (managed via Item/Map tools)
+
+---
+
+## 6. Crafting Editor (Factory Recipe Editor)
+
+### 6.1 Purpose
+
+The Crafting Editor controls **factory recipes** — the rules that:
+
+- Match item + rune inputs
+- Check stat requirements
+- Define outputs and byproducts
+- Control success rate and craft time
+
+It is tightly linked to the Factory Widget and the Factory Crafting Engine, but remains a **data editor**, not a logic engine.
+
+### 6.2 Editable Properties
+
+**Recipe metadata**
+
+- `name`
+- `description`
+- `active`
+
+**Requirements**
+
+- `required_ingredients` (JSON array)
+  - e.g., `[{"item_name": "pulse resin", "quantity": 10}]`
+- `required_runes` (JSON array of rune types)
+  - `["SPEED", "EFFICIENCY"]`
+  - **Never** includes `PRODUCTION` (that’s a machine requirement, not a recipe requirement)
+- `required_stats` (JSON)
+  - e.g., `{ "stat_ingenuity": 10, "stat_resonance": 5 }`
+- `factory_tier_required`
+
+**Outputs**
+
+- `output_items` (JSON array)
+- `byproducts` (JSON)
+
+**Mechanics**
+
+- `success_rate` (base)
+- `crafting_time_ms` (base)
+- `return_rate_on_fail`
+- `allow_rune_substitution`
+- `allow_wildcard_runes`
+
+### 6.3 Database Tables
+
+- `factory_recipes` — All factory recipe definitions
+
+---
+
+## 7. Ticket Editor
+
+### 7.1 Purpose
+
+The Ticket Editor is your in-game two-way communication and work-tracking tool between:
+
+- You / other god-mode players
+- Cursor / AI
+- The codebase roadmap
+
+It’s how you log bugs, ideas, and feature requests from inside the game.
+
+> **Access:**  
+> The Ticket Editor is accessed via the `Z` key in the command line, *not* via the God Widget, but still requires `flag_god_mode = 1`.
+
+### 7.2 Editable Properties
+
+- `title`
+- `description`
+- `reproSteps`
+- `status` (`open`, `backlog`, `in_progress`, `resolved`)
+- `priority` (`1 = low`, `2 = medium`, `3 = high`, `4 = critical`)
+- `ticket_type` (`debug`, `manual`, `user`)
+- `estimated_effort` (`quick`, `medium`, `complex`)
+- `tags` (array)
+- `environment` (JSON)
+- `logs` (JSON)
+- `resolution_notes`
+- `player_id` / `player_name` (who created or owns it)
+
+### 7.3 Database Tables
+
+- `debug_todos` — Tickets/todos stored as structured records
+
+---
+
+## 8. Access & Safety Rules
+
+1. **God-only**
+   - All editors require `flag_god_mode = 1`.
+   - Non-god players must never see editor UI or endpoints.
+
+2. **No direct SQL from editors**
+   - All changes must go through the service layer, not raw queries.
+
+3. **No silent destructive changes**
+   - Bulk deletes, wipes, or resets should require explicit confirmation.
+   - Dangerous actions should be clearly labeled.
+
+4. **Respect canonical systems**
+   - Harvest Engine configuration stays in `harvest_formula_configs` and NPC metadata.
+   - Factory Engine configuration stays in `factory_recipes`.
+   - Editors must never inline game logic that belongs in those engines.
+
+5. **Docs before changes**
+   - Any major new editor or capability should be documented here **before** implementation.
+
+---
+
+## 9. Summary
+
+The God Mode Editors are:
+
+- The **authoring tools** for your world (maps, NPCs, items, recipes)
+- The **tuning tools** for stats, formulas, and progression
+- The **debug tools** for in-game bug tracking and iteration
+
+

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/npc-editor.css">
 </head>
 <body>
-    <div id="npcEditor" class="editor-container" x-data="npcEditor()" x-init="init()">
+    <div id="npcEditor" class="editor-container npc-editor" x-data="npcEditor()" x-init="init()">
         
         <!-- Header -->
         <div class="editor-header">
@@ -34,9 +34,8 @@
             <div class="toolbar-filters">
                 <select class="editor-select" x-model="filters.type" @change="applyFilter()">
                     <option value="all">All Types</option>
-                    <template x-for="type in NPC_TYPES" :key="type">
-                        <option :value="type" x-text="getNpcTypeLabel(type)"></option>
-                    </template>
+                    <option value="scriptable">Scriptable NPC</option>
+                    <option value="lorekeeper">Lorekeeper</option>
                 </select>
                 <label class="checkbox-label">
                     <input type="checkbox" x-model="filters.harvestableOnly" @change="applyFilter()">
@@ -108,8 +107,22 @@
                         <!-- Tabs -->
                         <div class="editor-tabs">
                             <button class="editor-tab" :class="{ 'active': activeTab === 'basic' }" @click="activeTab = 'basic'">Basic</button>
-                            <button class="editor-tab" :class="{ 'active': activeTab === 'timing' }" @click="activeTab = 'timing'">Timing</button>
-                            <button class="editor-tab" :class="{ 'active': activeTab === 'output' }" @click="activeTab = 'output'">Output</button>
+                            <button class="editor-tab" 
+                                    :class="{ 'active': activeTab === 'timing' }" 
+                                    @click="activeTab = 'timing'"
+                                    x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">Timing</button>
+                            <button class="editor-tab" 
+                                    :class="{ 'active': activeTab === 'output' }" 
+                                    @click="activeTab = 'output'"
+                                    x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">Output</button>
+                            <button class="editor-tab" 
+                                    :class="{ 'active': activeTab === 'lorekeeper' }" 
+                                    @click="activeTab = 'lorekeeper'"
+                                    x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">Lorekeeper</button>
+                            <button class="editor-tab" 
+                                    :class="{ 'active': activeTab === 'history' }" 
+                                    @click="activeTab = 'history'"
+                                    x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">History</button>
                         </div>
 
                         <!-- Basic Tab -->
@@ -124,8 +137,9 @@
                                     <div class="form-field">
                                         <label>NPC Type</label>
                                         <select class="editor-select" x-model="formData.npc_type">
-                                            <template x-for="type in NPC_TYPES" :key="type">
-                                                <option :value="type" x-text="getNpcTypeLabel(type)"></option>
+                                            <option value="">Select type...</option>
+                                            <template x-for="type in npcTypes" :key="type">
+                                                <option :value="type" x-text="type"></option>
                                             </template>
                                         </select>
                                     </div>
@@ -152,10 +166,11 @@
                                     </div>
                                     <div class="form-field">
                                         <label>Scriptable</label>
-                                        <select class="editor-select" x-model="formData.scriptable">
-                                            <option :value="true">Yes</option>
-                                            <option :value="false">No</option>
-                                        </select>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="formData.scriptable">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="formData.scriptable ? 'Yes' : 'No'"></span>
+                                        </label>
                                     </div>
                                     <div class="form-field">
                                         <label>Difficulty</label>
@@ -170,7 +185,9 @@
                         </div>
 
                         <!-- Timing Tab -->
-                        <div class="tab-content" :class="{ 'active': activeTab === 'timing' }">
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'timing' }"
+                             x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">
                             <div class="form-section">
                                 <div class="section-header">Timing Configuration</div>
                                 <div class="form-grid">
@@ -193,9 +210,8 @@
                                 <div class="section-header">Required Stats (JSON)</div>
                                 <div class="form-field">
                                     <textarea class="editor-textarea json-input" 
-                                              x-model="formData.required_stats"
                                               :value="JSON.stringify(formData.required_stats, null, 2)"
-                                              @input="try { formData.required_stats = JSON.parse($event.target.value) } catch(e) {}"
+                                              @input="handleJsonInput('required_stats', $event.target.value)"
                                               rows="4" 
                                               placeholder='{"stat_ingenuity": 5}'></textarea>
                                 </div>
@@ -203,27 +219,64 @@
                         </div>
 
                         <!-- Output Tab -->
-                        <div class="tab-content" :class="{ 'active': activeTab === 'output' }">
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'output' }"
+                             x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">
                             <div class="form-section">
                                 <div class="section-header">
                                     <span>Output Items</span>
-                                    <button class="section-add-btn" @click="addOutputItem()">+ Add</button>
                                 </div>
-                                <div class="json-grid">
-                                    <template x-for="(item, index) in formData.output_items" :key="index">
-                                        <div class="json-grid-row">
-                                            <select class="editor-select" x-model="item.item_name">
+                                
+                                <!-- Add Output Item Section -->
+                                <div class="inventory-add-section">
+                                    <div class="form-grid">
+                                        <div class="form-field">
+                                            <label>Item</label>
+                                            <select class="editor-select" x-model="newOutputItem.itemName">
                                                 <option value="">Select item...</option>
-                                                <template x-for="dbItem in allItems" :key="dbItem.id">
-                                                    <option :value="dbItem.name" x-text="dbItem.name"></option>
+                                                <template x-for="item in allItems" :key="item.id">
+                                                    <option :value="item.name" x-text="item.name"></option>
                                                 </template>
                                             </select>
-                                            <input type="number" class="editor-input qty-input" x-model="item.quantity" min="1" placeholder="Qty">
-                                            <input type="number" class="editor-input chance-input" x-model="item.chance" min="0" max="1" step="0.1" placeholder="Chance">
-                                            <button class="grid-remove-btn" @click="removeOutputItem(index)">x</button>
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Quantity</label>
+                                            <input type="number" class="editor-input" x-model="newOutputItem.quantity" min="1" value="1">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Chance (0-1)</label>
+                                            <input type="number" class="editor-input" x-model="newOutputItem.chance" min="0" max="1" step="0.1" value="1.0">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>&nbsp;</label>
+                                            <button class="editor-btn editor-btn-success" 
+                                                    @click="addOutputItem()" 
+                                                    :disabled="!newOutputItem.itemName || loading">
+                                                + Add Item
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Output Items List -->
+                                <div class="inventory-list">
+                                    <template x-for="(item, index) in formData.output_items" :key="index">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="item.item_name"></span>
+                                                <span class="inventory-item-quantity" x-text="'Qty: ' + item.quantity"></span>
+                                                <span class="inventory-item-quantity" x-text="'Chance: ' + item.chance"></span>
+                                            </div>
+                                            <div class="inventory-item-actions">
+                                                <button class="editor-btn editor-btn-danger" 
+                                                        @click="removeOutputItem(index)"
+                                                        :disabled="loading">
+                                                    Remove
+                                                </button>
+                                            </div>
                                         </div>
                                     </template>
-                                    <div class="empty-grid" x-show="formData.output_items.length === 0">
+                                    <div class="empty-list" x-show="!formData.output_items || formData.output_items.length === 0">
                                         No output items configured.
                                     </div>
                                 </div>
@@ -234,16 +287,13 @@
                                 <div class="form-grid">
                                     <div class="form-field">
                                         <label>Distribution Method</label>
-                                        <div class="toggle-container">
-                                            <button type="button" 
-                                                    class="toggle-btn" 
-                                                    :class="{ 'toggle-on': formData.output_distribution === 'player', 'toggle-off': formData.output_distribution === 'ground' }"
-                                                    @click="formData.output_distribution = formData.output_distribution === 'player' ? 'ground' : 'player'">
-                                                <span class="toggle-slider"></span>
-                                                <span class="toggle-label" x-show="formData.output_distribution === 'ground'">Ground</span>
-                                                <span class="toggle-label" x-show="formData.output_distribution === 'player'">Player</span>
-                                            </button>
-                                        </div>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" 
+                                                   :checked="formData.output_distribution === 'player'"
+                                                   @change="formData.output_distribution = $event.target.checked ? 'player' : 'ground'">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="formData.output_distribution === 'player' ? 'Player' : 'Ground'"></span>
+                                        </label>
                                         <div class="toggle-description" x-text="formData.output_distribution === 'player' ? 'Items go to player inventory' : 'Items drop on the ground'"></div>
                                     </div>
                                 </div>
@@ -252,24 +302,52 @@
                             <div class="form-section">
                                 <div class="section-header">
                                     <span>Harvest Prerequisites</span>
-                                    <button class="section-add-btn" @click="addHarvestPrerequisite()">+ Add</button>
                                 </div>
-                                <div class="json-grid">
-                                    <template x-for="(item, index) in formData.harvest_prerequisite_items" :key="index">
-                                        <div class="json-grid-row">
-                                            <select class="editor-select" x-model="item.item_name">
+                                
+                                <!-- Add Harvest Prerequisite Section -->
+                                <div class="inventory-add-section">
+                                    <div class="form-grid">
+                                        <div class="form-field">
+                                            <label>Item</label>
+                                            <select class="editor-select" x-model="newHarvestPrerequisite.itemName">
                                                 <option value="">Select item...</option>
-                                                <template x-for="dbItem in allItems" :key="dbItem.id">
-                                                    <option :value="dbItem.name" x-text="dbItem.name"></option>
+                                                <template x-for="item in allItems" :key="item.id">
+                                                    <option :value="item.name" x-text="item.name"></option>
                                                 </template>
                                             </select>
-                                            <button class="grid-remove-btn" @click="removeHarvestPrerequisite(index)">x</button>
+                                        </div>
+                                        <div class="form-field">
+                                            <label>&nbsp;</label>
+                                            <button class="editor-btn editor-btn-success" 
+                                                    @click="addHarvestPrerequisite()" 
+                                                    :disabled="!newHarvestPrerequisite.itemName || loading">
+                                                + Add Item
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Harvest Prerequisites List -->
+                                <div class="inventory-list">
+                                    <template x-for="(item, index) in formData.harvest_prerequisite_items" :key="index">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="item.item_name"></span>
+                                            </div>
+                                            <div class="inventory-item-actions">
+                                                <button class="editor-btn editor-btn-danger" 
+                                                        @click="removeHarvestPrerequisite(index)"
+                                                        :disabled="loading">
+                                                    Remove
+                                                </button>
+                                            </div>
                                         </div>
                                     </template>
-                                    <div class="empty-grid" x-show="formData.harvest_prerequisite_items.length === 0">
+                                    <div class="empty-list" x-show="!formData.harvest_prerequisite_items || formData.harvest_prerequisite_items.length === 0">
                                         No harvest prerequisites configured.
                                     </div>
                                 </div>
+                                
                                 <div class="form-field" style="margin-top: 15px;">
                                     <label>Prerequisite Message</label>
                                     <input type="text" class="editor-input" x-model="formData.harvest_prerequisite_message" 
@@ -282,9 +360,237 @@
                                 <div class="form-field">
                                     <textarea class="editor-textarea json-input" 
                                               :value="JSON.stringify(formData.failure_states, null, 2)"
-                                              @input="try { formData.failure_states = JSON.parse($event.target.value) } catch(e) {}"
+                                              @input="handleJsonInput('failure_states', $event.target.value)"
                                               rows="3" 
                                               placeholder='["exhausted", "damaged"]'></textarea>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Lorekeeper Tab -->
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'lorekeeper' }"
+                             x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
+                            
+                            <!-- Engagement Section -->
+                            <div class="form-section">
+                                <div class="section-header">Engagement</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Engagement Enabled</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="lorekeeperData.engagement_enabled">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="lorekeeperData.engagement_enabled ? 'Yes' : 'No'"></span>
+                                        </label>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Engagement Delay (ms)</label>
+                                        <input type="number" class="editor-input" x-model="lorekeeperData.engagement_delay" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Initial Message</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="lorekeeperData.initial_message" 
+                                                  rows="5" 
+                                                  placeholder="Message sent when player enters room..."></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Initial Message Color</label>
+                                        <input type="color" class="editor-input" x-model="lorekeeperData.initial_message_color">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Lore Type Selection -->
+                            <div class="form-section">
+                                <div class="section-header">Lore Type</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Lore Type</label>
+                                        <select class="editor-select" x-model="lorekeeperData.lore_type">
+                                            <option value="dialogue">Dialogue</option>
+                                            <option value="puzzle">Puzzle</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Dialogue Fields -->
+                            <div class="form-section" x-show="lorekeeperData.lore_type === 'dialogue'">
+                                <div class="section-header">Dialogue Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-3">
+                                        <label>Keywords/Responses (JSON)</label>
+                                        <textarea class="editor-textarea json-input" 
+                                                  :value="JSON.stringify(lorekeeperData.keywords_responses, null, 2)"
+                                                  @input="handleLorekeeperJsonInput('keywords_responses', $event.target.value)"
+                                                  rows="6" 
+                                                  placeholder='{"keyword": "response", "help": "I can help with..."}'></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Keyword Color</label>
+                                        <input type="color" class="editor-input" x-model="lorekeeperData.keyword_color">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Incorrect Response</label>
+                                        <input type="text" class="editor-input" x-model="lorekeeperData.incorrect_response" 
+                                               placeholder="Response when no keyword matches">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Puzzle Fields -->
+                            <div class="form-section" x-show="lorekeeperData.lore_type === 'puzzle'">
+                                <div class="section-header">Puzzle Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Puzzle Mode</label>
+                                        <select class="editor-select" x-model="lorekeeperData.puzzle_mode">
+                                            <option value="">Select mode...</option>
+                                            <option value="word">Word</option>
+                                            <option value="combination">Combination</option>
+                                            <option value="cipher">Cipher</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field span-2">
+                                        <label>Puzzle Solution</label>
+                                        <input type="text" class="editor-input" x-model="lorekeeperData.puzzle_solution" 
+                                               placeholder="The answer to the puzzle">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Puzzle Clues (keyword:answer pairs)</label>
+                                        <textarea class="editor-textarea json-input" 
+                                                  :value="lorekeeperData.puzzle_clues ? JSON.stringify(lorekeeperData.puzzle_clues, null, 2) : '{}'"
+                                                  @input="handleLorekeeperJsonInput('puzzle_clues', $event.target.value)"
+                                                  rows="6" 
+                                                  placeholder='{"resin": "This is the stuff that holds pulse resin together", "pulse": "The energy that flows through all things"}'></textarea>
+                                        <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                                            Format: {"keyword": "answer text", "keyword2": "answer text 2"} (stored as array in database)
+                                        </div>
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Puzzle Success Message</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="lorekeeperData.puzzle_success_message" 
+                                                  rows="4" 
+                                                  placeholder="Message shown when puzzle is solved correctly..."></textarea>
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Puzzle Failure Message</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="lorekeeperData.puzzle_failure_message" 
+                                                  rows="3" 
+                                                  placeholder="Message shown when puzzle answer is incorrect..."></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Puzzle Reward Item</label>
+                                        <select class="editor-select" x-model="lorekeeperData.puzzle_reward_item">
+                                            <option value="">No reward</option>
+                                            <template x-for="item in allItems" :key="item.id">
+                                                <option :value="item.name" x-text="item.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Award Once Only</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="lorekeeperData.puzzle_award_once_only">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="lorekeeperData.puzzle_award_once_only ? 'Yes' : 'No'"></span>
+                                        </label>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Award After Delay</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="lorekeeperData.puzzle_award_after_delay">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="lorekeeperData.puzzle_award_after_delay ? 'Yes' : 'No'"></span>
+                                        </label>
+                                    </div>
+                                    <div class="form-field" x-show="lorekeeperData.puzzle_award_after_delay">
+                                        <label>Award Delay Seconds</label>
+                                        <input type="number" class="editor-input" x-model="lorekeeperData.puzzle_award_delay_seconds" min="0">
+                                    </div>
+                                    <div class="form-field span-3" x-show="lorekeeperData.puzzle_award_after_delay">
+                                        <label>Award Delay Response</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="lorekeeperData.puzzle_award_delay_response" 
+                                                  rows="2" 
+                                                  placeholder="Message shown during delay before awarding item..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- History Tab -->
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'history' }"
+                             x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
+                            
+                            <!-- Greetings Section -->
+                            <div class="form-section">
+                                <div class="section-header">
+                                    <span>Player Greetings</span>
+                                    <button class="editor-btn editor-btn-danger" 
+                                            @click="clearLoreKeeperHistory(true, false)"
+                                            :disabled="loading">
+                                        Clear All Greetings
+                                    </button>
+                                </div>
+                                <div class="inventory-list">
+                                    <template x-for="greeting in lorekeeperHistory.greetings" :key="greeting.id">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="greeting.player_name"></span>
+                                                <span class="inventory-item-quantity" x-text="'First: ' + formatDate(greeting.first_greeted_at)"></span>
+                                                <span class="inventory-item-quantity" x-text="'Last: ' + formatDate(greeting.last_greeted_at)"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div class="empty-list" x-show="!lorekeeperHistory.greetings || lorekeeperHistory.greetings.length === 0">
+                                        No players have been greeted yet.
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Item Awards Section -->
+                            <div class="form-section">
+                                <div class="section-header">
+                                    <span>Item Awards</span>
+                                    <button class="editor-btn editor-btn-danger" 
+                                            @click="clearLoreKeeperHistory(false, true)"
+                                            :disabled="loading">
+                                        Clear All Awards
+                                    </button>
+                                </div>
+                                <div class="inventory-list">
+                                    <template x-for="award in lorekeeperHistory.itemAwards" :key="award.id">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="award.player_name"></span>
+                                                <span class="inventory-item-quantity" x-text="'Item: ' + award.item_name"></span>
+                                                <span class="inventory-item-quantity" x-text="'Awarded: ' + formatDate(award.awarded_at)"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div class="empty-list" x-show="!lorekeeperHistory.itemAwards || lorekeeperHistory.itemAwards.length === 0">
+                                        No items have been awarded yet.
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Clear All Section -->
+                            <div class="form-section">
+                                <div class="section-header">Clear All History</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <button class="editor-btn editor-btn-danger" 
+                                                @click="clearLoreKeeperHistory(true, true)"
+                                                :disabled="loading">
+                                            Clear All History (Greetings + Awards)
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

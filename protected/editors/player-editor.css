@@ -499,6 +499,64 @@
     background: #444;
 }
 
+/* Inventory Section */
+.inventory-add-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #0d0d0d;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+
+.encumbrance-info {
+    font-size: 12px;
+    color: #888;
+    margin-left: 10px;
+}
+
+.inventory-list {
+    margin-top: 15px;
+}
+
+.inventory-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    margin-bottom: 8px;
+    background: #0d0d0d;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+
+.inventory-item-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.inventory-item-name {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.inventory-item-quantity {
+    color: #888;
+    font-size: 12px;
+}
+
+.inventory-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.qty-input {
+    width: 60px;
+    text-align: center;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
     .form-grid {
@@ -532,5 +590,16 @@
     .form-field.span-3,
     .form-field.span-4 {
         grid-column: span 1;
+    }
+    
+    .inventory-item-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .inventory-item-actions {
+        width: 100%;
+        justify-content: flex-end;
     }
 }

@@ -16,6 +16,7 @@ import {
     mapRowsToPlayers,
     validatePlayer
 } from '/js/models/player.js';
+import { parseMarkup } from '/js/utils/Markup.js';
 
 // Make playerEditor available globally for Alpine.js
 window.playerEditor = function() {
@@ -73,6 +74,21 @@ window.playerEditor = function() {
         // Active tab
         activeTab: 'stats',
         
+        // Inventory data
+        inventoryData: {
+            inventory: [],
+            currentEncumbrance: 0
+        },
+        
+        // New inventory item form
+        newInventoryItem: {
+            itemName: '',
+            quantity: 1
+        },
+        
+        // All items for dropdown
+        allItems: [],
+        
         // Notification
         notification: {
             show: false,
@@ -97,6 +113,7 @@ window.playerEditor = function() {
                 onReady: (socket) => {
                     console.log('[PlayerEditor] EditorBase ready, loading players...');
                     this.loadPlayers();
+                    this.loadAllItems();
                 },
                 onMessage: (data) => {
                     this.handleMessage(data);
@@ -145,6 +162,27 @@ window.playerEditor = function() {
                         this.applyFilter();
                     }
                     this.loading = false;
+                    break;
+                    
+                case 'playerInventory':
+                    this.inventoryData = {
+                        inventory: data.inventory || [],
+                        currentEncumbrance: data.currentEncumbrance || 0
+                    };
+                    this.loading = false;
+                    break;
+                    
+                case 'playerInventoryUpdated':
+                    this.inventoryData = {
+                        inventory: data.inventory || [],
+                        currentEncumbrance: data.currentEncumbrance || 0
+                    };
+                    this.showNotification('Inventory updated', 'success');
+                    this.loading = false;
+                    break;
+                    
+                case 'itemList':
+                    this.allItems = data.items || [];
                     break;
                     
                 case 'playerUpdated':
@@ -208,6 +246,58 @@ window.playerEditor = function() {
         selectPlayer(player) {
             this.selectedPlayer = player;
             this.populateForm(player);
+            this.loadInventory(player.id);
+        },
+        
+        loadInventory(playerId) {
+            if (!playerId) return;
+            this.loading = true;
+            EditorBase.send({
+                type: 'getPlayerInventory',
+                playerId: playerId
+            });
+        },
+        
+        loadAllItems() {
+            EditorBase.send({
+                type: 'getAllItems'
+            });
+        },
+        
+        addInventoryItem() {
+            if (!this.selectedPlayer || !this.newInventoryItem.itemName || !this.newInventoryItem.quantity) {
+                this.showNotification('Please select an item and enter a quantity', 'error');
+                return;
+            }
+            
+            this.loading = true;
+            EditorBase.send({
+                type: 'addPlayerInventoryItem',
+                playerId: this.selectedPlayer.id,
+                itemName: this.newInventoryItem.itemName,
+                quantity: parseInt(this.newInventoryItem.quantity) || 1
+            });
+            
+            // Reset form
+            this.newInventoryItem = {
+                itemName: '',
+                quantity: 1
+            };
+        },
+        
+        removeInventoryItem(itemName, quantity) {
+            if (!this.selectedPlayer || !itemName || !quantity || quantity < 1) {
+                this.showNotification('Please enter a valid quantity', 'error');
+                return;
+            }
+            
+            this.loading = true;
+            EditorBase.send({
+                type: 'removePlayerInventoryItem',
+                playerId: this.selectedPlayer.id,
+                itemName: itemName,
+                quantity: parseInt(quantity) || 1
+            });
         },
         
         populateForm(player) {
@@ -321,6 +411,12 @@ window.playerEditor = function() {
             setTimeout(() => {
                 this.notification.show = false;
             }, 3000);
+        },
+        
+        formatPlayerName(name) {
+            if (!name) return '';
+            // Use parseMarkup to apply markup effects (like @ symbols for color)
+            return parseMarkup(name, '#00ffff');
         },
         
         navigateTo(path) {
