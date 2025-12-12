@@ -448,3 +448,4 @@ For each migration, update:
 - Some systems may need helper functions to convert between item_id and item_name for display
 - Consider adding a view or function to get item names from IDs for backward compatibility during transition
 - All migrations should be idempotent (safe to run multiple times)
+

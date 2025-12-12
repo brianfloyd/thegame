@@ -951,3 +951,4 @@ export default class AutomationWidget extends Widget {
         }
     }
 }
+

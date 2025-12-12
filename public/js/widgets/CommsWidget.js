@@ -51,26 +51,45 @@ export default class CommsWidget extends Widget {
         modeContainer.className = 'comm-mode-buttons';
         
         const talkBtn = document.createElement('button');
-        talkBtn.className = 'comm-mode-btn active';
+        talkBtn.className = 'widget-mode-btn active';
         talkBtn.setAttribute('data-mode', 'talk');
         talkBtn.textContent = 'Talk';
         modeContainer.appendChild(talkBtn);
         
         const resonateBtn = document.createElement('button');
-        resonateBtn.className = 'comm-mode-btn';
+        resonateBtn.className = 'widget-mode-btn';
         resonateBtn.setAttribute('data-mode', 'resonate');
         resonateBtn.textContent = 'Resonate';
         modeContainer.appendChild(resonateBtn);
         
         const telepathBtn = document.createElement('button');
-        telepathBtn.className = 'comm-mode-btn';
+        telepathBtn.className = 'widget-mode-btn';
         telepathBtn.setAttribute('data-mode', 'telepath');
         telepathBtn.textContent = 'Telepath';
         modeContainer.appendChild(telepathBtn);
         
         content.appendChild(modeContainer);
         
-        // Create chat content area
+        // Create input area (moved above chat history)
+        const inputContainer = document.createElement('div');
+        inputContainer.className = 'comm-input-container';
+        
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'widget-input';
+        input.id = 'commInput';
+        input.placeholder = 'Type message...';
+        inputContainer.appendChild(input);
+        
+        const sendBtn = document.createElement('button');
+        sendBtn.className = 'widget-btn widget-btn-primary';
+        sendBtn.id = 'commSendBtn';
+        sendBtn.textContent = 'Send';
+        inputContainer.appendChild(sendBtn);
+        
+        content.appendChild(inputContainer);
+        
+        // Create chat content area (moved below input)
         const chatContainer = document.createElement('div');
         chatContainer.className = 'comm-chat-container';
         
@@ -80,25 +99,6 @@ export default class CommsWidget extends Widget {
         chatContainer.appendChild(chatContent);
         
         content.appendChild(chatContainer);
-        
-        // Create input area
-        const inputContainer = document.createElement('div');
-        inputContainer.className = 'comm-input-container';
-        
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'comm-input';
-        input.id = 'commInput';
-        input.placeholder = 'Type message...';
-        inputContainer.appendChild(input);
-        
-        const sendBtn = document.createElement('button');
-        sendBtn.className = 'comm-send-btn';
-        sendBtn.id = 'commSendBtn';
-        sendBtn.textContent = 'Send';
-        inputContainer.appendChild(sendBtn);
-        
-        content.appendChild(inputContainer);
         
         root.appendChild(content);
         
@@ -142,10 +142,11 @@ export default class CommsWidget extends Widget {
             });
         }
         
-        // Load comms history
+        // Load comms history (with retry if player name not available)
+        // History will be rendered after loading completes
         this.loadCommsHistory();
         
-        // Render initial history
+        // Also render immediately in case history is already loaded
         this.renderCommHistory();
     }
     
@@ -311,45 +312,57 @@ export default class CommsWidget extends Widget {
      * Render comm history
      */
     renderCommHistory() {
-        if (!this.commChatContent) return;
+        if (!this.commChatContent) {
+            console.warn('[CommsWidget] commChatContent not available for rendering history');
+            return;
+        }
         
         const history = this.commHistory[this.commMode] || [];
-        this.commChatContent.innerHTML = '';
         
-        history.forEach(msg => {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = 'comm-message';
+        // Show empty message if no history
+        if (history.length === 0) {
+            this.commChatContent.innerHTML = '<div class="comm-empty">No messages yet</div>';
+        } else {
+            this.commChatContent.innerHTML = '';
             
-            let displayText = '';
-            if (this.commMode === 'telepath') {
-                if (msg.isReceived) {
-                    displayText = `[From ${this.cleanPlayerName(msg.playerName)}]: ${msg.message}`;
+            history.forEach(msg => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'comm-message';
+                
+                let displayText = '';
+                if (this.commMode === 'telepath') {
+                    if (msg.isReceived) {
+                        displayText = `[From ${this.cleanPlayerName(msg.playerName)}]: ${msg.message}`;
+                    } else {
+                        displayText = `[To ${this.cleanPlayerName(msg.targetPlayer)}]: ${msg.message}`;
+                    }
                 } else {
-                    displayText = `[To ${this.cleanPlayerName(msg.targetPlayer)}]: ${msg.message}`;
+                    displayText = `${this.cleanPlayerName(msg.playerName)}: ${msg.message}`;
                 }
-            } else {
-                displayText = `${this.cleanPlayerName(msg.playerName)}: ${msg.message}`;
-            }
 
-            // CRITICAL: Parse markup in messages (especially for ZORK's responses)
-            // Split player name and message, parse only the message part
-            const parts = displayText.split(': ');
-            if (parts.length > 1) {
-                const playerPart = parts[0] + ': ';
-                const messagePart = parts.slice(1).join(': ');
-                // Parse markup only (no markdown - use markup conventions instead)
-                msgDiv.innerHTML = this.escapeHtml(playerPart) + parseMarkup(messagePart, '#00ffff');
-            } else {
-                // Fallback: parse entire text
-                msgDiv.innerHTML = parseMarkup(displayText, '#00ffff');
-            }
-            this.commChatContent.appendChild(msgDiv);
-        });
+                // CRITICAL: Parse markup in messages (especially for ZORK's responses)
+                // Split player name and message, parse only the message part
+                const parts = displayText.split(': ');
+                if (parts.length > 1) {
+                    const playerPart = parts[0] + ': ';
+                    const messagePart = parts.slice(1).join(': ');
+                    // Parse markup only (no markdown - use markup conventions instead)
+                    msgDiv.innerHTML = this.escapeHtml(playerPart) + parseMarkup(messagePart, '#00ffff');
+                } else {
+                    // Fallback: parse entire text
+                    msgDiv.innerHTML = parseMarkup(displayText, '#00ffff');
+                }
+                this.commChatContent.appendChild(msgDiv);
+            });
+        }
         
         // Scroll to bottom
-        const scrollContainer = this.commChatContent.parentElement;
+        const scrollContainer = this.commChatContent.closest('.comm-chat-container');
         if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            // Use setTimeout to ensure DOM is updated before scrolling
+            setTimeout(() => {
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }, 0);
         }
     }
     
@@ -377,7 +390,11 @@ export default class CommsWidget extends Widget {
      */
     loadCommsHistory() {
         const playerName = this.game.getPlayerName();
-        if (!playerName) return;
+        if (!playerName) {
+            // Try again after a short delay if player name not available yet
+            setTimeout(() => this.loadCommsHistory(), 500);
+            return;
+        }
         
         try {
             const stored = localStorage.getItem(`comms_history_${playerName}`);
@@ -392,6 +409,7 @@ export default class CommsWidget extends Widget {
                 if (this.commHistory.resonate.length > 100) this.commHistory.resonate = this.commHistory.resonate.slice(-100);
                 if (this.commHistory.telepath.length > 100) this.commHistory.telepath = this.commHistory.telepath.slice(-100);
                 
+                // Render history after loading
                 this.renderCommHistory();
             }
         } catch (e) {

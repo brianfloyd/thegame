@@ -77,3 +77,4 @@ COMMENT ON COLUMN lore_keeper_item_awards.item_id IS
 
 -- Note: We keep item_name column temporarily for rollback safety
 -- It will be dropped in a future migration after code updates are verified
+

@@ -26,33 +26,33 @@ export default class GodModeWidget extends Widget {
         }
         
         const root = document.createElement('div');
-        root.className = 'widget';
+        root.className = 'widget widget-theme-godmode';
         root.id = `widget-${this.id}`;
         root.setAttribute('data-widget', 'godmode');
         
         // Special golden header
         const header = document.createElement('div');
-        header.className = 'widget-header godmode-header';
+        header.className = 'widget-header';
         header.textContent = 'God Mode';
         root.appendChild(header);
         
         // Content with editor buttons
         const content = document.createElement('div');
-        content.className = 'widget-content godmode-content';
+        content.className = 'widget-content';
         root.appendChild(content);
         
         // Editors section
         const editorsSection = document.createElement('div');
-        editorsSection.className = 'godmode-section';
+        editorsSection.className = 'widget-section';
         content.appendChild(editorsSection);
         
         const editorsTitle = document.createElement('div');
-        editorsTitle.className = 'godmode-section-title';
+        editorsTitle.className = 'widget-section-title';
         editorsTitle.textContent = 'Editors';
         editorsSection.appendChild(editorsTitle);
         
         const editorsGrid = document.createElement('div');
-        editorsGrid.className = 'godmode-editor-grid';
+        editorsGrid.className = 'widget-godmode-grid';
         editorsSection.appendChild(editorsGrid);
         
         // Editor buttons
@@ -67,7 +67,7 @@ export default class GodModeWidget extends Widget {
         
         editorButtons.forEach(btn => {
             const button = document.createElement('button');
-            button.className = 'godmode-editor-btn';
+            button.className = 'widget-godmode-editor-btn';
             button.setAttribute('data-action', btn.action);
             button.textContent = btn.label;
             
@@ -96,7 +96,7 @@ export default class GodModeWidget extends Widget {
      */
     onAttach() {
         // Setup editor button click handlers
-        const editorButtons = this.rootElement.querySelectorAll('.godmode-editor-btn');
+        const editorButtons = this.rootElement.querySelectorAll('.widget-godmode-editor-btn');
         editorButtons.forEach(btn => {
             btn.addEventListener('click', this.handleEditorClick);
         });
@@ -107,7 +107,7 @@ export default class GodModeWidget extends Widget {
      */
     onDetach() {
         // Remove event listeners
-        const editorButtons = this.rootElement.querySelectorAll('.godmode-editor-btn');
+        const editorButtons = this.rootElement.querySelectorAll('.widget-godmode-editor-btn');
         editorButtons.forEach(btn => {
             btn.removeEventListener('click', this.handleEditorClick);
         });

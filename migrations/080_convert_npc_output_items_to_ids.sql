@@ -63,3 +63,4 @@ COMMENT ON COLUMN scriptable_npcs.output_items IS
 
 -- Note: The migration converts item names to item IDs.
 -- Code should be updated to handle item_id keys and convert back to item names for display/lookup.
+

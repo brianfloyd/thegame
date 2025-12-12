@@ -778,13 +778,7 @@ body {
 }
 
 #widget-comms .widget-header {
-    background: #1a1a1a;
-    border-bottom: 2px solid #00ff00;
-    color: #ffff00;
-    font-weight: bold;
-    padding: 8px;
-    text-align: center;
-    text-transform: uppercase;
+    color: #cccccc;
 }
 
 .comm-mode-selector {
@@ -794,30 +788,6 @@ body {
     border-bottom: 1px solid #333;
 }
 
-.comm-mode-btn {
-    flex: 1;
-    background: #0a0a0a;
-    border: 1px solid #00ff00;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    padding: 6px 8px;
-    cursor: pointer;
-    text-transform: uppercase;
-    transition: all 0.2s;
-}
-
-.comm-mode-btn:hover {
-    background: #1a1a1a;
-    border-color: #ffff00;
-}
-
-.comm-mode-btn.active {
-    background: #00ff00;
-    color: #000;
-    font-weight: bold;
-    border-color: #00ff00;
-}
 
 .comm-chat-scroll {
     flex: 1;
@@ -848,6 +818,13 @@ body {
     min-height: 0;
 }
 
+#widget-comms .widget-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
 .comm-mode-buttons {
     display: flex;
     gap: 4px;
@@ -855,33 +832,27 @@ body {
     flex-shrink: 0;
 }
 
-.comm-mode-btn {
-    flex: 1;
-    padding: 4px 8px;
-    background: #0a0a0a;
-    border: 1px solid #00ff00;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-    font-size: 10px;
-    cursor: pointer;
-    text-transform: uppercase;
-}
-
-.comm-mode-btn.active {
-    background: #00ff00;
-    color: #000;
-}
-
-.comm-mode-btn:hover {
-    background: rgba(0, 255, 0, 0.2);
-}
-
-.comm-chat-scroll-container {
+.comm-chat-container {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
+    max-height: 200px;
     padding: 4px;
+    margin-top: 0;
+}
+
+.comm-chat-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.comm-chat-container::-webkit-scrollbar-track {
+    background: #000;
+}
+
+.comm-chat-container::-webkit-scrollbar-thumb {
+    background: #00ff00;
+    border-radius: 3px;
 }
 
 .comm-chat-content {
@@ -946,55 +917,14 @@ body {
 
 /* Glow effect works in widget too via .lorekeeper-glow class */
 
-.comm-input-area {
-    display: flex;
-    gap: 4px;
-    padding: 8px;
-    border-top: 1px solid #333;
-    flex-shrink: 0;
-}
-
 .comm-input-container {
     display: flex;
     gap: 4px;
     padding: 8px;
-    border-top: 1px solid #333;
-    margin-top: auto;
+    border-bottom: 1px solid #333;
     flex-shrink: 0;
 }
 
-.comm-input {
-    flex: 1;
-    background: #0a0a0a;
-    border: 1px solid #00ff00;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    padding: 6px 8px;
-    outline: none;
-}
-
-.comm-input:focus {
-    border-color: #ffff00;
-}
-
-.comm-send-btn {
-    background: #0a0a0a;
-    border: 1px solid #00ff00;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    padding: 6px 12px;
-    cursor: pointer;
-    text-transform: uppercase;
-    font-weight: bold;
-    transition: all 0.2s;
-}
-
-.comm-send-btn:hover {
-    background: #00ff00;
-    color: #000;
-}
 
 /* NPC Section Styling */
 .npcs-section {
@@ -2238,39 +2168,7 @@ body {
     color: #00ff00;
 }
 
-.stats-section {
-    margin-bottom: 8px;
-}
 
-.stats-section-title {
-    color: #ffff00;
-    font-weight: bold;
-    margin-bottom: 4px;
-    font-size: 0.9em;
-    text-transform: uppercase;
-}
-
-.stat-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin: 2px 0;
-    color: #00ff00;
-    font-size: 0.825em;
-}
-
-.stat-label {
-    color: #00ffff;
-    font-size: 0.825em;
-}
-
-.stat-value {
-    color: #00ff00;
-    font-weight: bold;
-    font-size: 0.825em;
-    min-width: 30px;
-    text-align: right;
-}
 
 .assignable-points-section {
     border-bottom: 1px solid #333;
@@ -2455,17 +2353,6 @@ body {
     display: block;
 }
 
-/* NPC Widget Styles */
-#widget-npc,
-.widget[data-widget="npc"] {
-    border: 2px solid #ff8800 !important;
-    box-shadow: 0 0 15px rgba(255, 136, 0, 0.6) !important;
-}
-
-#widget-npc .widget-header {
-    color: #ff8800;
-    border-bottom-color: #663300;
-}
 
 .npc-widget-name {
     color: #ffcc00;
@@ -2485,148 +2372,8 @@ body {
     text-transform: uppercase;
 }
 
-.npc-widget-progress-container {
-    width: 100%;
-    height: 12px;
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 4px;
-    overflow: hidden;
-}
 
-.npc-widget-progress-bar {
-    height: 100%;
-    transition: width 0.3s ease, background 0.3s ease;
-}
 
-.npc-widget-progress-bar.harvesting {
-    background: linear-gradient(90deg, #00ff00, #00cc00);
-    box-shadow: 0 0 8px #00ff00 inset;
-}
-
-.npc-widget-progress-bar.cooldown {
-    background: linear-gradient(90deg, #ff6600, #ff9900);
-    box-shadow: 0 0 8px #ff6600 inset;
-}
-
-.npc-widget-timing {
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid #333;
-    font-family: 'Courier New', monospace;
-    font-size: 10px;
-}
-
-.npc-widget-timing-row,
-.timing-row {
-    display: flex;
-    justify-content: space-between;
-    margin: 2px 0;
-    color: #ff8800;
-}
-
-.npc-widget-timing-row span:first-child,
-.timing-label {
-    color: #888;
-}
-
-.npc-widget-timing-row span:last-child,
-.timing-row span:last-child {
-    color: #ff8800;
-    font-weight: bold;
-}
-
-/* Factory Widget Styles */
-#widget-factory {
-    background: #0a0a0a;
-    border: 2px solid #ff8800;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-}
-
-#widget-factory .widget-header {
-    background: #1a1a1a;
-    border-bottom: 2px solid #ff8800;
-    color: #ffff00;
-    font-weight: bold;
-    padding: 8px;
-    text-align: center;
-    text-transform: uppercase;
-}
-
-/* God Mode Widget */
-#widget-godmode {
-    border-color: #ffcc00;
-}
-
-#widget-godmode .godmode-header {
-    background: linear-gradient(135deg, #1a1a0a 0%, #2a2a0a 100%);
-    border-bottom: 2px solid #ffcc00;
-    color: #ffcc00;
-    font-weight: bold;
-    padding: 8px;
-    text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
-}
-
-.godmode-content {
-    padding: 8px !important;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.godmode-section {
-    background: rgba(255, 204, 0, 0.05);
-    border: 1px solid rgba(255, 204, 0, 0.2);
-    border-radius: 4px;
-    padding: 8px;
-}
-
-.godmode-section-title {
-    color: #ffcc00;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    opacity: 0.8;
-}
-
-.godmode-editor-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 6px;
-}
-
-.godmode-editor-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: #0a0a0a;
-    border: 1px solid #ffcc00;
-    color: #ffcc00;
-    font-family: 'Courier New', monospace;
-    font-size: 10px;
-    padding: 6px 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-transform: uppercase;
-}
-
-.godmode-editor-btn:hover {
-    background: rgba(255, 204, 0, 0.15);
-    box-shadow: 0 0 8px rgba(255, 204, 0, 0.3);
-}
-
-.godmode-editor-btn:active {
-    background: rgba(255, 204, 0, 0.25);
-}
-
-.godmode-editor-btn svg {
-    flex-shrink: 0;
-}
 
 .godmode-server-section {
     margin-top: 4px;
@@ -2882,41 +2629,6 @@ body {
     gap: 8px;
 }
 
-.factory-craft-btn {
-    background: linear-gradient(to bottom, #2a5a2a, #1a3a1a);
-    border: 2px solid #00ff00;
-    color: #00ff00;
-    font-family: 'Courier New', monospace;
-    font-size: 1em;
-    font-weight: bold;
-    padding: 8px 24px;
-    cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    transition: all 0.2s ease;
-    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
-}
-
-.factory-craft-btn:hover {
-    background: linear-gradient(to bottom, #3a7a3a, #2a5a2a);
-    border-color: #ffff00;
-    color: #ffff00;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
-    transform: scale(1.05);
-}
-
-.factory-craft-btn:active {
-    transform: scale(0.98);
-    box-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
-}
-
-.factory-craft-btn:disabled {
-    background: #1a1a1a;
-    border-color: #333;
-    color: #555;
-    cursor: not-allowed;
-    box-shadow: none;
-}
 
 /* Progress Bar */
 .factory-progress-container {
@@ -3010,7 +2722,7 @@ body {
 }
 
 #widget-warehouse .widget-header {
-    color: #ffff00;
+    color: #cccccc;
     font-weight: bold;
     text-align: center;
     margin-bottom: 8px;

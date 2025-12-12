@@ -107,8 +107,8 @@ export default class StatsWidget extends Widget {
             assignableTitle.textContent = 'Assignable Points';
             assignableSection.appendChild(assignableTitle);
             const assignableValue = document.createElement('div');
-            assignableValue.className = 'stat-item';
-            assignableValue.innerHTML = `<span class="stat-value">${assignablePoints}</span>`;
+            assignableValue.className = 'widget-stat-row';
+            assignableValue.innerHTML = `<span class="widget-stat-value">${assignablePoints}</span>`;
             assignableSection.appendChild(assignableValue);
             this.statsContent.appendChild(assignableSection);
         }
@@ -177,19 +177,19 @@ export default class StatsWidget extends Widget {
      */
     createStatSection(title, items, showControls = false, assignablePoints = 0) {
         const section = document.createElement('div');
-        section.className = 'stats-section';
+        section.className = 'widget-section stats-section';
         
         const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'stats-section-title';
+        sectionTitle.className = 'widget-section-title stats-section-title';
         sectionTitle.textContent = title;
         section.appendChild(sectionTitle);
         
         items.forEach(item => {
             const statItem = document.createElement('div');
-            statItem.className = 'stat-item';
+            statItem.className = 'widget-stat-row';
             
             const label = document.createElement('span');
-            label.className = 'stat-label';
+            label.className = 'widget-stat-label';
             label.textContent = item.displayName + ':';
             
             const valueContainer = document.createElement('div');
@@ -198,7 +198,7 @@ export default class StatsWidget extends Widget {
             valueContainer.style.gap = '8px';
             
             const value = document.createElement('span');
-            value.className = 'stat-value';
+            value.className = 'widget-stat-value';
             value.textContent = item.value;
             value.setAttribute('data-stat-key', item.key);
             
@@ -208,14 +208,14 @@ export default class StatsWidget extends Widget {
                 controlsGroup.setAttribute('data-stat-key', item.key);
                 
                 const decrementBtn = document.createElement('button');
-                decrementBtn.className = 'stat-control-btn';
+                decrementBtn.className = 'widget-btn widget-btn-small stat-control-btn';
                 decrementBtn.textContent = '−';
                 decrementBtn.disabled = item.value <= 1;
                 decrementBtn.setAttribute('data-action', 'decrement');
                 decrementBtn.setAttribute('data-stat-key', item.key);
                 
                 const incrementBtn = document.createElement('button');
-                incrementBtn.className = 'stat-control-btn';
+                incrementBtn.className = 'widget-btn widget-btn-small stat-control-btn';
                 incrementBtn.textContent = '+';
                 incrementBtn.disabled = assignablePoints <= 0;
                 incrementBtn.setAttribute('data-action', 'increment');
@@ -272,18 +272,18 @@ export default class StatsWidget extends Widget {
      */
     createResourceSection(title, current, max, resourceKey) {
         const section = document.createElement('div');
-        section.className = 'stats-section';
+        section.className = 'widget-section stats-section';
         
         const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'stats-section-title';
+        sectionTitle.className = 'widget-section-title stats-section-title';
         sectionTitle.textContent = title;
         section.appendChild(sectionTitle);
         
         const statItem = document.createElement('div');
-        statItem.className = 'stat-item';
+        statItem.className = 'widget-stat-row';
         
         const label = document.createElement('span');
-        label.className = 'stat-label';
+        label.className = 'widget-stat-label';
         label.textContent = `${current} / ${max}`;
         
         const barContainer = document.createElement('div');
@@ -308,18 +308,18 @@ export default class StatsWidget extends Widget {
      */
     createEncumbranceSection(current, max) {
         const section = document.createElement('div');
-        section.className = 'stats-section';
+        section.className = 'widget-section stats-section';
         
         const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'stats-section-title';
+        sectionTitle.className = 'widget-section-title stats-section-title';
         sectionTitle.textContent = 'Encumbrance';
         section.appendChild(sectionTitle);
         
         const statItem = document.createElement('div');
-        statItem.className = 'stat-item';
+        statItem.className = 'widget-stat-row';
         
         const label = document.createElement('span');
-        label.className = 'stat-label';
+        label.className = 'widget-stat-label';
         label.textContent = `${current} / ${max}`;
         
         const barContainer = document.createElement('div');
@@ -344,23 +344,23 @@ export default class StatsWidget extends Widget {
      */
     createProgressionSection(pulseEchoes, pulseEchoTier) {
         const section = document.createElement('div');
-        section.className = 'stats-section';
+        section.className = 'widget-section stats-section';
         
         const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'stats-section-title';
+        sectionTitle.className = 'widget-section-title stats-section-title';
         sectionTitle.textContent = 'Progression';
         section.appendChild(sectionTitle);
         
         // Pulse Echoes
         const echoItem = document.createElement('div');
-        echoItem.className = 'stat-item';
+        echoItem.className = 'widget-stat-row';
         
         const echoLabel = document.createElement('span');
-        echoLabel.className = 'stat-label';
+        echoLabel.className = 'widget-stat-label';
         echoLabel.textContent = 'Pulse Echoes:';
         
         const echoValue = document.createElement('span');
-        echoValue.className = 'stat-value';
+        echoValue.className = 'widget-stat-value';
         echoValue.style.color = '#00ffff';
         echoValue.textContent = pulseEchoes.toLocaleString();
         
@@ -370,14 +370,14 @@ export default class StatsWidget extends Widget {
         
         // Pulse Echo Tier
         const tierItem = document.createElement('div');
-        tierItem.className = 'stat-item';
+        tierItem.className = 'widget-stat-row';
         
         const tierLabel = document.createElement('span');
-        tierLabel.className = 'stat-label';
+        tierLabel.className = 'widget-stat-label';
         tierLabel.textContent = 'Echo Tier:';
         
         const tierValue = document.createElement('span');
-        tierValue.className = 'stat-value';
+        tierValue.className = 'widget-stat-value';
         tierValue.style.color = '#ff00ff';
         tierValue.textContent = pulseEchoTier;
         

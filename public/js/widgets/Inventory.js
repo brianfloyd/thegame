@@ -42,7 +42,7 @@ export default class Inventory extends Component {
         
         // Build HTML table
         const table = document.createElement('table');
-        table.className = 'inventory-table';
+        table.className = 'widget-table inventory-table';
         
         // Header row
         const thead = document.createElement('thead');
