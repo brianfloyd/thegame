@@ -213,9 +213,13 @@ function calculateCraftTime(recipe, slots, playerStats, quirk = null) {
  * @returns {Object} { items: Array, wornTriggered: boolean }
  */
 function calculateOutputQuantities(outputItems, critical, quirk = null) {
+  // output_items is now JSONB, so it's already an array
+  // Keep backward compatibility check during migration
   let items = outputItems;
   if (typeof items === 'string') {
     try { items = JSON.parse(items); } catch (e) { items = []; }
+  } else if (!items) {
+    items = [];
   }
   
   if (!items || items.length === 0) {
@@ -262,9 +266,13 @@ function calculateOutputQuantities(outputItems, critical, quirk = null) {
 function rollByproducts(byproducts) {
   if (!byproducts) return [];
   
+  // byproducts is now JSONB, so it's already an array
+  // Keep backward compatibility check during migration
   let items = byproducts;
   if (typeof items === 'string') {
     try { items = JSON.parse(items); } catch (e) { return []; }
+  } else if (!items) {
+    items = [];
   }
   
   if (!items || items.length === 0) return [];

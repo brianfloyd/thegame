@@ -212,6 +212,12 @@ export function mapRowToNpc(row) {
         })(),
         harvest_prerequisite_message: row.harvest_prerequisite_message || null,
         
+        // Status messages (040_npc_status_messages.sql)
+        status_message_idle: row.status_message_idle || '(idle)',
+        status_message_ready: row.status_message_ready || '(ready)',
+        status_message_harvesting: row.status_message_harvesting || '(harvesting)',
+        status_message_cooldown: row.status_message_cooldown || '(cooldown)',
+        
         // Lorekeeper data (attached by handler if npc_type === 'lorekeeper')
         // Preserve the lorekeeper object if it exists on the row
         lorekeeper: row.lorekeeper || null

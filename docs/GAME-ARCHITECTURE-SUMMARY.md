@@ -57,7 +57,7 @@ thegame/
 │       │   ├── Game.js     # WebSocket client & message routing
 │       │   ├── Component.js # Base UI component class
 │       │   └── MessageBus.js # Event system
-│       ├── components/     # UI components
+│       ├── widgets/     # UI widgets and components
 │       │   ├── Terminal.js # Command input & message display
 │       │   ├── StatsWidget.js
 │       │   ├── MapWidget.js
@@ -293,19 +293,23 @@ thegame/
 - Reconnection logic
 - Multi-window support (popup detection, heartbeat, postMessage API)
 
-**Component System:**
-- Base class: `Component.js`
+**Component/Widget System:**
+- Base class: `Component.js` (legacy components)
+- Widget base class: `Widget.js` (extends Component, new pattern)
 - Event system: `MessageBus.js`
-- Components subscribe to events, update UI reactively
+- Widget manager: `WidgetManager.js` (handles widget lifecycle and message routing)
+- Components/Widgets subscribe to events or receive messages via `onMessage()`, update UI reactively
 
-**Components:**
-- **Terminal.js** - Command input, message display, markup parsing
-- **StatsWidget.js** - Dynamic stats display (prefix-based detection)
-- **MapWidget.js** - Visual map with room highlighting
-- **CompassWidget.js** - Direction buttons (N/S/E/W/NE/NW/SE/SW)
-- **CommsWidget.js** - Talk/telepath history
-- **Inventory.js** - Player inventory with encumbrance
-- **NPCWidget.js** - NPC interactions
+**Components/Widgets (in `public/js/widgets/`):**
+- **Terminal.js** - Command input, message display, markup parsing (Component-based)
+- **StatsWidget.js** - Dynamic stats display (Widget-based)
+- **MapWidget.js** - Visual map with room highlighting, path recording (Widget-based)
+- **CompassWidget.js** - Direction buttons (N/S/E/W/NE/NW/SE/SW) (Widget-based)
+- **CommsWidget.js** - Talk/telepath history (Widget-based)
+- **Inventory.js** - Player inventory with encumbrance (Component-based)
+- **NPCWidget.js** - NPC interactions (Component-based)
+- **FactoryWidget.js** - Factory crafting interface (Component-based)
+- **TicketsWidget.js** - Ticket management (Widget-based)
 
 **Utilities:**
 - **Markup.js** - Custom markup parser (`<text>`, `[text]`, `!text!`, custom conventions)

@@ -1642,10 +1642,11 @@ async function getNpcDetails(npcName) {
           name: npc.name,
           description: npc.description,
           npc_type: npc.npc_type,
-          input_items: npc.input_items ? JSON.parse(npc.input_items) : {},
-          output_items: npc.output_items ? JSON.parse(npc.output_items) : {},
-          required_stats: npc.required_stats ? JSON.parse(npc.required_stats) : {},
-          required_buffs: npc.required_buffs ? JSON.parse(npc.required_buffs) : [],
+          // These fields are now JSONB, so they're already objects/arrays
+          input_items: npc.input_items || {},
+          output_items: npc.output_items || {},
+          required_stats: npc.required_stats || {},
+          required_buffs: npc.required_buffs || [],
           harvest_prerequisite_item: npc.harvest_prerequisite_item,
           harvest_prerequisite_message: npc.harvest_prerequisite_message,
         };
@@ -1667,10 +1668,11 @@ async function getNpcDetails(npcName) {
         name: npc.name,
         description: npc.description,
         npc_type: npc.npc_type,
-        input_items: npc.input_items ? JSON.parse(npc.input_items) : {},
-        output_items: npc.output_items ? JSON.parse(npc.output_items) : {},
-        required_stats: npc.required_stats ? JSON.parse(npc.required_stats) : {},
-        required_buffs: npc.required_buffs ? JSON.parse(npc.required_buffs) : [],
+        // These fields are now JSONB, so they're already objects/arrays
+        input_items: npc.input_items || {},
+        output_items: npc.output_items || {},
+        required_stats: npc.required_stats || {},
+        required_buffs: npc.required_buffs || [],
         harvest_prerequisite_item: npc.harvest_prerequisite_item,
         harvest_prerequisite_message: npc.harvest_prerequisite_message,
       };
@@ -1727,13 +1729,13 @@ async function getLoreKeeperPuzzleInfo(npcName) {
       return null;
     }
     
-    // Parse keywords_responses if it's JSON
+    // keywords_responses is now JSONB, so it's already an object
+    // Keep backward compatibility check during migration
     let keywordsResponses = null;
     if (puzzleInfo.keywords_responses) {
-      try {
-        keywordsResponses = typeof puzzleInfo.keywords_responses === 'string'
-          ? JSON.parse(puzzleInfo.keywords_responses)
-          : puzzleInfo.keywords_responses;
+      keywordsResponses = typeof puzzleInfo.keywords_responses === 'string'
+        ? JSON.parse(puzzleInfo.keywords_responses)
+        : puzzleInfo.keywords_responses;
       } catch (parseError) {
         // If not JSON, treat as plain text
         keywordsResponses = puzzleInfo.keywords_responses;
@@ -1815,10 +1817,10 @@ async function getItemAcquisitionInfo(itemName) {
     
     if (npcOutputs && npcOutputs.length > 0) {
       for (const npc of npcOutputs) {
-        try {
-          const outputItems = typeof npc.output_items === 'string' 
-            ? JSON.parse(npc.output_items) 
-            : npc.output_items;
+        // output_items is now JSONB, so it's already an object
+        const outputItems = typeof npc.output_items === 'string' 
+          ? JSON.parse(npc.output_items) 
+          : (npc.output_items || {});
           
           if (outputItems && typeof outputItems === 'object') {
             for (const [outputItem, quantity] of Object.entries(outputItems)) {
@@ -3107,7 +3109,8 @@ async function executeAction(action, speakerName = null) {
           throw new Error(`Lore Keeper config not found for NPC ID ${resolvedNpcId}`);
         }
         
-        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        // keywords_responses is now JSONB, so it's already an object
+        const keywords = loreKeeper.keywords_responses || {};
         console.log(`[ZORK] Retrieved keywords for NPC ID ${resolvedNpcId}:`, Object.keys(keywords).length, 'keywords');
         return { npcId: resolvedNpcId, keywords };
       } catch (error) {
@@ -3150,7 +3153,8 @@ async function executeAction(action, speakerName = null) {
         }
         
         // Update keywords JSON
-        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        // keywords_responses is now JSONB, so it's already an object
+        const keywords = loreKeeper.keywords_responses || {};
         keywords[keyword.toLowerCase()] = response;
         
         await verifier.query(
@@ -3197,7 +3201,8 @@ async function executeAction(action, speakerName = null) {
         }
         
         // Remove keyword from JSON
-        const keywords = loreKeeper.keywords_responses ? JSON.parse(loreKeeper.keywords_responses) : {};
+        // keywords_responses is now JSONB, so it's already an object
+        const keywords = loreKeeper.keywords_responses || {};
         delete keywords[keyword.toLowerCase()];
         
         await verifier.query(

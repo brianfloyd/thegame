@@ -513,38 +513,62 @@ function setupRoutes(app, options) {
   
   // ===========================================
   // GOD MODE EDITORS (protected from static serving)
-  // All editors are in /protected/editors/ folder
+  // All editors are in /public/gameeditors/ folder
   // Routes: /map, /npc, /items, /player, /tickets, /crafting
   // ===========================================
   
   app.get('/map', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'map-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'map-editor.html'));
   });
   
   app.get('/npc', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'npc-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'npc-editor.html'));
   });
   
   app.get('/items', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'item-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'item-editor.html'));
   });
   
   app.get('/crafting', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'crafting-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'crafting-editor.html'));
   });
   
   app.get('/player', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'player-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'player-editor.html'));
   });
   
   app.get('/tickets', validateSession, checkGodMode, (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', 'ticket-editor.html'));
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'ticket-editor.html'));
   });
   
   // Serve editor CSS and JS files (these need to be accessible after auth)
   app.get('/:file(map|npc|item|player|ticket|crafting)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
     const file = `${req.params.file}-editor.${req.params.ext}`;
-    res.sendFile(path.join(__dirname, '..', 'protected', 'editors', file));
+    const filePath = path.join(__dirname, '..', 'public', 'gameeditors', file);
+    
+    // Set correct MIME type
+    if (req.params.ext === 'css') {
+      res.setHeader('Content-Type', 'text/css');
+    } else if (req.params.ext === 'js') {
+      res.setHeader('Content-Type', 'application/javascript');
+    }
+    
+    res.sendFile(filePath);
+  });
+  
+  // Serve shared editor files (like editor-shared.css)
+  app.get('/gameeditors/:file', validateSession, checkGodMode, (req, res) => {
+    const file = req.params.file;
+    const filePath = path.join(__dirname, '..', 'public', 'gameeditors', file);
+    
+    // Set correct MIME type based on file extension
+    if (file.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    } else if (file.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    }
+    
+    res.sendFile(filePath);
   });
   
   // Password reset page (public route)
@@ -768,6 +792,14 @@ function setupRoutes(app, options) {
     createDevEditorSession(req, res, '/crafting');
   });
 
+  app.get('/markup', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'markup-editor.html'));
+  });
+
+  app.get('/dev-markup-editor', optionalSession, (req, res) => {
+    createDevEditorSession(req, res, '/markup');
+  });
+
   // ============================================================
   // Markup API Endpoints
   // GET endpoints: All authenticated players can read markup conventions
@@ -789,25 +821,20 @@ function setupRoutes(app, options) {
   // Debug endpoint to check server-side cache (god mode only)
   app.get('/api/markup/debug-cache', validateSession, checkGodMode, async (req, res) => {
     try {
-      const { loadCustomConventions, getMergedBuiltInConventions } = require('../utils/markupService');
+      const { loadConventions } = require('../utils/markupService');
       const db = require('../database');
       
       // Reload from database
-      await loadCustomConventions(db);
+      await loadConventions(db);
       
       // Get what's in the cache (we need to export it or access it differently)
-      // For now, just return what's in the database and what the service would use
+      // For now, just return what's in the database
       const dbConventions = await db.getAllMarkupConventions();
-      const mergedBuiltIn = getMergedBuiltInConventions();
       
       res.json({
         database: {
           count: dbConventions.length,
           conventions: dbConventions
-        },
-        builtIn: {
-          count: Object.keys(mergedBuiltIn).length,
-          conventions: mergedBuiltIn
         },
         note: 'Server-side cache is private. This shows what would be loaded into cache.'
       });
@@ -922,51 +949,6 @@ function setupRoutes(app, options) {
     } catch (error) {
       console.error('Error deleting markup convention:', error);
       res.status(500).json({ error: 'Failed to delete markup convention' });
-    }
-  });
-
-  // Get all built-in convention edits (readable by all authenticated players)
-  app.get('/api/markup/builtin-edits', validateSession, async (req, res) => {
-    try {
-      const edits = await db.getBuiltInConventionEdits();
-      res.json(edits);
-    } catch (error) {
-      console.error('Error fetching built-in convention edits:', error);
-      res.status(500).json({ error: 'Failed to fetch built-in convention edits' });
-    }
-  });
-
-  // Get single built-in convention edit by key (readable by all authenticated players)
-  app.get('/api/markup/builtin-edits/:key', validateSession, async (req, res) => {
-    try {
-      const { key } = req.params;
-      const edit = await db.getBuiltInConventionEdit(key);
-      if (!edit) {
-        return res.status(404).json({ error: 'Edit not found' });
-      }
-      res.json(edit);
-    } catch (error) {
-      console.error('Error fetching built-in convention edit:', error);
-      res.status(500).json({ error: 'Failed to fetch built-in convention edit' });
-    }
-  });
-
-  // Update or insert built-in convention edit
-  app.put('/api/markup/builtin-edits/:key', validateSession, checkGodMode, async (req, res) => {
-    try {
-      const { key } = req.params;
-      const { syntax, example } = req.body;
-
-      const edit = await db.upsertBuiltInConventionEdit(key, syntax, example);
-
-      // Reload markup service cache
-      const { reloadMarkupConventions } = require('../utils/markupService');
-      await reloadMarkupConventions(db);
-
-      res.json(edit);
-    } catch (error) {
-      console.error('Error updating built-in convention edit:', error);
-      res.status(500).json({ error: 'Failed to update built-in convention edit' });
     }
   });
 

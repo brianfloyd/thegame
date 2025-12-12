@@ -57,7 +57,7 @@ Automation system: auto-path, auto-harvest, auto-loop, pathfinding, state manage
 Global formula system specification: all stat-driven mathematical formulas for harvesting, attunement, pulse echoes, factory crafting, runes, quirks, NPC cycles, and movement. Defines how Resonance, Fortitude, Ingenuity, and Acumen mechanically shape game systems.
 
 ## **10-15-god-mode-editors.md**  
-God mode editor system specification: editor tools, permissions, field editors, and admin functionality available only to god-mode players.
+God mode editor system specification: editor tools, permissions, field editors, and admin functionality available only to god-mode players. All editors located in `public/gameeditors/` and are separate from gameplay widgets.
 
 ---
 
@@ -85,7 +85,7 @@ Canonical email system specification: email subsystem for account verification a
 ## Frontend Architecture
 
 ## **20-06-frontend-architecture-canonical.md**  
-Complete frontend architecture specification: client-side structure, component hierarchy, WebSocket integration, UI state management, and all frontend modules/components.
+Complete frontend architecture specification: client-side structure, widget hierarchy, WebSocket integration, UI state management, and all frontend modules. Defines separation between gameplay UI (`public/js/widgets/`) and editor UI (`public/gameeditors/`).
 
 ## **20-07-markup-semantics.md**  
 Markup system semantics: built-in conventions (angle brackets, square brackets, curly braces), custom conventions, formatting rules, and effects. Semantic definitions only.
@@ -100,23 +100,21 @@ Game communication systems: WebSocket protocols, message routing, room chat, glo
 Terminal rendering system: output formatting, scrollback, message display, terminal widget architecture, and interaction patterns.
 
 ## **20-11-widget-system.md**  
-Complete widget system specification: standard widgets (stats, compass, map, comms, automation), conditional widgets (NPC harvest, factory, warehouse), god mode widgets, visibility rules, state management, and integration patterns.
-
-Planned documents:
-- **23-editor-components.md** - Editor tool architecture
-- **24-widget-components.md** - Canonical widget definitions
+Complete widget system specification: standard widgets (stats, compass, map, comms, automation), conditional widgets (NPC harvest, factory, warehouse), god mode widgets, visibility rules, state management, and integration patterns. All widgets located in `public/js/widgets/`.
 
 ---
 
 # 🤖 30–39 — AI & AUTOMATION (Knowledge, Workflow, Tickets, RAG)
 
-*This series will be built as the knowledge base expands.*
+The 30-series contains specifications for AI systems, knowledge management, and automation workflows.
 
-## **33-rag-patterns.md**  
+## **30-00-autonomous-knowledge-system-canonical.md**  
+Complete canonical specification of the autonomous knowledge system: automated knowledge storage via MCP + Cursor + ZORK, knowledge base operations, and AI integration patterns.
+
+## **30-10-rag-patterns.md**  
 Complete RAG knowledge system specification: schema, operations, validations, behavioral rules, failure states, serialization paths, and best practices for using the RAG system. Code-verified with full file references.
 
 Planned documents:
-- **30-autonomous-knowledge-system.md** - Automated knowledge storage via MCP + Cursor + ZORK
 - **31-cursor-workflow.md** - Canonical patterns Cursor must follow
 - **32-ticket-automation.md** - Automatic ticket detection and processing
 
@@ -168,6 +166,12 @@ Canonical workflow document defining mandatory patterns Cursor must follow when 
 ## **999-editor-systems-canonical-spec.md**  
 Complete canonical specification of all God Mode editor systems (Player, Map, Item, NPC, Crafting, Ticketing). Code-verified with full file references.
 
+## **1000-migrateditors.md**  
+Migration requirements document: step-by-step guide for migrating editors from `protected/editors/` to `public/gameeditors/`, including file moves, route updates, and canonical documentation updates.
+
+## **COMPONENTS-TO-WIDGETS-MIGRATION-UPDATES.md**  
+Migration documentation: comprehensive list of all canonical documentation files requiring updates after consolidating `public/js/components/` into `public/js/widgets/`.
+
 ---
 
 # 🚫 100-Series — IGNORE (Archived/Deprecated/Legacy)
@@ -198,13 +202,15 @@ God mode editor system scrub Q&A documentation (archived, superseded by 10-15-go
 
 - **10-series**: Core game operations and player-facing systems (currently populated)
 - **20-29**: Architecture and technical implementation details (frontend architecture populated)
-- **30-39**: AI, automation, and knowledge systems (future)
+- **30-39**: AI, automation, and knowledge systems (partially populated)
 - **40-49**: Developer tools and workflows (future)
 - **50-59**: Infrastructure and operations (future)
 - **60-69**: Future gameplay systems (combat, magic, factions)
 - **70-79**: Advanced AI systems (procedural content, NPC reasoning)
 - **80-89**: Infrastructure scaling (Redis, sharding, multi-instance)
 - **90-99**: Legacy/reference documentation
+- **999-series**: Reference specifications and detailed documentation
+- **1000-series**: Migration guides and transition documentation
 
 ---
 
@@ -239,7 +245,13 @@ God mode editor system scrub Q&A documentation (archived, superseded by 10-15-go
 
 **20-Series**: ✅ Frontend architecture complete  
 - Frontend architecture, markup, rendering, communication, and widget systems documented
+- All widgets located in `public/js/widgets/`
+- Editors located in `public/gameeditors/` (separate from gameplay)
 - Ready for Cursor AI consumption
+
+**30-Series**: 🟡 Partially populated  
+- Autonomous knowledge system and RAG patterns documented
+- Additional AI workflow documents planned
 
 **100-Series**: 🗄️ Archive/Ignore  
 - Historical and deprecated documentation

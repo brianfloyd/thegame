@@ -6,7 +6,7 @@
     <title>Crafting Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/crafting-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <div id="craftingEditor" class="editor-container" x-data="craftingEditor()" x-init="init()">
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -65,17 +66,17 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'Recipes: ' + filteredRecipes.length"></span>
                 </div>
-                <div class="recipe-list">
+                <div class="editor-list">
                     <template x-for="recipe in filteredRecipes" :key="recipe.recipe_id">
-                        <div class="recipe-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedRecipe && selectedRecipe.recipe_id === recipe.recipe_id, 'inactive': !recipe.active }"
                              @click="selectRecipe(recipe)">
-                            <div class="recipe-list-header">
-                                <span class="recipe-id" x-text="'#' + recipe.recipe_id"></span>
-                                <span class="recipe-tier-badge" x-text="'T' + recipe.factory_tier_required"></span>
-                                <span class="recipe-status" :class="recipe.active ? 'active' : 'inactive'" x-text="recipe.active ? 'Active' : 'Inactive'"></span>
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + recipe.recipe_id"></span>
+                                <span class="editor-badge blue" x-text="'T' + recipe.factory_tier_required"></span>
+                                <span class="editor-status" :class="recipe.active ? 'active' : 'inactive'" x-text="recipe.active ? 'Active' : 'Inactive'"></span>
                             </div>
-                            <div class="recipe-list-title" x-text="recipe.name"></div>
+                            <div class="editor-list-title" x-text="recipe.name"></div>
                         </div>
                     </template>
                     <div class="empty-list" x-show="filteredRecipes.length === 0 && !loading">
@@ -94,7 +95,7 @@
                 </template>
 
                 <template x-if="selectedRecipe || isCreating">
-                    <div class="recipe-form">
+                    <div class="editor-form">
                         <!-- Actions -->
                         <div class="form-actions">
                             <template x-if="selectedRecipe && !isCreating">
@@ -150,22 +151,53 @@
                         <div class="form-section">
                             <div class="section-header">
                                 <span>Required Ingredients</span>
-                                <button class="section-add-btn" @click="addIngredient()">+ Add</button>
                             </div>
-                            <div class="json-grid">
-                                <template x-for="(ingredient, index) in formData.required_ingredients" :key="index">
-                                    <div class="json-grid-row">
-                                        <select class="editor-select" x-model="ingredient.item_id">
+                            
+                            <!-- Add Ingredient Section -->
+                            <div class="inventory-add-section">
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Item</label>
+                                        <select class="editor-select" x-model.number="newIngredient.item_id">
                                             <option value="">Select item...</option>
                                             <template x-for="item in getIngredientItems()" :key="item.id">
-                                                <option :value="item.id" x-text="item.name"></option>
+                                                <option :value="Number(item.id)" x-text="item.name"></option>
                                             </template>
                                         </select>
-                                        <input type="number" class="editor-input qty-input" x-model="ingredient.quantity" min="1" placeholder="Qty">
-                                        <button class="grid-remove-btn" @click="removeIngredient(index)">x</button>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Quantity</label>
+                                        <input type="number" class="editor-input" x-model="newIngredient.quantity" min="1" value="1">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>&nbsp;</label>
+                                        <button class="editor-btn editor-btn-success" 
+                                                @click="addIngredient()" 
+                                                :disabled="!newIngredient.item_id || loading">
+                                            + Add Item
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Ingredients List -->
+                            <div class="inventory-list">
+                                <template x-for="(ingredient, index) in formData.required_ingredients" :key="index">
+                                    <div class="inventory-item-row">
+                                        <div class="inventory-item-info">
+                                            <span class="inventory-item-name" x-text="getItemNameFromIngredient(ingredient)"></span>
+                                            <span class="inventory-item-quantity" x-text="'Qty: ' + ingredient.quantity"></span>
+                                        </div>
+                                        <div class="inventory-item-actions">
+                                            <button class="editor-btn editor-btn-danger" 
+                                                    @click="removeIngredient(index)"
+                                                    :disabled="loading">
+                                                Remove
+                                            </button>
+                                        </div>
                                     </div>
                                 </template>
-                                <div class="empty-grid" x-show="formData.required_ingredients.length === 0">
+                                <div class="empty-list" x-show="!formData.required_ingredients || formData.required_ingredients.length === 0">
                                     No ingredients added.
                                 </div>
                             </div>
@@ -209,22 +241,53 @@
                         <div class="form-section">
                             <div class="section-header">
                                 <span>Output Items</span>
-                                <button class="section-add-btn" @click="addOutput()">+ Add</button>
                             </div>
-                            <div class="json-grid">
-                                <template x-for="(output, index) in formData.output_items" :key="index">
-                                    <div class="json-grid-row">
-                                        <select class="editor-select" x-model="output.item_id" @change="updatePreview()">
+                            
+                            <!-- Add Output Item Section -->
+                            <div class="inventory-add-section">
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Item</label>
+                                        <select class="editor-select" x-model.number="newOutputItem.item_id">
                                             <option value="">Select item...</option>
                                             <template x-for="item in allItems" :key="item.id">
-                                                <option :value="item.id" x-text="item.name"></option>
+                                                <option :value="Number(item.id)" x-text="item.name"></option>
                                             </template>
                                         </select>
-                                        <input type="number" class="editor-input qty-input" x-model="output.quantity" min="1" placeholder="Qty" @input="updatePreview()">
-                                        <button class="grid-remove-btn" @click="removeOutput(index)">x</button>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Quantity</label>
+                                        <input type="number" class="editor-input" x-model="newOutputItem.quantity" min="1" value="1">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>&nbsp;</label>
+                                        <button class="editor-btn editor-btn-success" 
+                                                @click="addOutput()" 
+                                                :disabled="!newOutputItem.item_id || loading">
+                                            + Add Item
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Output Items List -->
+                            <div class="inventory-list">
+                                <template x-for="(output, index) in formData.output_items" :key="index">
+                                    <div class="inventory-item-row">
+                                        <div class="inventory-item-info">
+                                            <span class="inventory-item-name" x-text="getItemNameFromIngredient(output)"></span>
+                                            <span class="inventory-item-quantity" x-text="'Qty: ' + output.quantity"></span>
+                                        </div>
+                                        <div class="inventory-item-actions">
+                                            <button class="editor-btn editor-btn-danger" 
+                                                    @click="removeOutput(index)"
+                                                    :disabled="loading">
+                                                Remove
+                                            </button>
+                                        </div>
                                     </div>
                                 </template>
-                                <div class="empty-grid" x-show="formData.output_items.length === 0">
+                                <div class="empty-list" x-show="!formData.output_items || formData.output_items.length === 0">
                                     No output items added.
                                 </div>
                             </div>
@@ -237,25 +300,59 @@
                                 <span class="collapse-icon" x-text="collapsed ? '+' : '-'"></span>
                             </div>
                             <div x-show="!collapsed">
-                                <div class="json-grid">
-                                    <template x-for="(bp, index) in formData.byproducts" :key="index">
-                                        <div class="json-grid-row">
-                                            <select class="editor-select" x-model="bp.item_id">
+                                <!-- Add Byproduct Section -->
+                                <div class="inventory-add-section">
+                                    <div class="form-grid">
+                                        <div class="form-field">
+                                            <label>Item</label>
+                                            <select class="editor-select" x-model.number="newByproduct.item_id">
                                                 <option value="">Select item...</option>
                                                 <template x-for="item in allItems" :key="item.id">
-                                                    <option :value="item.id" x-text="item.name"></option>
+                                                    <option :value="Number(item.id)" x-text="item.name"></option>
                                                 </template>
                                             </select>
-                                            <input type="number" class="editor-input qty-input" x-model="bp.quantity" min="1" placeholder="Qty">
-                                            <input type="number" class="editor-input chance-input" x-model="bp.chance" min="0" max="1" step="0.01" placeholder="Chance">
-                                            <button class="grid-remove-btn" @click="removeByproduct(index)">x</button>
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Quantity</label>
+                                            <input type="number" class="editor-input" x-model="newByproduct.quantity" min="1" value="1">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>Chance (0-1)</label>
+                                            <input type="number" class="editor-input" x-model="newByproduct.chance" min="0" max="1" step="0.1" value="0.1">
+                                        </div>
+                                        <div class="form-field">
+                                            <label>&nbsp;</label>
+                                            <button class="editor-btn editor-btn-success" 
+                                                    @click="addByproduct()" 
+                                                    :disabled="!newByproduct.item_id || loading">
+                                                + Add Item
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Byproducts List -->
+                                <div class="inventory-list">
+                                    <template x-for="(bp, index) in formData.byproducts" :key="index">
+                                        <div class="inventory-item-row">
+                                            <div class="inventory-item-info">
+                                                <span class="inventory-item-name" x-text="getItemNameFromIngredient(bp)"></span>
+                                                <span class="inventory-item-quantity" x-text="'Qty: ' + bp.quantity"></span>
+                                                <span class="inventory-item-quantity" x-text="'Chance: ' + bp.chance"></span>
+                                            </div>
+                                            <div class="inventory-item-actions">
+                                                <button class="editor-btn editor-btn-danger" 
+                                                        @click="removeByproduct(index)"
+                                                        :disabled="loading">
+                                                    Remove
+                                                </button>
+                                            </div>
                                         </div>
                                     </template>
-                                    <div class="empty-grid" x-show="formData.byproducts.length === 0">
+                                    <div class="empty-list" x-show="!formData.byproducts || formData.byproducts.length === 0">
                                         No byproducts added.
                                     </div>
                                 </div>
-                                <button class="editor-btn" @click="addByproduct()" style="margin-top: 10px;">+ Add Byproduct</button>
                             </div>
                         </div>
 

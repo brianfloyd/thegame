@@ -105,8 +105,9 @@ async function createTicket(db, payload) {
             title: ticketData.title,
             description: ticketData.description,
             reproSteps: ticketData.repro_steps,
-            environment: ticketData.environment ? JSON.parse(ticketData.environment) : null,
-            logs: ticketData.logs ? JSON.parse(ticketData.logs) : null,
+            // environment and logs are now JSONB, so they're already objects
+            environment: ticketData.environment || null,
+            logs: ticketData.logs || null,
             createdBy: ticketData.created_by,
             ticketType: ticketData.ticket_type,
             priority: ticketData.priority,

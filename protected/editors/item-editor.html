@@ -6,7 +6,7 @@
     <title>Item Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/item-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <div id="itemEditor" class="editor-container" x-data="itemEditor()" x-init="init()">
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -61,17 +62,17 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'Items: ' + filteredItems.length"></span>
                 </div>
-                <div class="item-list">
+                <div class="editor-list">
                     <template x-for="item in filteredItems" :key="item.id">
-                        <div class="item-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedItem && selectedItem.id === item.id, 'inactive': !item.active }"
                              @click="selectItem(item)">
-                            <div class="item-list-header">
-                                <span class="item-id" x-text="'#' + item.id"></span>
-                                <span class="item-type-badge" x-text="getItemTypeLabel(item.item_type)"></span>
-                                <span class="item-status" :class="item.active ? 'active' : 'inactive'" x-text="item.active ? 'Active' : 'Inactive'"></span>
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + item.id"></span>
+                                <span class="editor-badge blue" x-text="getItemTypeLabel(item.item_type)"></span>
+                                <span class="editor-status" :class="item.active ? 'active' : 'inactive'" x-text="item.active ? 'Active' : 'Inactive'"></span>
                             </div>
-                            <div class="item-list-title" x-text="item.name"></div>
+                            <div class="editor-list-title" x-text="item.name"></div>
                         </div>
                     </template>
                     <div class="empty-list" x-show="filteredItems.length === 0">
@@ -90,7 +91,7 @@
                 </template>
 
                 <template x-if="selectedItem || isCreating">
-                    <div class="item-form">
+                    <div class="editor-form">
                         <!-- Actions -->
                         <div class="form-actions">
                             <template x-if="selectedItem && !isCreating">

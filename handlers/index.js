@@ -11,6 +11,7 @@ const npcEditorHandlers = require('./npcEditor');
 const itemEditorHandlers = require('./itemEditor');
 const playerEditorHandlers = require('./playerEditor');
 const craftingEditorHandlers = require('./craftingEditor');
+const markupEditorHandlers = require('./markupEditor');
 const { isHarvestSafeCommand, findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
 
 // Map of message types to handler functions
@@ -48,6 +49,7 @@ const handlerMap = {
   pulseEcho: gameHandlers.pulseEcho,
   zork: gameHandlers.zork,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
+  getCommsHistory: gameHandlers.getCommsHistory,
   assignAttributePoint: gameHandlers.assignAttributePoint,
   getAutoPathMaps: gameHandlers.getAutoPathMaps,
   getAutoPathRooms: gameHandlers.getAutoPathRooms,
@@ -140,7 +142,13 @@ const handlerMap = {
   getFactoryRecipe: craftingEditorHandlers.getFactoryRecipe,
   createFactoryRecipe: craftingEditorHandlers.createFactoryRecipe,
   updateFactoryRecipe: craftingEditorHandlers.updateFactoryRecipe,
-  deleteFactoryRecipe: craftingEditorHandlers.deleteFactoryRecipe
+  deleteFactoryRecipe: craftingEditorHandlers.deleteFactoryRecipe,
+  
+  // Markup editor handlers
+  getAllMarkupConventions: markupEditorHandlers.getAllMarkupConventions,
+  createMarkupConvention: markupEditorHandlers.createMarkupConvention,
+  updateMarkupConvention: markupEditorHandlers.updateMarkupConvention,
+  deleteMarkupConvention: markupEditorHandlers.deleteMarkupConvention
 };
 
 /**
@@ -190,7 +198,8 @@ async function dispatch(ctx, data) {
         const roomNpcResult = await ctx.db.query('SELECT state FROM room_npcs WHERE id = $1', [activeSession.roomNpcId]);
         if (roomNpcResult.rows[0] && roomNpcResult.rows[0].state) {
           try {
-            const npcState = JSON.parse(roomNpcResult.rows[0].state);
+            // state is now JSONB, so it's already an object
+            const npcState = roomNpcResult.rows[0].state || {};
             if (npcState.harvest_start_time && typeof npcState.harvest_start_time === 'number') {
               const harvestAge = Date.now() - npcState.harvest_start_time;
               if (harvestAge < 2000) {

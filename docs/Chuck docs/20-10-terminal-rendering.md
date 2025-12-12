@@ -16,7 +16,7 @@ The Terminal is one of the **primary text surfaces** in the game and must follow
 
 The Terminal is implemented in:
 ```
-public/js/components/Terminal.js
+public/js/widgets/Terminal.js
 ```
 
 It extends the core `Component` class and manages:

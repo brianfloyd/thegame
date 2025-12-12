@@ -6,7 +6,7 @@
     <title>Player Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/player-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <div id="playerEditor" class="editor-container" x-data="playerEditor()" x-init="init()">
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -54,16 +55,16 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'Players: ' + filteredPlayers.length"></span>
                 </div>
-                <div class="player-list">
+                <div class="editor-list">
                     <template x-for="player in filteredPlayers" :key="player.id">
-                        <div class="player-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedPlayer && selectedPlayer.id === player.id }"
                              @click="selectPlayer(player)">
-                            <div class="player-list-header">
-                                <span class="player-id" x-text="'#' + player.id"></span>
-                                <span class="player-god-badge" x-show="player.flag_god_mode === 1">GOD</span>
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + player.id"></span>
+                                <span class="editor-badge orange" x-show="player.flag_god_mode === 1">GOD</span>
                             </div>
-                            <div class="player-list-title" x-html="formatPlayerName(player.name)"></div>
+                            <div class="editor-list-title" x-html="formatPlayerName(player.name)"></div>
                         </div>
                     </template>
                     <div class="empty-list" x-show="filteredPlayers.length === 0 && !loading">
@@ -82,7 +83,7 @@
                 </template>
 
                 <template x-if="selectedPlayer">
-                    <div class="player-form">
+                    <div class="editor-form">
                         <!-- Tabs -->
                         <div class="editor-tabs">
                             <button class="editor-tab" :class="{ 'active': activeTab === 'stats' }" @click="activeTab = 'stats'">Stats</button>

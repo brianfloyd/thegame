@@ -606,7 +606,7 @@
 - **Event-driven:** Widgets react to MessageBus events, don't poll
 
 **File References:**
-- `public/js/components/` - Widget implementations
+- `public/js/widgets/` - Widget implementations
 - `public/js/core/Component.js` - Base widget class
 - `public/js/core/MessageBus.js` - Event system
 - `docs/Chuck docs/10-13-widget-system.md` - Widget system specification

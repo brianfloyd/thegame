@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/gameeditors/editor-shared.css">
+</head>
+<body>
+    <div id="mapEditor" class="editor-container" x-data="mapEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Map Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" 
+                        @click="selectedRoom?.isNew ? createRoom() : saveRoom()" 
+                        :disabled="!selectedRoom || loading"
+                        x-text="selectedRoom?.isNew ? 'Create Room' : 'Save Room'">
+                </button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-left">
+                <label class="toolbar-label">Map:</label>
+                <select class="editor-select" @change="selectMap($event.target.value)">
+                    <option value="">Select a map...</option>
+                    <template x-for="map in maps" :key="map.id">
+                        <option :value="map.id" :selected="currentMap && currentMap.id === map.id" x-text="map.name"></option>
+                    </template>
+                </select>
+                <button class="editor-btn" @click="showCreateMapDialog = true">+ New Map</button>
+            </div>
+            <div class="toolbar-center">
+                <div class="mode-buttons">
+                    <button class="editor-btn" :class="{ 'active': editorMode === 'select' }" @click="setMode('select')">Select</button>
+                    <button class="editor-btn" :class="{ 'active': editorMode === 'create' }" @click="setMode('create')">Create</button>
+                    <button class="editor-btn" @click="showRoomTypeColorsDialog = true">Colors</button>
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <button class="editor-btn" @click="resetView()">Reset View</button>
+                <input type="text" class="editor-input search-input" placeholder="Search rooms..." x-model="filters.search">
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content map-editor-layout">
+            
+            <!-- Left: Room List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Rooms: ' + rooms.length"></span>
+                </div>
+                <div class="editor-list">
+                    <template x-for="room in getFilteredRooms()" :key="room.id">
+                        <div class="editor-list-item" 
+                             :class="{ 'selected': selectedRoom && selectedRoom.id === room.id }"
+                             @click="selectRoom(room)"
+                             @dblclick="centerOnRoom(room)">
+                            <div class="editor-list-header">
+                                <span class="room-coords" x-text="'(' + room.x + ', ' + room.y + ')'"></span>
+                                <span class="editor-badge blue" 
+                                      :style="'background-color: ' + (roomTypeColors[room.room_type] || '#00ff00')"
+                                      x-text="getRoomTypeLabel(room.room_type)"></span>
+                            </div>
+                            <div class="editor-list-title" x-text="room.name"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="rooms.length === 0 && !loading">
+                        <span x-show="currentMap">No rooms in this map.</span>
+                        <span x-show="!currentMap">Select a map to view rooms.</span>
+                    </div>
+                    <div class="empty-list" x-show="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Center: Canvas -->
+            <div class="editor-canvas-pane">
+                <canvas id="mapCanvas"></canvas>
+                <div class="canvas-controls">
+                    <button class="canvas-control-btn" @click="zoom = Math.min(5, zoom + 0.2); render()">+</button>
+                    <button class="canvas-control-btn" @click="zoom = Math.max(0.5, zoom - 0.2); render()">-</button>
+                </div>
+            </div>
+
+            <!-- Right: Room Details -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedRoom">
+                    <div class="empty-detail">
+                        <p>Select a room or switch to Create mode.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedRoom">
+                    <div class="room-form">
+                        <div class="form-actions">
+                            <template x-if="!selectedRoom.isNew">
+                                <button class="editor-btn editor-btn-danger" @click="deleteRoom()" :disabled="loading">Delete</button>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedRoom = null; resetRoomForm()" :disabled="loading">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="selectedRoom.isNew ? createRoom() : saveRoom()" :disabled="loading">
+                                    <span x-text="selectedRoom.isNew ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <div class="section-header">Room Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Name</label>
+                                    <input type="text" class="editor-input" x-model="formData.name" placeholder="Room name">
+                                </div>
+                                <div class="form-field">
+                                    <label>Coordinates</label>
+                                    <input type="text" class="editor-input" :value="selectedRoom ? '(' + selectedRoom.x + ', ' + selectedRoom.y + ')' : ''" readonly>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" x-model="formData.description" rows="4" placeholder="Room description..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <div class="section-header">Room Type</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Type</label>
+                                    <select class="editor-select" x-model="formData.room_type">
+                                        <template x-for="(label, type) in ROOM_TYPE_LABELS" :key="type">
+                                            <option :value="type" x-text="label"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field" x-show="formData.room_type === 'factory'">
+                                    <label>Factory Tier</label>
+                                    <select class="editor-select" x-model="formData.factory_tier">
+                                        <option value="1">Tier 1</option>
+                                        <option value="2">Tier 2</option>
+                                        <option value="3">Tier 3</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-section" x-show="!selectedRoom?.isNew">
+                            <div class="section-header">Map Connection</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Connected Map</label>
+                                    <select class="editor-select" x-model="formData.connected_map_id">
+                                        <option value="">None</option>
+                                        <template x-for="map in maps" :key="map.id">
+                                            <option :value="map.id" x-text="map.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Connected Room X</label>
+                                    <input type="number" class="editor-input" x-model="formData.connected_room_x" placeholder="X coordinate">
+                                </div>
+                                <div class="form-field">
+                                    <label>Connected Room Y</label>
+                                    <input type="number" class="editor-input" x-model="formData.connected_room_y" placeholder="Y coordinate">
+                                </div>
+                                <div class="form-field">
+                                    <label>Direction</label>
+                                    <select class="editor-select" x-model="formData.connection_direction">
+                                        <option value="">None</option>
+                                        <option value="N">North</option>
+                                        <option value="S">South</option>
+                                        <option value="E">East</option>
+                                        <option value="W">West</option>
+                                        <option value="NE">Northeast</option>
+                                        <option value="NW">Northwest</option>
+                                        <option value="SE">Southeast</option>
+                                        <option value="SW">Southwest</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+
+        <!-- Create Map Dialog -->
+        <div class="editor-dialog-overlay" x-show="showCreateMapDialog" @click.self="showCreateMapDialog = false">
+            <div class="editor-dialog">
+                <div class="dialog-header">
+                    <h3>Create New Map</h3>
+                    <button class="dialog-close" @click="showCreateMapDialog = false">x</button>
+                </div>
+                <div class="dialog-body">
+                    <div class="form-field">
+                        <label>Map Name</label>
+                        <input type="text" class="editor-input" x-model="newMapForm.name" placeholder="Enter map name">
+                    </div>
+                    <div class="form-field">
+                        <label>Description</label>
+                        <textarea class="editor-textarea" x-model="newMapForm.description" rows="3" placeholder="Map description..."></textarea>
+                    </div>
+                </div>
+                <div class="dialog-footer">
+                    <button class="editor-btn" @click="showCreateMapDialog = false">Cancel</button>
+                    <button class="editor-btn editor-btn-success" @click="createMap()">Create Map</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Room Type Colors Dialog -->
+        <div class="editor-dialog-overlay" x-show="showRoomTypeColorsDialog" @click.self="showRoomTypeColorsDialog = false">
+            <div class="editor-dialog">
+                <div class="dialog-header">
+                    <h3>Room Type Colors</h3>
+                    <button class="dialog-close" @click="showRoomTypeColorsDialog = false">x</button>
+                </div>
+                <div class="dialog-body">
+                    <template x-for="(label, type) in ROOM_TYPE_LABELS" :key="type">
+                        <div class="color-picker-row">
+                            <label x-text="label"></label>
+                            <input type="color" :value="roomTypeColors[type] || '#00ff00'" @input="roomTypeColors[type] = $event.target.value">
+                            <span class="color-value" x-text="roomTypeColors[type] || '#00ff00'"></span>
+                        </div>
+                    </template>
+                </div>
+                <div class="dialog-footer">
+                    <button class="editor-btn" @click="resetRoomTypeColors()">Reset</button>
+                    <button class="editor-btn editor-btn-success" @click="saveRoomTypeColors()">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/map-editor.js');
+        console.log('[MapEditor] Module loaded, mapEditor available:', typeof window.mapEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

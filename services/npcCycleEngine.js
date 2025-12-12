@@ -107,12 +107,8 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
   const npcDef = await db.getScriptableNPCById(roomNpc.npc_id);
   const baseCooldownTime = npcDef ? (npcDef.cooldown_time || 120000) : 120000;
   
-  let state = {};
-  try {
-    state = roomNpc.state ? JSON.parse(roomNpc.state) : {};
-  } catch (e) {
-    state = {};
-  }
+  // state is now JSONB, so it's already an object
+  const state = roomNpc.state || {};
   
   // Only end harvest if it's actually active (prevent accidental ending)
   if (!state.harvest_active) {
@@ -178,12 +174,8 @@ async function findPlayerHarvestSession(db, playerId) {
   const rhythmNpcs = result.rows;
   
   for (const npc of rhythmNpcs) {
-    let state = {};
-    try {
-      state = npc.state ? JSON.parse(npc.state) : {};
-    } catch (e) {
-      state = {};
-    }
+    // state is now JSONB, so it's already an object
+    const state = npc.state || {};
     if (state.harvest_active && state.harvesting_player_id === playerId) {
       return { roomNpcId: npc.id, npcName: npc.npc_name, state };
     }
@@ -591,9 +583,8 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 const freshNPC = await db.getAllActiveNPCs();
                 const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
                 if (freshRoomNpc && freshRoomNpc.state) {
-                  const freshState = typeof freshRoomNpc.state === 'string' 
-                    ? JSON.parse(freshRoomNpc.state) 
-                    : freshRoomNpc.state;
+                  // state is now JSONB, so it's already an object
+                  const freshState = freshRoomNpc.state || {};
                   if (!freshState.harvest_active) {
                     console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
                     // Update local state reference
@@ -816,9 +807,8 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                   const freshNPC = await db.getAllActiveNPCs();
                   const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
                   if (freshRoomNpc && freshRoomNpc.state) {
-                    const freshState = typeof freshRoomNpc.state === 'string' 
-                      ? JSON.parse(freshRoomNpc.state) 
-                      : freshRoomNpc.state;
+                    // state is now JSONB, so it's already an object
+                    const freshState = freshRoomNpc.state || {};
                     if (!freshState.harvest_active) {
                       console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
                       // Update local state reference
@@ -964,13 +954,10 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
             // This ensures we have the latest harvest state
             const freshRoomNpcResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpc.id]);
             if (freshRoomNpcResult.rows[0]) {
-              try {
-                const freshState = freshRoomNpcResult.rows[0].state ? JSON.parse(freshRoomNpcResult.rows[0].state) : {};
-                // Update roomNpc.state with fresh state to ensure we're working with latest data
-                roomNpc.state = freshState;
-              } catch (e) {
-                // If parsing fails, keep existing state
-              }
+              // state is now JSONB, so it's already an object
+              const freshState = freshRoomNpcResult.rows[0].state || {};
+              // Update roomNpc.state with fresh state to ensure we're working with latest data
+              roomNpc.state = freshState;
             }
             
             // Structure data for npcLogic: npc data and roomNpc data

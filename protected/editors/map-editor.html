@@ -6,7 +6,7 @@
     <title>Map Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/map-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <div id="mapEditor" class="editor-container" x-data="mapEditor()" x-init="init()">
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -66,19 +67,19 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'Rooms: ' + rooms.length"></span>
                 </div>
-                <div class="room-list">
+                <div class="editor-list">
                     <template x-for="room in getFilteredRooms()" :key="room.id">
-                        <div class="room-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedRoom && selectedRoom.id === room.id }"
                              @click="selectRoom(room)"
                              @dblclick="centerOnRoom(room)">
-                            <div class="room-list-header">
+                            <div class="editor-list-header">
                                 <span class="room-coords" x-text="'(' + room.x + ', ' + room.y + ')'"></span>
-                                <span class="room-type-badge" 
+                                <span class="editor-badge blue" 
                                       :style="'background-color: ' + (roomTypeColors[room.room_type] || '#00ff00')"
                                       x-text="getRoomTypeLabel(room.room_type)"></span>
                             </div>
-                            <div class="room-list-title" x-text="room.name"></div>
+                            <div class="editor-list-title" x-text="room.name"></div>
                         </div>
                     </template>
                     <div class="empty-list" x-show="rooms.length === 0 && !loading">

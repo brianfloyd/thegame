@@ -17,14 +17,20 @@ This document is authoritative: all future widgets must follow pattern, naming, 
 # 🟦 1. Widget System Principles
 
 ### 1.1 Widgets are Independent Modules
-Each widget runs as its own Alpine.js component with its own:
-- HTML container
-- Alpine state
-- WebSocket message handlers
-- Rendering logic
-- Persistence rules (when applicable)
+Each widget extends the `Widget` base class (which extends `Component`) and implements:
+- `render()`: Creates and returns its own DOM structure
+- `onAttach()`: Sets up event listeners after DOM attachment
+- `onMessage(msg)`: Handles backend messages routed by WidgetManager
+- `onDetach()`: Optional cleanup before removal
+
+Widgets are managed by `WidgetManager` which handles:
+- Mounting/unmounting based on visibility rules
+- Message routing from backend to widgets
+- Lifecycle management
 
 Widgets must **never** assume the existence of another widget unless explicitly documented.
+
+**Reference:** `public/js/widgets/Widget.js:11-81`, `public/js/core/WidgetManager.js:431-449`
 
 ---
 

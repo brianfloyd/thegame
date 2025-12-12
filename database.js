@@ -179,27 +179,23 @@ async function getPlayerWidgetConfig(playerId) {
     console.log(`[getPlayerWidgetConfig] Player ${playerId} has no widget_config, returning default`);
     return { activeWidgets: [], scriptingWidgetPosition: 'top' };
   }
-  try {
-    const config = JSON.parse(player.widget_config);
-    console.log(`[getPlayerWidgetConfig] Loaded widget_config for player ${playerId}:`, config);
-    // Ensure activeWidgets is an array
-    if (!Array.isArray(config.activeWidgets)) {
-      console.log(`[getPlayerWidgetConfig] activeWidgets is not an array, fixing...`);
-      config.activeWidgets = [];
-    }
-    return config;
-  } catch (e) {
-    console.error(`[getPlayerWidgetConfig] Error parsing widget_config for player ${playerId}:`, e, 'Raw value:', player.widget_config);
-    return { activeWidgets: [], scriptingWidgetPosition: 'top' };
+  // widget_config is now JSONB, so it's already an object
+  const config = player.widget_config || {};
+  console.log(`[getPlayerWidgetConfig] Loaded widget_config for player ${playerId}:`, config);
+  // Ensure activeWidgets is an array
+  if (!Array.isArray(config.activeWidgets)) {
+    console.log(`[getPlayerWidgetConfig] activeWidgets is not an array, fixing...`);
+    config.activeWidgets = [];
   }
+  return config;
 }
 
 async function updatePlayerWidgetConfig(playerId, config) {
-  const configJson = JSON.stringify(config);
-  console.log(`Updating widget_config for player ${playerId} to:`, configJson);
+  console.log(`Updating widget_config for player ${playerId} to:`, config);
+  // widget_config is now JSONB, so pass the object directly
   await query(
     'UPDATE players SET widget_config = $1 WHERE id = $2',
-    [configJson, playerId]
+    [config, playerId]
   );
   // Verify the update
   const player = await getPlayerById(playerId);
@@ -723,11 +719,78 @@ function getPlayerStats(player) {
 // ============================================================
 
 async function getAllScriptableNPCs() {
-  return getAll('SELECT * FROM scriptable_npcs ORDER BY id');
+  const npcs = await getAll('SELECT * FROM scriptable_npcs ORDER BY id');
+  
+  // Convert input_items and output_items from item_id keys to item_name keys for editor compatibility
+  const processedNpcs = await Promise.all(npcs.map(async (npc) => {
+    let inputItems = npc.input_items || {};
+    let outputItems = npc.output_items || {};
+    
+    // Check if keys are item_ids (numeric strings) and convert to item_names
+    const inputFirstKey = Object.keys(inputItems)[0];
+    if (inputFirstKey && !isNaN(parseInt(inputFirstKey, 10))) {
+      inputItems = await convertItemIdsToNames(inputItems);
+    }
+    
+    const outputFirstKey = Object.keys(outputItems)[0];
+    if (outputFirstKey && !isNaN(parseInt(outputFirstKey, 10))) {
+      outputItems = await convertItemIdsToNames(outputItems);
+    }
+    
+    // Convert puzzle_reward_item_id to puzzle_reward_item (item name) for editor
+    let puzzleRewardItem = npc.puzzle_reward_item;
+    if (npc.puzzle_reward_item_id && !puzzleRewardItem) {
+      const rewardItem = await getItemById(npc.puzzle_reward_item_id);
+      if (rewardItem) {
+        puzzleRewardItem = rewardItem.name;
+      }
+    }
+    
+    return {
+      ...npc,
+      input_items: inputItems,
+      output_items: outputItems,
+      puzzle_reward_item: puzzleRewardItem
+    };
+  }));
+  
+  return processedNpcs;
 }
 
 async function getScriptableNPCById(id) {
-  return getOne('SELECT * FROM scriptable_npcs WHERE id = $1', [id]);
+  const npc = await getOne('SELECT * FROM scriptable_npcs WHERE id = $1', [id]);
+  if (!npc) return null;
+  
+  // Convert input_items and output_items from item_id keys to item_name keys for backward compatibility
+  let inputItems = npc.input_items || {};
+  let outputItems = npc.output_items || {};
+  
+  // Check if keys are item_ids (numeric strings) and convert to item_names
+  const inputFirstKey = Object.keys(inputItems)[0];
+  if (inputFirstKey && !isNaN(parseInt(inputFirstKey, 10))) {
+    inputItems = await convertItemIdsToNames(inputItems);
+  }
+  
+  const outputFirstKey = Object.keys(outputItems)[0];
+  if (outputFirstKey && !isNaN(parseInt(outputFirstKey, 10))) {
+    outputItems = await convertItemIdsToNames(outputItems);
+  }
+  
+  // Convert puzzle_reward_item_id to puzzle_reward_item (item name) for editor
+  let puzzleRewardItem = npc.puzzle_reward_item;
+  if (npc.puzzle_reward_item_id && !puzzleRewardItem) {
+    const rewardItem = await getItemById(npc.puzzle_reward_item_id);
+    if (rewardItem) {
+      puzzleRewardItem = rewardItem.name;
+    }
+  }
+  
+  return {
+    ...npc,
+    input_items: inputItems,
+    output_items: outputItems,
+    puzzle_reward_item: puzzleRewardItem
+  };
 }
 
 async function createScriptableNPC(npc) {
@@ -760,6 +823,7 @@ async function createScriptableNPC(npc) {
     puzzle_award_delay_seconds = null,
     puzzle_award_delay_response = null,
     harvest_prerequisite_items = null,
+    harvest_prerequisite_item_id = null,
     harvest_prerequisite_message = null,
     enable_resonance_bonuses = true,
     enable_fortitude_bonuses = true,
@@ -773,10 +837,34 @@ async function createScriptableNPC(npc) {
   const status_message_harvesting = npc.status_message_harvesting || '(harvesting)';
   const status_message_cooldown = npc.status_message_cooldown || '(cooldown)';
 
+  // Convert input_items and output_items from item_name keys to item_id keys for storage
+  let inputItemsForDb = input_items || {};
+  let outputItemsForDb = output_items || {};
+  
+  // Check if keys are item_names (non-numeric) and convert to item_ids
+  const inputFirstKey = Object.keys(inputItemsForDb)[0];
+  if (inputFirstKey && isNaN(parseInt(inputFirstKey, 10))) {
+    inputItemsForDb = await convertItemNamesToIds(inputItemsForDb);
+  }
+  
+  const outputFirstKey = Object.keys(outputItemsForDb)[0];
+  if (outputFirstKey && isNaN(parseInt(outputFirstKey, 10))) {
+    outputItemsForDb = await convertItemNamesToIds(outputItemsForDb);
+  }
+  
+  // Convert puzzle_reward_item (item name) to puzzle_reward_item_id
+  let puzzleRewardItemId = null;
+  if (puzzle_reward_item) {
+    const rewardItem = await getItemByName(puzzle_reward_item);
+    if (rewardItem) {
+      puzzleRewardItemId = rewardItem.id;
+    }
+  }
+
   const result = await query(
-    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, scriptable, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, TRUE, TRUE) RETURNING id`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_items ? JSON.stringify(harvest_prerequisite_items) : null, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield]
+    `INSERT INTO scriptable_npcs (name, description, npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_reward_item_id, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_item, harvest_prerequisite_item_id, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, scriptable, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, TRUE, TRUE) RETURNING id`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats || {}, required_buffs || [], inputItemsForDb, outputItemsForDb, output_distribution, failure_states || [], display_color, puzzle_type, puzzle_glow_clues || [], puzzle_extraction_pattern || [], puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzleRewardItemId, puzzle_hint_responses || [], puzzle_followup_responses || [], puzzle_incorrect_attempt_responses || [], puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, harvest_prerequisite_items || null, harvest_prerequisite_item_id || null, harvest_prerequisite_message, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield]
   );
 
   return result.rows[0].id;
@@ -812,18 +900,43 @@ async function updateScriptableNPC(npc) {
     puzzle_incorrect_attempt_responses = null,
     puzzle_award_once_only = false,
     puzzle_award_after_delay = false,
-    puzzle_award_delay_seconds = null,
-    puzzle_award_delay_response = null,
-    enable_resonance_bonuses = true,
-    enable_fortitude_bonuses = true,
-    status_message_idle = '(idle)',
-    status_message_ready = '(ready)',
-    status_message_harvesting = '(harvesting)',
-    status_message_cooldown = '(cooldown)',
-    hit_vitalis = 0,
-    miss_vitalis = 0,
-    pulse_echo_yield = 1
-  } = npc;
+      puzzle_award_delay_seconds = null,
+      puzzle_award_delay_response = null,
+      harvest_prerequisite_item_id = null,
+      enable_resonance_bonuses = true,
+      enable_fortitude_bonuses = true,
+      status_message_idle = '(idle)',
+      status_message_ready = '(ready)',
+      status_message_harvesting = '(harvesting)',
+      status_message_cooldown = '(cooldown)',
+      hit_vitalis = 0,
+      miss_vitalis = 0,
+      pulse_echo_yield = 1
+    } = npc;
+
+  // Convert input_items and output_items from item_name keys to item_id keys for storage
+  let inputItemsForDb = input_items || {};
+  let outputItemsForDb = output_items || {};
+  
+  // Check if keys are item_names (non-numeric) and convert to item_ids
+  const inputFirstKey = Object.keys(inputItemsForDb)[0];
+  if (inputFirstKey && isNaN(parseInt(inputFirstKey, 10))) {
+    inputItemsForDb = await convertItemNamesToIds(inputItemsForDb);
+  }
+  
+  const outputFirstKey = Object.keys(outputItemsForDb)[0];
+  if (outputFirstKey && isNaN(parseInt(outputFirstKey, 10))) {
+    outputItemsForDb = await convertItemNamesToIds(outputItemsForDb);
+  }
+  
+  // Convert puzzle_reward_item (item name) to puzzle_reward_item_id
+  let puzzleRewardItemId = null;
+  if (puzzle_reward_item) {
+    const rewardItem = await getItemByName(puzzle_reward_item);
+    if (rewardItem) {
+      puzzleRewardItemId = rewardItem.id;
+    }
+  }
 
   await query(
     `UPDATE scriptable_npcs SET
@@ -832,15 +945,18 @@ async function updateScriptableNPC(npc) {
       failure_states = $13, display_color = $14, active = $15,
       puzzle_type = $16, puzzle_glow_clues = $17, puzzle_extraction_pattern = $18,
       puzzle_solution_word = $19, puzzle_success_response = $20, puzzle_failure_response = $21,
-      puzzle_reward_item = $22, puzzle_hint_responses = $23, puzzle_followup_responses = $24,
-      puzzle_incorrect_attempt_responses = $25, puzzle_award_once_only = $26, puzzle_award_after_delay = $27,
-      puzzle_award_delay_seconds = $28, puzzle_award_delay_response = $29,
-      harvest_prerequisite_item = COALESCE($30, harvest_prerequisite_item), harvest_prerequisite_message = COALESCE($31, harvest_prerequisite_message),
-      enable_resonance_bonuses = $32, enable_fortitude_bonuses = $33,
-      status_message_idle = $34, status_message_ready = $35, status_message_harvesting = $36, status_message_cooldown = $37,
-      hit_vitalis = $38, miss_vitalis = $39, pulse_echo_yield = $40
-     WHERE id = $41`,
-    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats, required_buffs, input_items, output_items, output_distribution, failure_states, display_color, active, puzzle_type, puzzle_glow_clues, puzzle_extraction_pattern, puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzle_hint_responses, puzzle_followup_responses, puzzle_incorrect_attempt_responses, puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_items ? JSON.stringify(npc.harvest_prerequisite_items) : (npc.harvest_prerequisite_item || null), npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, id]
+      puzzle_reward_item = $22, puzzle_reward_item_id = COALESCE($23, puzzle_reward_item_id),
+      puzzle_hint_responses = $24, puzzle_followup_responses = $25, puzzle_incorrect_attempt_responses = $26,
+      puzzle_award_once_only = $27, puzzle_award_after_delay = $28,
+      puzzle_award_delay_seconds = $29, puzzle_award_delay_response = $30,
+      harvest_prerequisite_item = COALESCE($31, harvest_prerequisite_item), 
+      harvest_prerequisite_item_id = COALESCE($32, harvest_prerequisite_item_id), 
+      harvest_prerequisite_message = COALESCE($33, harvest_prerequisite_message),
+      enable_resonance_bonuses = $34, enable_fortitude_bonuses = $35,
+      status_message_idle = $36, status_message_ready = $37, status_message_harvesting = $38, status_message_cooldown = $39,
+      hit_vitalis = $40, miss_vitalis = $41, pulse_echo_yield = $42
+     WHERE id = $43`,
+    [name, description || '', npc_type, base_cycle_time, difficulty, harvestable_time, cooldown_time, required_stats || {}, required_buffs || [], inputItemsForDb, outputItemsForDb, output_distribution, failure_states || [], display_color, active, puzzle_type, puzzle_glow_clues || [], puzzle_extraction_pattern || [], puzzle_solution_word, puzzle_success_response, puzzle_failure_response, puzzle_reward_item, puzzleRewardItemId, puzzle_hint_responses || [], puzzle_followup_responses || [], puzzle_incorrect_attempt_responses || [], puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response, npc.harvest_prerequisite_items || npc.harvest_prerequisite_item || null, harvest_prerequisite_item_id || null, npc.harvest_prerequisite_message || null, enable_resonance_bonuses, enable_fortitude_bonuses, status_message_idle, status_message_ready, status_message_harvesting, status_message_cooldown, hit_vitalis, miss_vitalis, pulse_echo_yield, id]
   );
 }
 
@@ -851,7 +967,7 @@ async function getNPCsInRoom(roomId) {
             sn.enable_resonance_bonuses, sn.enable_fortitude_bonuses,
             sn.puzzle_type, sn.puzzle_glow_clues, sn.puzzle_extraction_pattern,
             sn.puzzle_solution_word, sn.puzzle_success_response, sn.puzzle_failure_response,
-            sn.puzzle_reward_item, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
+            sn.puzzle_reward_item, sn.puzzle_reward_item_id, sn.puzzle_hint_responses, sn.puzzle_followup_responses,
             sn.puzzle_incorrect_attempt_responses, sn.puzzle_award_once_only, sn.puzzle_award_after_delay,
             sn.puzzle_award_delay_seconds, sn.puzzle_award_delay_response,
             sn.status_message_idle, sn.status_message_ready, sn.status_message_harvesting, sn.status_message_cooldown,
@@ -863,54 +979,52 @@ async function getNPCsInRoom(roomId) {
     [roomId]
   );
   
-  return rows.map(row => ({
-    id: row.id,
-    npcId: row.npc_id,
-    name: row.name,
-    description: row.description,
-    color: row.display_color || '#00ffff',
-    state: row.state ? JSON.parse(row.state) : {},
-    slot: row.slot,
-    base_cycle_time: row.base_cycle_time || 12000,
-    harvestableTime: row.harvestable_time || 60000,
-    cooldownTime: row.cooldown_time || 120000,
-    enable_resonance_bonuses: row.enable_resonance_bonuses !== false,
-    enable_fortitude_bonuses: row.enable_fortitude_bonuses !== false,
-    puzzleType: row.puzzle_type || 'none',
-    puzzleGlowClues: row.puzzle_glow_clues ? JSON.parse(row.puzzle_glow_clues) : null,
-    puzzleExtractionPattern: row.puzzle_extraction_pattern ? JSON.parse(row.puzzle_extraction_pattern) : null,
-    puzzleSolutionWord: row.puzzle_solution_word,
-    puzzleSuccessResponse: row.puzzle_success_response,
-    puzzleFailureResponse: row.puzzle_failure_response,
-    puzzleRewardItem: row.puzzle_reward_item,
-    puzzleHintResponses: row.puzzle_hint_responses ? JSON.parse(row.puzzle_hint_responses) : null,
-    puzzleFollowupResponses: row.puzzle_followup_responses ? JSON.parse(row.puzzle_followup_responses) : null,
-    puzzleIncorrectAttemptResponses: row.puzzle_incorrect_attempt_responses ? JSON.parse(row.puzzle_incorrect_attempt_responses) : null,
-    puzzleAwardOnceOnly: row.puzzle_award_once_only || false,
-    puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
-    puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
-    puzzleAwardDelayResponse: row.puzzle_award_delay_response,
-    statusMessageIdle: row.status_message_idle ?? '(idle)',
-    statusMessageReady: row.status_message_ready ?? '(ready)',
-    statusMessageHarvesting: row.status_message_harvesting ?? '(harvesting)',
-    statusMessageCooldown: row.status_message_cooldown ?? '(cooldown)',
-    outputDistribution: row.output_distribution || 'ground'
+  // Convert puzzle_reward_item_id to puzzle_reward_item (item name) for backward compatibility
+  const processedRows = await Promise.all(rows.map(async (row) => {
+    let puzzleRewardItem = row.puzzle_reward_item;
+    if (row.puzzle_reward_item_id && !puzzleRewardItem) {
+      const rewardItem = await getItemById(row.puzzle_reward_item_id);
+      if (rewardItem) {
+        puzzleRewardItem = rewardItem.name;
+      }
+    }
+    
+    return {
+      id: row.id,
+      npcId: row.npc_id,
+      name: row.name,
+      description: row.description,
+      color: row.display_color || '#00ffff',
+      state: row.state || {},
+      slot: row.slot,
+      base_cycle_time: row.base_cycle_time || 12000,
+      harvestableTime: row.harvestable_time || 60000,
+      cooldownTime: row.cooldown_time || 120000,
+      enable_resonance_bonuses: row.enable_resonance_bonuses !== false,
+      enable_fortitude_bonuses: row.enable_fortitude_bonuses !== false,
+      puzzleType: row.puzzle_type || 'none',
+      puzzleGlowClues: row.puzzle_glow_clues || [],
+      puzzleExtractionPattern: row.puzzle_extraction_pattern || [],
+      puzzleSolutionWord: row.puzzle_solution_word,
+      puzzleSuccessResponse: row.puzzle_success_response,
+      puzzleFailureResponse: row.puzzle_failure_response,
+      puzzleRewardItem: puzzleRewardItem,
+      puzzleHintResponses: row.puzzle_hint_responses || [],
+      puzzleFollowupResponses: row.puzzle_followup_responses || [],
+      puzzleIncorrectAttemptResponses: row.puzzle_incorrect_attempt_responses || [],
+      puzzleAwardOnceOnly: row.puzzle_award_once_only || false,
+      puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
+      puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
+      puzzleAwardDelayResponse: row.puzzle_award_delay_response,
+      statusMessageIdle: row.status_message_idle ?? '(idle)',
+      statusMessageReady: row.status_message_ready ?? '(ready)',
+      statusMessageHarvesting: row.status_message_harvesting ?? '(harvesting)',
+      statusMessageCooldown: row.status_message_cooldown ?? '(cooldown)',
+      outputDistribution: row.output_distribution || 'ground'
+    };
   }));
-}
-
-// Helper function to safely parse JSON with error handling
-function safeJsonParse(jsonString, defaultValue, fieldName) {
-  if (!jsonString || jsonString.trim() === '') {
-    return defaultValue;
-  }
-  try {
-    return JSON.parse(jsonString);
-  } catch (error) {
-    console.error(`Error parsing JSON for field '${fieldName}':`, error.message);
-    console.error(`Invalid JSON string:`, jsonString);
-    console.error(`NPC ID:`, fieldName.includes('state') ? 'see row details' : 'N/A');
-    return defaultValue;
-  }
+  
+  return processedRows;
 }
 
 async function getAllActiveNPCs() {
@@ -926,22 +1040,37 @@ async function getAllActiveNPCs() {
      WHERE rn.active = TRUE AND sn.active = TRUE`
   );
   
-  return rows.map(row => {
+  // Convert input_items and output_items from item_id keys to item_name keys for backward compatibility
+  const processedRows = await Promise.all(rows.map(async (row) => {
     try {
+      let inputItems = row.input_items || {};
+      let outputItems = row.output_items || {};
+      
+      // Check if keys are item_ids (numeric strings) and convert to item_names
+      const inputFirstKey = Object.keys(inputItems)[0];
+      if (inputFirstKey && !isNaN(parseInt(inputFirstKey, 10))) {
+        inputItems = await convertItemIdsToNames(inputItems);
+      }
+      
+      const outputFirstKey = Object.keys(outputItems)[0];
+      if (outputFirstKey && !isNaN(parseInt(outputFirstKey, 10))) {
+        outputItems = await convertItemIdsToNames(outputItems);
+      }
+      
       return {
         id: row.id,
         npcId: row.npc_id,
         roomId: row.room_id,
-        state: safeJsonParse(row.state, {}, `state (NPC ${row.npc_id}, Room ${row.room_id})`),
+        state: row.state || {},
         lastCycleRun: row.last_cycle_run || 0,
         npcType: row.npc_type,
         baseCycleTime: row.base_cycle_time,
-        requiredStats: safeJsonParse(row.required_stats, {}, `required_stats (NPC ${row.npc_id})`),
-        requiredBuffs: safeJsonParse(row.required_buffs, [], `required_buffs (NPC ${row.npc_id})`),
-        inputItems: safeJsonParse(row.input_items, {}, `input_items (NPC ${row.npc_id})`),
-        outputItems: safeJsonParse(row.output_items, {}, `output_items (NPC ${row.npc_id})`),
+        requiredStats: row.required_stats || {},
+        requiredBuffs: row.required_buffs || [],
+        inputItems: inputItems,
+        outputItems: outputItems,
         outputDistribution: row.output_distribution || 'ground',
-        failureStates: safeJsonParse(row.failure_states, [], `failure_states (NPC ${row.npc_id})`),
+        failureStates: row.failure_states || [],
         color: row.display_color || '#00ffff',
         harvestableTime: row.harvestable_time || 60000,
         cooldownTime: row.cooldown_time || 120000,
@@ -973,7 +1102,9 @@ async function getAllActiveNPCs() {
         cooldownTime: row.cooldown_time || 120000
       };
     }
-  });
+  }));
+  
+  return processedRows;
 }
 
 async function validateMoonlessMeadowRoom(roomId) {
@@ -997,14 +1128,15 @@ async function validateMoonlessMeadowRoom(roomId) {
 async function placeNPCInRoom(npcId, roomId, slot = 0, initialState = {}, spawnRules = null) {
   // Note: Moonless Meadow restriction removed - NPCs can now be placed in any map
   
-  const stateJson = JSON.stringify(initialState);
+  // state is now JSONB, so pass the object directly
+  // spawn_rules is still TEXT, so stringify if needed
   const spawnRulesJson = spawnRules ? JSON.stringify(spawnRules) : null;
   const lastCycleRun = Date.now();
   
   const result = await query(
     `INSERT INTO room_npcs (npc_id, room_id, state, last_cycle_run, active, slot, spawn_rules)
      VALUES ($1, $2, $3, $4, TRUE, $5, $6) RETURNING id`,
-    [npcId, roomId, stateJson, lastCycleRun, slot, spawnRulesJson]
+    [npcId, roomId, initialState || {}, lastCycleRun, slot, spawnRulesJson]
   );
   
   return result.rows[0].id;
@@ -1040,8 +1172,8 @@ async function getRoomsForNpcPlacement(mapId) {
 }
 
 async function updateNPCState(roomNpcId, state, lastCycleRun) {
-  const stateJson = JSON.stringify(state);
-  await query('UPDATE room_npcs SET state = $1, last_cycle_run = $2 WHERE id = $3', [stateJson, lastCycleRun, roomNpcId]);
+  // state is now JSONB, so pass the object directly
+  await query('UPDATE room_npcs SET state = $1, last_cycle_run = $2 WHERE id = $3', [state || {}, lastCycleRun, roomNpcId]);
 }
 
 // ============================================================================
@@ -1052,7 +1184,22 @@ async function updateNPCState(roomNpcId, state, lastCycleRun) {
  * Get Lore Keeper config by NPC ID
  */
 async function getLoreKeeperByNpcId(npcId) {
-  return getOne('SELECT * FROM lore_keepers WHERE npc_id = $1', [npcId]);
+  const lk = await getOne('SELECT * FROM lore_keepers WHERE npc_id = $1', [npcId]);
+  if (!lk) return null;
+  
+  // Convert puzzle_reward_item_id to puzzle_reward_item (item name) for backward compatibility
+  let puzzleRewardItem = lk.puzzle_reward_item;
+  if (lk.puzzle_reward_item_id && !puzzleRewardItem) {
+    const rewardItem = await getItemById(lk.puzzle_reward_item_id);
+    if (rewardItem) {
+      puzzleRewardItem = rewardItem.name;
+    }
+  }
+  
+  return {
+    ...lk,
+    puzzle_reward_item: puzzleRewardItem
+  };
 }
 
 /**
@@ -1068,31 +1215,44 @@ async function getLoreKeepersInRoom(roomId) {
     [roomId]
   );
   
-  return rows.map(row => ({
-    id: row.id,
-    npcId: row.npc_id,
-    name: row.name,
-    description: row.description,
-    displayColor: row.display_color || '#00ffff',
-    loreType: row.lore_type,
-    engagementEnabled: row.engagement_enabled,
-    engagementDelay: row.engagement_delay,
-    initialMessage: row.initial_message,
-    initialMessageColor: row.initial_message_color,
-    keywordsResponses: row.keywords_responses ? JSON.parse(row.keywords_responses) : {},
-    keywordColor: row.keyword_color,
-    incorrectResponse: row.incorrect_response,
-    puzzleMode: row.puzzle_mode,
-    puzzleClues: row.puzzle_clues ? JSON.parse(row.puzzle_clues) : [], // Array format: [{"keyword": "key", "answer": "value"}]
-    puzzleSolution: row.puzzle_solution,
-    puzzleSuccessMessage: row.puzzle_success_message,
-    puzzleFailureMessage: row.puzzle_failure_message,
-    puzzleRewardItem: row.puzzle_reward_item,
-    puzzleAwardOnceOnly: row.puzzle_award_once_only || false,
-    puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
-    puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
-    puzzleAwardDelayResponse: row.puzzle_award_delay_response
+  // Convert puzzle_reward_item_id to puzzle_reward_item (item name) for backward compatibility
+  const processedRows = await Promise.all(rows.map(async (row) => {
+    let puzzleRewardItem = row.puzzle_reward_item;
+    if (row.puzzle_reward_item_id && !puzzleRewardItem) {
+      const rewardItem = await getItemById(row.puzzle_reward_item_id);
+      if (rewardItem) {
+        puzzleRewardItem = rewardItem.name;
+      }
+    }
+    
+    return {
+      id: row.id,
+      npcId: row.npc_id,
+      name: row.name,
+      description: row.description,
+      displayColor: row.display_color || '#00ffff',
+      loreType: row.lore_type,
+      engagementEnabled: row.engagement_enabled,
+      engagementDelay: row.engagement_delay,
+      initialMessage: row.initial_message,
+      initialMessageColor: row.initial_message_color,
+      keywordsResponses: row.keywords_responses || {},
+      keywordColor: row.keyword_color,
+      incorrectResponse: row.incorrect_response,
+      puzzleMode: row.puzzle_mode,
+      puzzleClues: row.puzzle_clues || [], // Array format: [{"keyword": "key", "answer": "value"}]
+      puzzleSolution: row.puzzle_solution,
+      puzzleSuccessMessage: row.puzzle_success_message,
+      puzzleFailureMessage: row.puzzle_failure_message,
+      puzzleRewardItem: puzzleRewardItem,
+      puzzleAwardOnceOnly: row.puzzle_award_once_only || false,
+      puzzleAwardAfterDelay: row.puzzle_award_after_delay || false,
+      puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
+      puzzleAwardDelayResponse: row.puzzle_award_delay_response
+    };
   }));
+  
+  return processedRows;
 }
 
 /**
@@ -1121,20 +1281,29 @@ async function createLoreKeeper(config) {
     puzzle_award_delay_response = null
   } = config;
 
+  // Convert puzzle_reward_item (item name) to puzzle_reward_item_id
+  let puzzleRewardItemId = null;
+  if (puzzle_reward_item) {
+    const rewardItem = await getItemByName(puzzle_reward_item);
+    if (rewardItem) {
+      puzzleRewardItemId = rewardItem.id;
+    }
+  }
+
   const result = await query(
     `INSERT INTO lore_keepers (
       npc_id, lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item, puzzle_reward_item_id,
       puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     RETURNING id`,
     [
       npc_id, lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item, puzzleRewardItemId,
       puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response
     ]
   );
@@ -1168,21 +1337,30 @@ async function updateLoreKeeper(config) {
     puzzle_award_delay_response = null
   } = config;
 
+  // Convert puzzle_reward_item (item name) to puzzle_reward_item_id
+  let puzzleRewardItemId = null;
+  if (puzzle_reward_item) {
+    const rewardItem = await getItemByName(puzzle_reward_item);
+    if (rewardItem) {
+      puzzleRewardItemId = rewardItem.id;
+    }
+  }
+
   await query(
     `UPDATE lore_keepers SET
       lore_type = $1, engagement_enabled = $2, engagement_delay = $3,
       initial_message = $4, initial_message_color = $5,
       keywords_responses = $6, keyword_color = $7, incorrect_response = $8,
       puzzle_mode = $9, puzzle_clues = $10, puzzle_solution = $11, 
-      puzzle_success_message = $12, puzzle_failure_message = $13, puzzle_reward_item = $14,
-      puzzle_award_once_only = $15, puzzle_award_after_delay = $16, puzzle_award_delay_seconds = $17, puzzle_award_delay_response = $18,
+      puzzle_success_message = $12, puzzle_failure_message = $13, puzzle_reward_item = $14, puzzle_reward_item_id = COALESCE($15, puzzle_reward_item_id),
+      puzzle_award_once_only = $16, puzzle_award_after_delay = $17, puzzle_award_delay_seconds = $18, puzzle_award_delay_response = $19,
       updated_at = NOW()
-    WHERE npc_id = $19`,
+    WHERE npc_id = $20`,
     [
       lore_type, engagement_enabled, engagement_delay,
       initial_message, initial_message_color,
       keywords_responses, keyword_color, incorrect_response,
-      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item,
+      puzzle_mode, puzzle_clues, puzzle_solution, puzzle_success_message, puzzle_failure_message, puzzle_reward_item, puzzleRewardItemId,
       puzzle_award_once_only, puzzle_award_after_delay, puzzle_award_delay_seconds, puzzle_award_delay_response,
       npc_id
     ]
@@ -1200,9 +1378,13 @@ async function deleteLoreKeeperByNpcId(npcId) {
  * Check if a player has been awarded a specific item by a specific Lore Keeper
  */
 async function hasPlayerBeenAwardedItemByLoreKeeper(playerId, npcId, itemName) {
+  // Look up item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) return false;
+  
   const result = await getOne(
-    'SELECT id FROM lore_keeper_item_awards WHERE player_id = $1 AND npc_id = $2 AND item_name = $3',
-    [playerId, npcId, itemName]
+    'SELECT id FROM lore_keeper_item_awards WHERE player_id = $1 AND npc_id = $2 AND item_id = $3',
+    [playerId, npcId, item.id]
   );
   return result !== null;
 }
@@ -1211,10 +1393,16 @@ async function hasPlayerBeenAwardedItemByLoreKeeper(playerId, npcId, itemName) {
  * Record that a player has been awarded an item by a Lore Keeper
  */
 async function recordLoreKeeperItemAward(playerId, npcId, itemName) {
+  // Look up item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    throw new Error(`Item "${itemName}" not found`);
+  }
+  
   try {
     await query(
-      'INSERT INTO lore_keeper_item_awards (player_id, npc_id, item_name, awarded_at) VALUES ($1, $2, $3, NOW())',
-      [playerId, npcId, itemName]
+      'INSERT INTO lore_keeper_item_awards (player_id, npc_id, item_id, item_name, awarded_at) VALUES ($1, $2, $3, $4, NOW())',
+      [playerId, npcId, item.id, itemName]
     );
   } catch (err) {
     // If unique constraint violation, player already received this item - that's okay
@@ -1229,9 +1417,13 @@ async function recordLoreKeeperItemAward(playerId, npcId, itemName) {
  * Returns null if never awarded, or the timestamp if awarded
  */
 async function getLastLoreKeeperItemAwardTime(playerId, npcId, itemName) {
+  // Look up item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) return null;
+  
   const result = await getOne(
-    'SELECT awarded_at FROM lore_keeper_item_awards WHERE player_id = $1 AND npc_id = $2 AND item_name = $3 ORDER BY awarded_at DESC LIMIT 1',
-    [playerId, npcId, itemName]
+    'SELECT awarded_at FROM lore_keeper_item_awards WHERE player_id = $1 AND npc_id = $2 AND item_id = $3 ORDER BY awarded_at DESC LIMIT 1',
+    [playerId, npcId, item.id]
   );
   return result ? result.awarded_at : null;
 }
@@ -1308,10 +1500,11 @@ async function getLoreKeeperGreetings(npcId) {
  */
 async function getLoreKeeperItemAwards(npcId) {
   const rows = await getAll(
-    `SELECT lkia.id, lkia.player_id, lkia.npc_id, lkia.item_name, lkia.awarded_at,
+    `SELECT lkia.id, lkia.player_id, lkia.npc_id, lkia.item_id, i.name as item_name, lkia.awarded_at,
             p.name as player_name
      FROM lore_keeper_item_awards lkia
      JOIN players p ON lkia.player_id = p.id
+     JOIN items i ON lkia.item_id = i.id
      WHERE lkia.npc_id = $1
      ORDER BY lkia.awarded_at DESC`,
     [npcId]
@@ -1349,6 +1542,155 @@ async function getAllItems() {
 
 async function getItemById(id) {
   return getOne('SELECT * FROM items WHERE id = $1', [id]);
+}
+
+/**
+ * Convert input_items/output_items JSONB from item_id keys to item_name keys
+ * Helper function for backward compatibility during transition
+ * @param {Object} itemsJsonb - JSONB object with item_id (as string) keys: {"42": 5}
+ * @returns {Promise<Object>} - Object with item_name keys: {"Pulse Resin": 5}
+ */
+async function convertItemIdsToNames(itemsJsonb) {
+  if (!itemsJsonb || typeof itemsJsonb !== 'object' || Object.keys(itemsJsonb).length === 0) {
+    return {};
+  }
+  
+  const result = {};
+  for (const [itemIdStr, quantity] of Object.entries(itemsJsonb)) {
+    const itemId = parseInt(itemIdStr, 10);
+    if (isNaN(itemId)) {
+      // If key is not a number, assume it's already an item name (backward compatibility)
+      result[itemIdStr] = quantity;
+      continue;
+    }
+    
+    const item = await getItemById(itemId);
+    if (item) {
+      result[item.name] = quantity;
+    } else {
+      console.warn(`[convertItemIdsToNames] Item ID ${itemId} not found in items table`);
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Convert ingredient/output/byproduct arrays from item_name to item_id
+ * Helper function for factory recipes (array format)
+ * @param {Array} itemsArray - Array of objects with item_name: [{"item_name": "Pulse Resin", "quantity": 5}]
+ * @returns {Promise<Array>} - Array with item_id: [{"item_id": 42, "quantity": 5}]
+ */
+async function convertItemArrayNamesToIds(itemsArray) {
+  if (!Array.isArray(itemsArray) || itemsArray.length === 0) {
+    return itemsArray || [];
+  }
+  
+  const converted = await Promise.all(itemsArray.map(async (item) => {
+    // If already has item_id, keep as-is
+    if (item.item_id !== undefined) {
+      return item;
+    }
+    
+    // If has item_name, convert to item_id
+    if (item.item_name || item.itemName) {
+      const itemName = item.item_name || item.itemName;
+      const dbItem = await getItemByName(itemName);
+      if (dbItem) {
+        const convertedItem = {
+          item_id: dbItem.id,
+          quantity: item.quantity || 1
+        };
+        // Preserve chance if present (for byproducts)
+        if (item.chance !== undefined) {
+          convertedItem.chance = item.chance;
+        }
+        return convertedItem;
+      } else {
+        console.warn(`[convertItemArrayNamesToIds] Item "${itemName}" not found in items table`);
+        return item; // Keep original if item not found
+      }
+    }
+    
+    return item; // No conversion needed
+  }));
+  
+  return converted;
+}
+
+/**
+ * Convert ingredient/output/byproduct arrays from item_id to item_name
+ * Helper function for factory recipes (array format)
+ * @param {Array} itemsArray - Array of objects with item_id: [{"item_id": 42, "quantity": 5}]
+ * @returns {Promise<Array>} - Array with item_name: [{"item_name": "Pulse Resin", "quantity": 5}]
+ */
+async function convertItemArrayIdsToNames(itemsArray) {
+  if (!Array.isArray(itemsArray) || itemsArray.length === 0) {
+    return itemsArray || [];
+  }
+  
+  const converted = await Promise.all(itemsArray.map(async (item) => {
+    // If already has item_name, keep as-is
+    if (item.item_name || item.itemName) {
+      return item;
+    }
+    
+    // If has item_id, convert to item_name
+    if (item.item_id !== undefined) {
+      const dbItem = await getItemById(item.item_id);
+      if (dbItem) {
+        const convertedItem = {
+          item_name: dbItem.name,
+          quantity: item.quantity || 1
+        };
+        // Preserve chance if present (for byproducts)
+        if (item.chance !== undefined) {
+          convertedItem.chance = item.chance;
+        }
+        return convertedItem;
+      } else {
+        console.warn(`[convertItemArrayIdsToNames] Item ID ${item.item_id} not found in items table`);
+        return item; // Keep original if item not found
+      }
+    }
+    
+    return item; // No conversion needed
+  }));
+  
+  return converted;
+}
+
+/**
+ * Convert input_items/output_items JSONB from item_name keys to item_id keys
+ * Helper function for saving data in new format
+ * @param {Object} itemsJsonb - JSONB object with item_name keys: {"Pulse Resin": 5}
+ * @returns {Promise<Object>} - Object with item_id (as string) keys: {"42": 5}
+ */
+async function convertItemNamesToIds(itemsJsonb) {
+  if (!itemsJsonb || typeof itemsJsonb !== 'object' || Object.keys(itemsJsonb).length === 0) {
+    return {};
+  }
+  
+  const result = {};
+  for (const [itemName, quantity] of Object.entries(itemsJsonb)) {
+    // Check if key is already a number (item_id)
+    const itemId = parseInt(itemName, 10);
+    if (!isNaN(itemId)) {
+      // Already an item_id, keep as is
+      result[itemName] = quantity;
+      continue;
+    }
+    
+    // Lookup item_id from item_name
+    const item = await getItemByName(itemName);
+    if (item) {
+      result[item.id.toString()] = quantity;
+    } else {
+      console.warn(`[convertItemNamesToIds] Item "${itemName}" not found in items table`);
+    }
+  }
+  
+  return result;
 }
 
 async function getItemByName(name) {
@@ -1441,7 +1783,36 @@ async function getFactoryRecipes(options = {}) {
   
   sql += ' ORDER BY name';
   
-  return getAll(sql, params);
+  const recipes = await getAll(sql, params);
+  
+  // Convert item_id arrays to item_name arrays for backward compatibility
+  const processedRecipes = await Promise.all(recipes.map(async (recipe) => {
+    let requiredIngredients = recipe.required_ingredients || [];
+    let outputItems = recipe.output_items || [];
+    let byproducts = recipe.byproducts || [];
+    
+    // Check if arrays use item_id (first element has item_id property)
+    if (Array.isArray(requiredIngredients) && requiredIngredients.length > 0 && requiredIngredients[0].item_id !== undefined) {
+      requiredIngredients = await convertItemArrayIdsToNames(requiredIngredients);
+    }
+    
+    if (Array.isArray(outputItems) && outputItems.length > 0 && outputItems[0].item_id !== undefined) {
+      outputItems = await convertItemArrayIdsToNames(outputItems);
+    }
+    
+    if (Array.isArray(byproducts) && byproducts.length > 0 && byproducts[0].item_id !== undefined) {
+      byproducts = await convertItemArrayIdsToNames(byproducts);
+    }
+    
+    return {
+      ...recipe,
+      required_ingredients: requiredIngredients,
+      output_items: outputItems,
+      byproducts: byproducts
+    };
+  }));
+  
+  return processedRecipes;
 }
 
 /**
@@ -1450,7 +1821,33 @@ async function getFactoryRecipes(options = {}) {
  * @returns {Promise<Object|null>} Recipe object or null
  */
 async function getFactoryRecipeById(recipeId) {
-  return getOne('SELECT * FROM factory_recipes WHERE recipe_id = $1', [recipeId]);
+  const recipe = await getOne('SELECT * FROM factory_recipes WHERE recipe_id = $1', [recipeId]);
+  if (!recipe) return null;
+  
+  // Convert item_id arrays to item_name arrays for backward compatibility
+  let requiredIngredients = recipe.required_ingredients || [];
+  let outputItems = recipe.output_items || [];
+  let byproducts = recipe.byproducts || [];
+  
+  // Check if arrays use item_id (first element has item_id property)
+  if (Array.isArray(requiredIngredients) && requiredIngredients.length > 0 && requiredIngredients[0].item_id !== undefined) {
+    requiredIngredients = await convertItemArrayIdsToNames(requiredIngredients);
+  }
+  
+  if (Array.isArray(outputItems) && outputItems.length > 0 && outputItems[0].item_id !== undefined) {
+    outputItems = await convertItemArrayIdsToNames(outputItems);
+  }
+  
+  if (Array.isArray(byproducts) && byproducts.length > 0 && byproducts[0].item_id !== undefined) {
+    byproducts = await convertItemArrayIdsToNames(byproducts);
+  }
+  
+  return {
+    ...recipe,
+    required_ingredients: requiredIngredients,
+    output_items: outputItems,
+    byproducts: byproducts
+  };
 }
 
 /**
@@ -1459,7 +1856,33 @@ async function getFactoryRecipeById(recipeId) {
  * @returns {Promise<Object|null>} Recipe object or null
  */
 async function getFactoryRecipeByName(name) {
-  return getOne('SELECT * FROM factory_recipes WHERE LOWER(name) = LOWER($1)', [name]);
+  const recipe = await getOne('SELECT * FROM factory_recipes WHERE LOWER(name) = LOWER($1)', [name]);
+  if (!recipe) return null;
+  
+  // Convert item_id arrays to item_name arrays for backward compatibility
+  let requiredIngredients = recipe.required_ingredients || [];
+  let outputItems = recipe.output_items || [];
+  let byproducts = recipe.byproducts || [];
+  
+  // Check if arrays use item_id (first element has item_id property)
+  if (Array.isArray(requiredIngredients) && requiredIngredients.length > 0 && requiredIngredients[0].item_id !== undefined) {
+    requiredIngredients = await convertItemArrayIdsToNames(requiredIngredients);
+  }
+  
+  if (Array.isArray(outputItems) && outputItems.length > 0 && outputItems[0].item_id !== undefined) {
+    outputItems = await convertItemArrayIdsToNames(outputItems);
+  }
+  
+  if (Array.isArray(byproducts) && byproducts.length > 0 && byproducts[0].item_id !== undefined) {
+    byproducts = await convertItemArrayIdsToNames(byproducts);
+  }
+  
+  return {
+    ...recipe,
+    required_ingredients: requiredIngredients,
+    output_items: outputItems,
+    byproducts: byproducts
+  };
 }
 
 /**
@@ -1475,6 +1898,24 @@ async function createFactoryRecipe(recipe) {
     throw new Error('required_runes cannot include PRODUCTION runes. PRODUCTION runes are a machine requirement, not a recipe requirement.');
   }
   
+  // Convert item_name arrays to item_id arrays for storage
+  let requiredIngredients = recipe.required_ingredients || [];
+  let outputItems = recipe.output_items || [];
+  let byproducts = recipe.byproducts || [];
+  
+  // Check if arrays use item_name (first element has item_name property)
+  if (Array.isArray(requiredIngredients) && requiredIngredients.length > 0 && (requiredIngredients[0].item_name || requiredIngredients[0].itemName)) {
+    requiredIngredients = await convertItemArrayNamesToIds(requiredIngredients);
+  }
+  
+  if (Array.isArray(outputItems) && outputItems.length > 0 && (outputItems[0].item_name || outputItems[0].itemName)) {
+    outputItems = await convertItemArrayNamesToIds(outputItems);
+  }
+  
+  if (Array.isArray(byproducts) && byproducts.length > 0 && (byproducts[0].item_name || byproducts[0].itemName)) {
+    byproducts = await convertItemArrayNamesToIds(byproducts);
+  }
+
   const result = await query(
     `INSERT INTO factory_recipes (
       name, description, required_ingredients, required_runes, output_items,
@@ -1485,15 +1926,15 @@ async function createFactoryRecipe(recipe) {
     [
       recipe.name,
       recipe.description || '',
-      JSON.stringify(recipe.required_ingredients || []),
-      JSON.stringify(recipe.required_runes || []),
-      JSON.stringify(recipe.output_items || []),
+      requiredIngredients,
+      recipe.required_runes || [],
+      outputItems,
       recipe.success_rate || 70.00,
-      recipe.required_stats ? JSON.stringify(recipe.required_stats) : null,
+      recipe.required_stats || null,
       recipe.crafting_time_ms || 5000,
       recipe.return_rate_on_fail || 0.50,
       recipe.factory_tier_required || 1,
-      recipe.byproducts ? JSON.stringify(recipe.byproducts) : null,
+      byproducts.length > 0 ? byproducts : null,
       recipe.allow_rune_substitution || false,
       recipe.allow_wildcard_runes || false,
       recipe.active !== undefined ? recipe.active : true
@@ -1523,6 +1964,23 @@ async function updateFactoryRecipe(recipeId, updates) {
     throw new Error(`Recipe with ID ${recipeId} not found`);
   }
   
+  // Convert item_name arrays to item_id arrays for storage (only if provided)
+  let requiredIngredients = updates.required_ingredients;
+  let outputItems = updates.output_items;
+  let byproducts = updates.byproducts;
+  
+  if (requiredIngredients !== undefined && Array.isArray(requiredIngredients) && requiredIngredients.length > 0 && (requiredIngredients[0].item_name || requiredIngredients[0].itemName)) {
+    requiredIngredients = await convertItemArrayNamesToIds(requiredIngredients);
+  }
+  
+  if (outputItems !== undefined && Array.isArray(outputItems) && outputItems.length > 0 && (outputItems[0].item_name || outputItems[0].itemName)) {
+    outputItems = await convertItemArrayNamesToIds(outputItems);
+  }
+  
+  if (byproducts !== undefined && Array.isArray(byproducts) && byproducts.length > 0 && (byproducts[0].item_name || byproducts[0].itemName)) {
+    byproducts = await convertItemArrayNamesToIds(byproducts);
+  }
+
   await query(
     `UPDATE factory_recipes SET
       name = COALESCE($1, name),
@@ -1543,15 +2001,15 @@ async function updateFactoryRecipe(recipeId, updates) {
     [
       updates.name,
       updates.description,
-      updates.required_ingredients ? JSON.stringify(updates.required_ingredients) : null,
-      updates.required_runes ? JSON.stringify(updates.required_runes) : null,
-      updates.output_items ? JSON.stringify(updates.output_items) : null,
+      requiredIngredients !== undefined ? requiredIngredients : null,
+      updates.required_runes || null,
+      outputItems !== undefined ? outputItems : null,
       updates.success_rate,
-      updates.required_stats ? JSON.stringify(updates.required_stats) : null,
+      updates.required_stats || null,
       updates.crafting_time_ms,
       updates.return_rate_on_fail,
       updates.factory_tier_required,
-      updates.byproducts ? JSON.stringify(updates.byproducts) : null,
+      byproducts !== undefined ? (byproducts.length > 0 ? byproducts : null) : null,
       updates.allow_rune_substitution,
       updates.allow_wildcard_runes,
       updates.active,
@@ -1594,7 +2052,7 @@ async function logFactoryEvent(eventData) {
       eventData.recipe_id || null,
       eventData.item_id || null,
       eventData.quantity || null,
-      eventData.metadata ? JSON.stringify(eventData.metadata) : null
+      eventData.metadata || null
     ]
   );
   
@@ -1705,7 +2163,7 @@ async function getMerchantItems(itemId) {
   );
 }
 
-async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null, regenHours = null, price = 0, buyable = true, sellable = false, configJson = '{}') {
+async function addItemToMerchant(itemId, roomId, unlimited = true, maxQty = null, regenHours = null, price = 0, buyable = true, sellable = false, configJson = {}) {
   // Validate room is merchant type
   const room = await getRoomById(roomId);
   if (!room) {
@@ -1824,8 +2282,9 @@ async function updateMerchantItemFromConfig(merchantItemId, config) {
   }
   
   // Always update config_json with the full config
+  // config_json is now JSONB, so pass the object directly
   updates.push(`config_json = $${paramIndex++}`);
-  params.push(JSON.stringify(config));
+  params.push(config || {});
   
   if (updates.length === 0) {
     return getMerchantItemById(merchantItemId);
@@ -1960,32 +2419,45 @@ async function removePoofableItemsFromRoom(roomId) {
 
 async function getPlayerItems(playerId) {
   return getAll(
-    `SELECT item_name, SUM(quantity) as quantity
-     FROM player_items
-     WHERE player_id = $1
-     GROUP BY item_name
-     ORDER BY item_name`,
+    `SELECT pi.item_id, i.name as item_name, SUM(pi.quantity) as quantity
+     FROM player_items pi
+     JOIN items i ON pi.item_id = i.id
+     WHERE pi.player_id = $1
+     GROUP BY pi.item_id, i.name
+     ORDER BY i.name`,
     [playerId]
   );
 }
 
 async function addPlayerItem(playerId, itemName, quantity = 1) {
+  // Lookup item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    throw new Error(`Item not found: ${itemName}`);
+  }
+  
   const existing = await getOne(
-    'SELECT id, quantity FROM player_items WHERE player_id = $1 AND item_name = $2 LIMIT 1',
-    [playerId, itemName]
+    'SELECT id, quantity FROM player_items WHERE player_id = $1 AND item_id = $2 LIMIT 1',
+    [playerId, item.id]
   );
   
   if (existing) {
-    await query('UPDATE player_items SET quantity = quantity + $1 WHERE player_id = $2 AND item_name = $3', [quantity, playerId, itemName]);
+    await query('UPDATE player_items SET quantity = quantity + $1 WHERE player_id = $2 AND item_id = $3', [quantity, playerId, item.id]);
   } else {
-    await query('INSERT INTO player_items (player_id, item_name, quantity, created_at) VALUES ($1, $2, $3, $4)', [playerId, itemName, quantity, Date.now()]);
+    await query('INSERT INTO player_items (player_id, item_id, quantity, created_at) VALUES ($1, $2, $3, $4)', [playerId, item.id, quantity, Date.now()]);
   }
 }
 
 async function removePlayerItem(playerId, itemName, quantity = 1) {
+  // Lookup item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    return false; // Item not found
+  }
+  
   const existing = await getOne(
-    'SELECT id, quantity FROM player_items WHERE player_id = $1 AND item_name = $2 LIMIT 1',
-    [playerId, itemName]
+    'SELECT id, quantity FROM player_items WHERE player_id = $1 AND item_id = $2 LIMIT 1',
+    [playerId, item.id]
   );
   
   if (!existing) return false;
@@ -2002,7 +2474,7 @@ async function getPlayerCurrentEncumbrance(playerId) {
   const result = await getOne(
     `SELECT COALESCE(SUM(pi.quantity * COALESCE(i.encumbrance, 1)), 0) as total_encumbrance
      FROM player_items pi
-     LEFT JOIN items i ON LOWER(REPLACE(pi.item_name, '_', ' ')) = LOWER(REPLACE(i.name, '_', ' '))
+     JOIN items i ON pi.item_id = i.id
      WHERE pi.player_id = $1`,
     [playerId]
   );
@@ -2015,15 +2487,25 @@ async function getPlayerCurrentEncumbrance(playerId) {
 
 async function getWarehouseItems(playerId, warehouseLocationKey) {
   return getAll(
-    'SELECT item_name, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 ORDER BY item_name',
+    `SELECT wi.item_id, i.name as item_name, wi.quantity 
+     FROM warehouse_items wi
+     JOIN items i ON wi.item_id = i.id
+     WHERE wi.player_id = $1 AND wi.warehouse_location_key = $2 
+     ORDER BY i.name`,
     [playerId, warehouseLocationKey]
   );
 }
 
 async function addWarehouseItem(playerId, warehouseLocationKey, itemName, quantity) {
+  // Lookup item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    throw new Error(`Item not found: ${itemName}`);
+  }
+  
   const existing = await getOne(
-    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
-    [playerId, warehouseLocationKey, itemName]
+    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_id = $3',
+    [playerId, warehouseLocationKey, item.id]
   );
   
   if (existing) {
@@ -2033,16 +2515,22 @@ async function addWarehouseItem(playerId, warehouseLocationKey, itemName, quanti
     );
   } else {
     await query(
-      'INSERT INTO warehouse_items (player_id, warehouse_location_key, item_name, quantity, created_at) VALUES ($1, $2, $3, $4, $5)',
-      [playerId, warehouseLocationKey, itemName, quantity, Date.now()]
+      'INSERT INTO warehouse_items (player_id, warehouse_location_key, item_id, quantity, created_at) VALUES ($1, $2, $3, $4, $5)',
+      [playerId, warehouseLocationKey, item.id, quantity, Date.now()]
     );
   }
 }
 
 async function removeWarehouseItem(playerId, warehouseLocationKey, itemName, quantity) {
+  // Lookup item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    return false; // Item not found
+  }
+  
   const existing = await getOne(
-    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
-    [playerId, warehouseLocationKey, itemName]
+    'SELECT id, quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_id = $3',
+    [playerId, warehouseLocationKey, item.id]
   );
   
   if (!existing) return false;
@@ -2097,16 +2585,22 @@ async function initializePlayerWarehouse(playerId, warehouseLocationKey, deedIte
 
 async function getWarehouseItemTypeCount(playerId, warehouseLocationKey) {
   const result = await getOne(
-    'SELECT COUNT(DISTINCT item_name) as count FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2',
+    'SELECT COUNT(DISTINCT item_id) as count FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2',
     [playerId, warehouseLocationKey]
   );
   return result ? parseInt(result.count) : 0;
 }
 
 async function getWarehouseItemQuantity(playerId, warehouseLocationKey, itemName) {
+  // Lookup item_id from item_name
+  const item = await getItemByName(itemName);
+  if (!item) {
+    return 0; // Item not found
+  }
+  
   const result = await getOne(
-    'SELECT quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_name = $3',
-    [playerId, warehouseLocationKey, itemName]
+    'SELECT quantity FROM warehouse_items WHERE player_id = $1 AND warehouse_location_key = $2 AND item_id = $3',
+    [playerId, warehouseLocationKey, item.id]
   );
   return result ? parseInt(result.quantity) : 0;
 }
@@ -2700,6 +3194,102 @@ async function getTerminalHistory(playerId) {
 }
 
 /**
+ * Get comms history (talk/resonate/telepath) from terminal_history
+ * Filters messages that contain comms patterns
+ */
+async function getCommsHistory(playerId) {
+  // Check if player is noob - don't return history
+  const player = await getPlayerById(playerId);
+  if (player && player.flag_always_first_time === 1) {
+    return { talk: [], resonate: [], telepath: [] };
+  }
+  
+  // Get terminal history and filter for comms messages
+  const rows = await getAll(
+    'SELECT message_text, message_type, created_at FROM terminal_history WHERE player_id = $1 ORDER BY created_at ASC LIMIT 2000',
+    [playerId]
+  );
+  
+  const commsHistory = {
+    talk: [],
+    resonate: [],
+    telepath: []
+  };
+  
+  // Parse messages to extract comms
+  rows.forEach(row => {
+    const text = row.message_text || '';
+    const timestamp = row.created_at;
+    
+    // Talk messages: "PlayerName says \"message\"" (with quotes around message)
+    const talkMatch = text.match(/^(.+?)\s+says\s+"(.+)"$/i);
+    if (talkMatch) {
+      const playerName = talkMatch[1].trim();
+      const message = talkMatch[2].trim();
+      commsHistory.talk.push({
+        playerName: playerName.replace(/^@|@$/g, ''),
+        message: message,
+        timestamp: timestamp,
+        isReceived: true
+      });
+      return;
+    }
+    
+    // Resonate messages: "PlayerName resonated message!"
+    // Match format: "PlayerName resonated message!" (message can contain spaces, punctuation, etc.)
+    const resonateMatch = text.match(/^(.+?)\s+resonated\s+(.+)\s*!$/i);
+    if (resonateMatch) {
+      const playerName = resonateMatch[1].trim();
+      const message = resonateMatch[2].trim();
+      commsHistory.resonate.push({
+        playerName: playerName.replace(/^@|@$/g, ''),
+        message: message,
+        timestamp: timestamp,
+        isReceived: true
+      });
+      return;
+    }
+    
+    // Telepath messages: "[Telepath from PlayerName]: message" or "[Telepath to PlayerName]: message"
+    const telepathFromMatch = text.match(/^\[Telepath\s+from\s+(.+?)\]:\s+(.+)$/i);
+    if (telepathFromMatch) {
+      const fromPlayer = telepathFromMatch[1].trim();
+      const message = telepathFromMatch[2].trim();
+      commsHistory.telepath.push({
+        playerName: fromPlayer.replace(/^@|@$/g, ''),
+        message: message,
+        timestamp: timestamp,
+        isReceived: true
+      });
+      return;
+    }
+    
+    const telepathToMatch = text.match(/^\[Telepath\s+to\s+(.+?)\]:\s+(.+)$/i);
+    if (telepathToMatch) {
+      const toPlayer = telepathToMatch[1].trim();
+      const message = telepathToMatch[2].trim();
+      // For sent telepath, we need to get the player name from the message context
+      // Since we're parsing from terminal_history, we'll mark it as sent but playerName will be determined by client
+      commsHistory.telepath.push({
+        playerName: '', // Will be filled by client based on current player
+        message: message,
+        timestamp: timestamp,
+        isReceived: false,
+        targetPlayer: toPlayer.replace(/^@|@$/g, '')
+      });
+      return;
+    }
+  });
+  
+  // Keep only last 500 per channel
+  commsHistory.talk = commsHistory.talk.slice(-500);
+  commsHistory.resonate = commsHistory.resonate.slice(-500);
+  commsHistory.telepath = commsHistory.telepath.slice(-500);
+  
+  return commsHistory;
+}
+
+/**
  * Clear terminal history for a player
  */
 async function clearTerminalHistory(playerId) {
@@ -2829,7 +3419,7 @@ async function createMarkupConvention(convention) {
     `INSERT INTO markup_conventions (syntax, opening, closing, description, example, color, effects, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
-    [syntax, opening, closing, description || null, example || null, color || null, JSON.stringify(effects || {}), now, now]
+    [syntax, opening, closing, description || null, example || null, color || null, effects || {}, now, now]
   );
   return result.rows[0];
 }
@@ -2852,7 +3442,7 @@ async function updateMarkupConvention(id, convention) {
          updated_at = $8
      WHERE id = $9
      RETURNING *`,
-    [syntax, opening, closing, description || null, example || null, color || null, JSON.stringify(effects || {}), now, id]
+    [syntax, opening, closing, description || null, example || null, color || null, effects || {}, now, id]
   );
   return result.rows[0] || null;
 }
@@ -3192,7 +3782,7 @@ async function createDebugTodo({ sessionId, title, description, reproSteps, envi
      (session_id, title, description, repro_steps, environment, logs, created_by, ticket_type, priority, player_id, player_name) 
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
      RETURNING *`,
-    [sessionId, title, description, reproSteps, JSON.stringify(environment || {}), JSON.stringify(logs || {}), createdBy, ticketType, priority, playerId, playerName]
+    [sessionId, title, description, reproSteps, environment || {}, logs || {}, createdBy, ticketType, priority, playerId, playerName]
   );
   return result.rows[0];
 }
@@ -3509,6 +4099,10 @@ module.exports = {
   createItem,
   updateItem,
   getItemEncumbrance,
+  convertItemIdsToNames,
+  convertItemNamesToIds,
+  convertItemArrayIdsToNames,
+  convertItemArrayNamesToIds,
   
   // Room Type Colors
   getRoomTypeColor,
@@ -3592,6 +4186,7 @@ module.exports = {
   // Terminal History
   saveTerminalMessage,
   getTerminalHistory,
+  getCommsHistory,
   clearTerminalHistory,
   
   // Stat and Ability Metadata

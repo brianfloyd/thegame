@@ -27,15 +27,15 @@
 - **Component** (`public/js/core/Component.js`) - Base class for all UI components
 
 ### UI Components (all extend Component):
-- **Terminal** (`public/js/components/Terminal.js`) - Text terminal for game output
-- **StatsWidget** (`public/js/components/StatsWidget.js`) - Player stats display
-- **MapWidget** (`public/js/components/MapWidget.js`) - Map visualization
-- **CompassWidget** (`public/js/components/CompassWidget.js`) - Directional navigation
-- **CommsWidget** (`public/js/components/CommsWidget.js`) - Chat/communication
-- **Inventory** (`public/js/components/Inventory.js`) - Player inventory
-- **NPCWidget** (`public/js/components/NPCWidget.js`) - NPC activity display
-- **FactoryWidget** (`public/js/components/FactoryWidget.js`) - Factory crafting interface
-- **TicketsWidget** (`public/js/components/TicketsWidget.js`) - Ticket management (god mode)
+- **Terminal** (`public/js/widgets/Terminal.js`) - Text terminal for game output
+- **StatsWidget** (`public/js/widgets/StatsWidget.js`) - Player stats display
+- **MapWidget** (`public/js/widgets/MapWidget.js`) - Map visualization
+- **CompassWidget** (`public/js/widgets/CompassWidget.js`) - Directional navigation
+- **CommsWidget** (`public/js/widgets/CommsWidget.js`) - Chat/communication
+- **Inventory** (`public/js/widgets/Inventory.js`) - Player inventory
+- **NPCWidget** (`public/js/widgets/NPCWidget.js`) - NPC activity display
+- **FactoryWidget** (`public/js/widgets/FactoryWidget.js`) - Factory crafting interface
+- **TicketsWidget** (`public/js/widgets/TicketsWidget.js`) - Ticket management (god mode)
 
 ### Widget System:
 - **widget_manager** (`public/js/widgets/widget_manager.js`) - Alpine.js component for widget visibility
@@ -134,8 +134,8 @@ Server WebSocket Message (JSON)
 **Evidence:**
 - `public/js/core/Game.js:249-692` - Message type switching with MessageBus emissions
 - `public/js/core/MessageBus.js:18-31` - Event emission
-- `public/js/components/Terminal.js:90-99` - Component subscription pattern
-- `public/js/components/StatsWidget.js:25` - StatsWidget subscribes to `'player:stats'`
+- `public/js/widgets/Terminal.js:90-99` - Component subscription pattern
+- `public/js/widgets/StatsWidget.js:25` - StatsWidget subscribes to `'player:stats'`
 
 ---
 
@@ -179,7 +179,7 @@ Server WebSocket Message (JSON)
 **Evidence:**
 - `public/js/widgets/widget_manager.js:136-142` - Widget state saved to localStorage
 - `public/js/main.js:123-2655` - Command normalization (client-side)
-- `public/js/components/Terminal.js:19-23` - Voice recognition setup (client-only API)
+- `public/js/widgets/Terminal.js:19-23` - Voice recognition setup (client-only API)
 - `public/js/core/Game.js:701-703` - Connection check before sending (client validation)
 
 ---
@@ -211,8 +211,8 @@ subscribe('player:stats', (data) => {
 - Direct DOM manipulation is the standard
 
 **Evidence:**
-- `public/js/components/StatsWidget.js:31-34` - `innerHTML = ''` followed by imperative DOM construction
-- `public/js/components/Terminal.js:90-99` - Subscription with callback that updates DOM
+- `public/js/widgets/StatsWidget.js:31-34` - `innerHTML = ''` followed by imperative DOM construction
+- `public/js/widgets/Terminal.js:90-99` - Subscription with callback that updates DOM
 - `public/js/widgets/widget_manager.js:301-333` - Alpine.js reactivity ONLY for widget manager
 - `public/game.html:505` - Alpine.js loaded but used minimally
 
@@ -249,8 +249,8 @@ subscribe('player:stats', (data) => {
 **Evidence:**
 - `public/js/widgets/widget_registry.js:22-151` - Widget definitions with availability requirements
 - `public/js/widgets/widget_manager.js:338-381` - Widget panel visibility logic
-- `public/js/components/StatsWidget.js:31-100` - Imperative DOM construction
-- `public/js/components/Terminal.js:9` - Markup.parse() import (must be used)
+- `public/js/widgets/StatsWidget.js:31-100` - Imperative DOM construction
+- `public/js/widgets/Terminal.js:9` - Markup.parse() import (must be used)
 
 ---
 
@@ -377,7 +377,7 @@ export function widgetManager() {
 **Evidence:**
 - `public/style.css:121-126` - `.error-message` styling (red, `#d32f2f`)
 - `public/js/main.js:78-92` - Connection error with cooldown
-- `public/js/components/Terminal.js` - Error messages via `addMessage(..., 'error')`
+- `public/js/widgets/Terminal.js` - Error messages via `addMessage(..., 'error')`
 - `public/game.html:23` - Error div in login form
 
 ---
@@ -505,7 +505,7 @@ export function widgetManager() {
 
 **Evidence:**
 - `public/js/core/Component.js:66-72` - `emit()` method for MessageBus
-- `public/js/components/Terminal.js:90-99` - Subscribing to multiple events
+- `public/js/widgets/Terminal.js:90-99` - Subscribing to multiple events
 - `public/js/core/Game.js:252-264` - Game emits `room:update` event
 - No component-to-component direct calls found
 
@@ -538,7 +538,7 @@ export function widgetManager() {
 
 **Evidence:**
 - `public/js/core/Game.js:252` - `currentRoomId` updated from server message
-- `public/js/components/StatsWidget.js:31` - Stats cleared and rebuilt from server data
+- `public/js/widgets/StatsWidget.js:31` - Stats cleared and rebuilt from server data
 - `public/js/widgets/widget_manager.js:210-244` - Widget state mutated directly
 - No state validation code found
 
@@ -567,7 +567,7 @@ export function widgetManager() {
 
 **Evidence:**
 - `public/js/core/Game.js:249-264` - Server messages directly update state
-- `public/js/components/StatsWidget.js:34` - Stats cleared and rebuilt (no merge logic)
+- `public/js/widgets/StatsWidget.js:34` - Stats cleared and rebuilt (no merge logic)
 - No desync detection code found
 - No state comparison code found
 
@@ -632,7 +632,7 @@ export function widgetManager() {
 
 **Evidence:**
 - `public/js/core/Component.js:8-85` - Component base class enforces MessageBus pattern
-- `public/js/components/Terminal.js:9` - Markup.parse() import (required)
+- `public/js/widgets/Terminal.js:9` - Markup.parse() import (required)
 - `public/js/core/Game.js:65-80` - Fetch override enforces tab ID
 - Codebase consistency shows standards followed but not strictly enforced
 
@@ -670,7 +670,7 @@ export function widgetManager() {
 - `public/js/main.js` - Entry point
 
 **Component Files:**
-- `public/js/components/*.js` - All UI components
+- `public/js/widgets/*.js` - All UI components
 
 **Widget Files:**
 - `public/js/widgets/widget_manager.js` - Widget visibility manager

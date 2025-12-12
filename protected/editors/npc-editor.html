@@ -6,7 +6,7 @@
     <title>NPC Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/npc-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <div id="npcEditor" class="editor-container npc-editor" x-data="npcEditor()" x-init="init()">
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -60,17 +61,17 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'NPCs: ' + filteredNpcs.length"></span>
                 </div>
-                <div class="npc-list">
+                <div class="editor-list">
                     <template x-for="npc in filteredNpcs" :key="npc.id">
-                        <div class="npc-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedNpc && selectedNpc.id === npc.id, 'inactive': !npc.active }"
                              @click="selectNpc(npc)">
-                            <div class="npc-list-header">
-                                <span class="npc-id" x-text="'#' + npc.id"></span>
-                                <span class="npc-type-badge" x-text="getNpcTypeLabel(npc.npc_type)"></span>
-                                <span class="npc-status" :class="npc.active ? 'active' : 'inactive'" x-text="npc.active ? 'Active' : 'Inactive'"></span>
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + npc.id"></span>
+                                <span class="editor-badge blue" x-text="getNpcTypeLabel(npc.npc_type)"></span>
+                                <span class="editor-status" :class="npc.active ? 'active' : 'inactive'" x-text="npc.active ? 'Active' : 'Inactive'"></span>
                             </div>
-                            <div class="npc-list-title" x-text="npc.name"></div>
+                            <div class="editor-list-title" x-text="npc.name"></div>
                             <div class="npc-color-preview" :style="'background-color: ' + npc.display_color"></div>
                         </div>
                     </template>
@@ -90,18 +91,12 @@
                 </template>
 
                 <template x-if="selectedNpc || isCreating">
-                    <div class="npc-form">
+                    <div class="editor-form">
                         <!-- Actions -->
                         <div class="form-actions">
                             <template x-if="selectedNpc && !isCreating">
                                 <button class="editor-btn editor-btn-danger" @click="deleteNpc()" :disabled="loading">Delete</button>
                             </template>
-                            <div class="action-buttons-right">
-                                <button class="editor-btn" @click="selectedNpc = null; isCreating = false; resetForm()">Cancel</button>
-                                <button class="editor-btn editor-btn-success" @click="saveNpc()" :disabled="loading">
-                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
-                                </button>
-                            </div>
                         </div>
 
                         <!-- Tabs -->
@@ -126,7 +121,9 @@
                         </div>
 
                         <!-- Basic Tab -->
-                        <div class="tab-content" :class="{ 'active': activeTab === 'basic' }">
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'basic' }"
+                             x-show="activeTab === 'basic'">
                             <div class="form-section">
                                 <div class="section-header">Basic Information</div>
                                 <div class="form-grid">
@@ -187,7 +184,7 @@
                         <!-- Timing Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'timing' }"
-                             x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">
+                             x-show="activeTab === 'timing' && (!selectedNpc || selectedNpc.npc_type !== 'lorekeeper')">
                             <div class="form-section">
                                 <div class="section-header">Timing Configuration</div>
                                 <div class="form-grid">
@@ -207,13 +204,24 @@
                             </div>
 
                             <div class="form-section">
-                                <div class="section-header">Required Stats (JSON)</div>
-                                <div class="form-field">
-                                    <textarea class="editor-textarea json-input" 
-                                              :value="JSON.stringify(formData.required_stats, null, 2)"
-                                              @input="handleJsonInput('required_stats', $event.target.value)"
-                                              rows="4" 
-                                              placeholder='{"stat_ingenuity": 5}'></textarea>
+                                <div class="section-header">NPC Status</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Status Message Idle</label>
+                                        <input type="text" class="editor-input" x-model="formData.status_message_idle" placeholder="(idle)">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Status Message Ready</label>
+                                        <input type="text" class="editor-input" x-model="formData.status_message_ready" placeholder="(ready)">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Status Message Harvesting</label>
+                                        <input type="text" class="editor-input" x-model="formData.status_message_harvesting" placeholder="(harvesting)">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Status Message Cooldown</label>
+                                        <input type="text" class="editor-input" x-model="formData.status_message_cooldown" placeholder="(cooldown)">
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -221,7 +229,7 @@
                         <!-- Output Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'output' }"
-                             x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">
+                             x-show="activeTab === 'output' && (!selectedNpc || selectedNpc.npc_type !== 'lorekeeper')">
                             <div class="form-section">
                                 <div class="section-header">
                                     <span>Output Items</span>
@@ -370,7 +378,7 @@
                         <!-- Lorekeeper Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'lorekeeper' }"
-                             x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
+                             x-show="activeTab === 'lorekeeper' && selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
                             
                             <!-- Engagement Section -->
                             <div class="form-section">
@@ -526,7 +534,7 @@
                         <!-- History Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'history' }"
-                             x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
+                             x-show="activeTab === 'history' && selectedNpc && selectedNpc.npc_type === 'lorekeeper'">
                             
                             <!-- Greetings Section -->
                             <div class="form-section">

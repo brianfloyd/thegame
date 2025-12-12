@@ -82,9 +82,10 @@ function getAllQuirkDefinitions() {
 function getFactoryQuirk(room) {
   if (!room || !room.factory_quirks) return null;
   
+  // factory_quirks is now JSONB, so it's already an object
+  // Keep backward compatibility check during migration
   let quirks = room.factory_quirks;
   
-  // Parse if string
   if (typeof quirks === 'string') {
     try {
       quirks = JSON.parse(quirks);

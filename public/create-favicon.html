@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Favicon Generator</title>
+</head>
+<body>
+    <canvas id="canvas" width="32" height="32"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Black background
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, 32, 32);
+        
+        // Green Z
+        ctx.fillStyle = '#00ff00';
+        ctx.font = 'bold 24px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Z', 16, 16);
+        
+        // Download as ICO (simplified - browsers may need conversion)
+        const link = document.createElement('a');
+        link.download = 'favicon.ico';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        
+        console.log('Favicon generated. For ICO format, use an online converter.');
+    </script>
+</body>
+</html>
+

@@ -840,6 +840,50 @@ body {
     border-radius: 3px;
 }
 
+/* Comms Widget Layout */
+.comm-widget-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.comm-mode-buttons {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    flex-shrink: 0;
+}
+
+.comm-mode-btn {
+    flex: 1;
+    padding: 4px 8px;
+    background: #0a0a0a;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+
+.comm-mode-btn.active {
+    background: #00ff00;
+    color: #000;
+}
+
+.comm-mode-btn:hover {
+    background: rgba(0, 255, 0, 0.2);
+}
+
+.comm-chat-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    padding: 4px;
+}
+
 .comm-chat-content {
     display: flex;
     flex-direction: column;
@@ -901,6 +945,14 @@ body {
 }
 
 /* Glow effect works in widget too via .lorekeeper-glow class */
+
+.comm-input-area {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    border-top: 1px solid #333;
+    flex-shrink: 0;
+}
 
 .comm-input-container {
     display: flex;
@@ -2004,25 +2056,36 @@ body {
     flex-direction: column;
     box-sizing: border-box;
     overflow: hidden;
+    position: relative;
+}
+
+/* Top Bar - Contains toggle bar and exit button */
+.widget-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background: #111;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+    gap: 8px;
 }
 
 /* Widget Toggle Bar */
 .widget-toggle-bar {
     display: flex;
-    gap: 8px;
-    padding: 8px;
-    background: #111;
-    border-bottom: 1px solid #333;
-    justify-content: center;
+    gap: 6px;
     align-items: center;
-    position: relative;
+    flex: 1;
+    flex-wrap: wrap;
+    justify-content: flex-start;
 }
 
 .widget-icon {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border: 2px solid #333;
-    border-radius: 6px;
+    border-radius: 4px;
     background: #0a0a0a;
     color: #444;
     cursor: pointer;
@@ -2030,6 +2093,7 @@ body {
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .widget-icon:hover {
@@ -2037,33 +2101,39 @@ body {
     color: #888;
 }
 
-.widget-icon.active,
-.widget-icon.widget-active {
+.widget-icon.active {
     border-color: #00ff00;
     color: #00ff00;
     background: #0a2a0a;
     box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
 }
 
-.widget-icon.widget-inactive {
-    opacity: 0.5;
-    filter: grayscale(50%);
-    border-color: #333;
-    color: #444;
-    background: #0a0a0a;
-    box-shadow: none;
-}
-
-.widget-icon.widget-inactive:hover {
-    opacity: 0.7;
-    filter: grayscale(30%);
-    border-color: #555;
-    color: #666;
+.widget-icon.hidden {
+    display: none;
 }
 
 .widget-icon svg {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
+}
+
+/* Widget Host - Container for dynamically created widgets */
+#widget-host {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 5px;
+    padding: 5px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0; /* Allow flex shrinking */
+    margin: 0; /* Remove any default margins */
+}
+
+/* Full-width widgets span both columns */
+.widget-fullwidth {
+    grid-column: 1 / -1;
 }
 
 /* Exit to Character Selection Button (Red Up Arrow) */
@@ -2079,9 +2149,7 @@ body {
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
-    margin-left: auto; /* Push to the right side */
-    position: absolute;
-    right: 8px;
+    flex-shrink: 0;
 }
 
 .widget-exit-btn:hover {
@@ -2101,34 +2169,8 @@ body {
     height: 20px;
 }
 
-/* Widget Grid (2x2) */
-.widget-grid {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
-    gap: 5px;
-    padding: 5px;
-    overflow: hidden;
-}
-
-.widget-slot {
-    position: relative;
-    overflow: hidden;
-    transition: border-color 0.2s, background-color 0.2s;
-}
-
-.widget-slot.widget-drag-over {
-    border: 2px dashed #ffff00;
-    background: rgba(255, 255, 0, 0.1);
-}
-
 .widget {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    position: relative;
     background: #1a1a1a;
     border: 2px solid #00ff00;
     border-radius: 8px;
@@ -2136,6 +2178,8 @@ body {
     flex-direction: column;
     box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
     overflow: hidden;
+    min-height: 0; /* Allow grid item to shrink */
+    height: 100%; /* Fill grid cell */
 }
 
 .widget[draggable="true"] {
@@ -2202,7 +2246,7 @@ body {
     color: #ffff00;
     font-weight: bold;
     margin-bottom: 4px;
-    font-size: 1.2em;
+    font-size: 0.9em;
     text-transform: uppercase;
 }
 
@@ -2212,18 +2256,18 @@ body {
     align-items: center;
     margin: 2px 0;
     color: #00ff00;
-    font-size: 1.1em;
+    font-size: 0.825em;
 }
 
 .stat-label {
     color: #00ffff;
-    font-size: 1.1em;
+    font-size: 0.825em;
 }
 
 .stat-value {
     color: #00ff00;
     font-weight: bold;
-    font-size: 1.1em;
+    font-size: 0.825em;
     min-width: 30px;
     text-align: right;
 }
@@ -2246,9 +2290,9 @@ body {
     background: #1a1a1a;
     border: 1px solid #00ff00;
     color: #00ff00;
-    width: 24px;
-    height: 24px;
-    font-size: 14px;
+    width: 18px;
+    height: 18px;
+    font-size: 10.5px;
     font-weight: bold;
     cursor: pointer;
     display: flex;
@@ -2412,9 +2456,10 @@ body {
 }
 
 /* NPC Widget Styles */
-#widget-npc {
-    border-color: #ff8800;
-    box-shadow: 0 0 10px rgba(255, 136, 0, 0.4);
+#widget-npc,
+.widget[data-widget="npc"] {
+    border: 2px solid #ff8800 !important;
+    box-shadow: 0 0 15px rgba(255, 136, 0, 0.6) !important;
 }
 
 #widget-npc .widget-header {
@@ -2472,16 +2517,20 @@ body {
     font-size: 10px;
 }
 
+.npc-widget-timing-row,
 .timing-row {
     display: flex;
     justify-content: space-between;
     margin: 2px 0;
+    color: #ff8800;
 }
 
+.npc-widget-timing-row span:first-child,
 .timing-label {
     color: #888;
 }
 
+.npc-widget-timing-row span:last-child,
 .timing-row span:last-child {
     color: #ff8800;
     font-weight: bold;
@@ -2647,7 +2696,7 @@ body {
     outline-offset: -1px;
 }
 
-.factory-slot-container {
+.factory-ingredient-slots {
     display: flex;
     flex-direction: column;
     gap: 12px;

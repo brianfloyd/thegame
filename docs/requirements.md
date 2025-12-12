@@ -433,7 +433,7 @@ The frontend uses a modular ES6 component-based architecture:
 - **Component.js**: Base class for all UI components with lifecycle methods
 - **MessageBus.js**: Pub/sub event system for decoupled component communication
 
-#### Components (`public/js/components/`)
+#### Components (`public/js/widgets/`)
 - **Terminal.js**: Terminal display and command input
   - **CRITICAL**: Ensures `Markup.parse()` is ALWAYS used for all message rendering
   - Handles room updates, player messages, system messages, Lore Keeper messages
@@ -491,7 +491,7 @@ The frontend uses a modular ES6 component-based architecture:
 8. **public/js/core/Game.js** - Main game controller (WebSocket & state management)
 9. **public/js/core/Component.js** - Base class for UI components
 10. **public/js/core/MessageBus.js** - Event system for component communication
-11. **public/js/components/Terminal.js** - Terminal component (ensures Markup.parse() for all messages)
+11. **public/js/widgets/Terminal.js** - Terminal component (ensures Markup.parse() for all messages)
 12. **public/js/utils/Markup.js** - Markup parsing utility
 13. **docs/requirements.md** - This documentation file
 

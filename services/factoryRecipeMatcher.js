@@ -170,7 +170,8 @@ function checkStatRequirements(requiredStats, playerStats) {
     return result;
   }
   
-  // Parse if string
+  // required_stats is now JSONB, so it's already an object
+  // Handle legacy string format for backward compatibility during migration
   let required = requiredStats;
   if (typeof required === 'string') {
     try {
@@ -250,15 +251,21 @@ function matchSingleRecipe(recipe, slots, playerStats, roomTier = 1, efficiencyM
   };
   
   // Parse recipe fields if they're strings
+  // These fields are now JSONB, so they're already objects/arrays
+  // Keep backward compatibility check during migration
   let requiredIngredients = recipe.required_ingredients;
   let requiredRunes = recipe.required_runes;
   let requiredStats = recipe.required_stats;
   
   if (typeof requiredIngredients === 'string') {
     try { requiredIngredients = JSON.parse(requiredIngredients); } catch (e) { requiredIngredients = []; }
+  } else if (!requiredIngredients) {
+    requiredIngredients = [];
   }
   if (typeof requiredRunes === 'string') {
     try { requiredRunes = JSON.parse(requiredRunes); } catch (e) { requiredRunes = []; }
+  } else if (!requiredRunes) {
+    requiredRunes = [];
   }
   if (typeof requiredStats === 'string') {
     try { requiredStats = JSON.parse(requiredStats); } catch (e) { requiredStats = null; }
@@ -354,9 +361,13 @@ function calculateAdjustedIngredients(recipeIngredients, efficiencyModifier) {
     return recipeIngredients;
   }
   
+  // output_items is now JSONB, so it's already an array
+  // Keep backward compatibility check during migration
   let ingredients = recipeIngredients;
   if (typeof ingredients === 'string') {
     try { ingredients = JSON.parse(ingredients); } catch (e) { return recipeIngredients; }
+  } else if (!ingredients) {
+    ingredients = [];
   }
   
   return ingredients.map(ing => ({
@@ -375,9 +386,13 @@ function validateRecipeRuneRequirements(requiredRunes) {
     return { valid: true, error: null };
   }
   
+  // required_runes is now JSONB, so it's already an array
+  // Keep backward compatibility check during migration
   let runes = requiredRunes;
   if (typeof runes === 'string') {
     try { runes = JSON.parse(runes); } catch (e) { return { valid: true, error: null }; }
+  } else if (!runes) {
+    runes = [];
   }
   
   for (const runeType of runes) {

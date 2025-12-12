@@ -200,14 +200,14 @@ Any new widget must:
 ## 8. Gameplay UI vs Editor UI Boundaries
 
 ### 8.1 Gameplay UI
-- Files in `public/`
+- Files in `public/` (excluding `public/gameeditors/`)
 - Main pages: `index.html` (login/character select), `game.html` (game)
 - Uses core `Game`, `MessageBus`, `Component`, widgets
 
 ### 8.2 Editor UI (God Mode)
-- Files in `protected/editors/`
+- Files in `public/gameeditors/`
 - Opened as popups from character selection when player is God Mode
-- Implement their **own JS** — do **not** import `public/js/components/*.js`
+- Implement their **own JS** — do **not** import `public/js/widgets/*.js`
 - Editors are **separate apps**, not in-game widgets
 
 Rule:
@@ -238,13 +238,23 @@ Rule:
 ## 10. Component Lifecycle & Communication
 
 ### 10.1 Component Lifecycle
-Standard pattern:
+
+**Legacy Component Pattern:**
 1. Constructor: store `game`, set up MessageBus
 2. `init()`: capture DOM elements, subscribe to events, attach listeners
 3. Update methods: respond to events and manipulate DOM
 4. `destroy()`: unsubscribe and clean up if necessary
 
-There is no automatic mount/unmount system; lifecycle is manual.
+**Widget Pattern (New):**
+Widgets extend `Widget` base class and implement:
+1. `render()`: Returns single root DOM element (creates widget's UI)
+2. `onAttach()`: Called after widget attached to DOM (set up event listeners)
+3. `onMessage(msg)`: Handles backend messages (replaces MessageBus subscriptions)
+4. `onDetach()`: Optional cleanup before removal
+
+Widget lifecycle is managed by `WidgetManager` - widgets are automatically mounted/unmounted based on visibility rules.
+
+**Reference:** `public/js/widgets/Widget.js:11-81`, `public/js/core/WidgetManager.js:144-425`
 
 ### 10.2 Inter-Component Communication
 - Must be **MessageBus-only** (no direct cross-component calls)
@@ -305,11 +315,11 @@ No additional performance layers (virtual DOM, memoization, etc.) are currently 
 
 **Canonical law (must):**
 - All gameplay state via WebSocket + MessageBus
-- All UI components extend `Component`
+- All UI widgets extend `Widget` (which extends `Component`), legacy components may extend `Component` directly
 - All inter-component communication via MessageBus
 - Markup parsing for terminal output via `Markup.parse()`
 - Widget availability/visibility managed exclusively by widget manager + registry
-- Editor UIs live under `protected/editors/` and are **not** reused in-game
+- Editor UIs live under `public/gameeditors/` and are **not** reused in-game
 
 **Standards (should):**
 - Imperative DOM updates

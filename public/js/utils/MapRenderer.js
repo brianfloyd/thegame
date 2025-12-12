@@ -195,10 +195,12 @@ export default class MapRenderer {
         
         this.ctx.fillRect(drawX, drawY, drawWidth, drawHeight);
         
-        // Draw border
-        this.ctx.strokeStyle = border.color || '#333';
-        this.ctx.lineWidth = border.width || 1;
-        this.ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
+        // Draw border (if border is provided)
+        if (border) {
+            this.ctx.strokeStyle = border.color || '#333';
+            this.ctx.lineWidth = border.width || 1;
+            this.ctx.strokeRect(drawX, drawY, drawWidth, drawHeight);
+        }
         
         return { screenX, screenY, roomSize };
     }

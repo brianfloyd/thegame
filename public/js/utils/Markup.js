@@ -24,48 +24,22 @@ export const MARKUP_COLORS = [
     { name: 'Dark Gray', value: '#666666' }
 ];
 
-// Built-in markup conventions
-export const MARKUP_CONVENTIONS = {
-    angleBrackets: {
-        syntax: '<text>',
-        opening: '<',
-        closing: '>',
-        description: 'Glows with keyword/NPC color (default purple/cyan)',
-        example: 'The <ancient artifact> glows brightly.',
-        color: 'keyword',
-        effects: { glow: true }
-    },
-    squareBrackets: {
-        syntax: '[text]',
-        opening: '[',
-        closing: ']',
-        description: 'Glows with same color (preserved/inherited)',
-        example: 'You see [something mysterious] in the distance.',
-        color: 'inherit',
-        effects: { glow: true }
-    },
-    exclamation: {
-        syntax: '!text!',
-        opening: '!',
-        closing: '!',
-        description: 'Glows red (emphasis/warning)',
-        example: '!Danger! The path ahead is treacherous.',
-        color: '#ff0000',
-        effects: { glow: true }
-    }
-};
-
-// Custom markup conventions (loaded from API/database)
-let customMarkupConventions = {};
-let customConventionsLoaded = false;
+// Markup conventions (loaded from API/database)
+let markupConventions = {};
+let conventionsLoaded = false;
 
 // Active typewriter animations (for cleanup)
 const activeTypewriters = new Map();
 
-// Load custom conventions from API (same as markup-helper.js)
-async function loadCustomConventions() {
+// Make activeTypewriters available globally for refresh functionality
+if (typeof window !== 'undefined') {
+    window.activeTypewriters = activeTypewriters;
+}
+
+// Load conventions from API
+async function loadConventions() {
     // If already loaded, return cached (but allow force reload)
-    if (customConventionsLoaded && Object.keys(customMarkupConventions).length > 0) {
+    if (conventionsLoaded && Object.keys(markupConventions).length > 0) {
         return;
     }
     
@@ -74,12 +48,12 @@ async function loadCustomConventions() {
         if (!response.ok) {
             // If API fails (e.g., not logged in or no god mode), fall back to localStorage
             console.warn('[Markup] API failed, checking localStorage fallback...');
-            const stored = localStorage.getItem('customMarkupConventions');
+            const stored = localStorage.getItem('markupConventions');
             if (stored) {
                 try {
-                    customMarkupConventions = JSON.parse(stored);
+                    markupConventions = JSON.parse(stored);
                     console.log('[Markup] Loaded conventions from localStorage fallback');
-                    customConventionsLoaded = true;
+                    conventionsLoaded = true;
                     return;
                 } catch (e) {
                     console.error('[Markup] Failed to parse localStorage conventions:', e);
@@ -90,14 +64,14 @@ async function loadCustomConventions() {
         
         const conventions = await response.json();
         
-        // Convert array to object format (keyed by custom_<id>)
-        customMarkupConventions = {};
+        // Convert array to object format (keyed by convention_<id>)
+        markupConventions = {};
         for (const conv of conventions) {
             if (!conv || !conv.id) {
                 continue;
             }
             
-            const key = `custom_${conv.id}`;
+            const key = `convention_${conv.id}`;
             
             // Parse effects if it's a string (shouldn't happen with JSONB, but be safe)
             let effects = conv.effects || {};
@@ -109,7 +83,7 @@ async function loadCustomConventions() {
                 }
             }
             
-            customMarkupConventions[key] = {
+            markupConventions[key] = {
                 syntax: conv.syntax || '',
                 opening: conv.opening || '',
                 closing: conv.closing || '',
@@ -120,19 +94,19 @@ async function loadCustomConventions() {
             };
         }
         
-        customConventionsLoaded = true;
-        console.log(`[Markup] Loaded ${Object.keys(customMarkupConventions).length} custom conventions from API`);
+        conventionsLoaded = true;
+        console.log(`[Markup] Loaded ${Object.keys(markupConventions).length} conventions from API`);
     } catch (e) {
-        console.error('[Markup] Failed to load custom markup conventions:', e);
-        customMarkupConventions = {};
-        customConventionsLoaded = true; // Mark as loaded to prevent infinite retries
+        console.error('[Markup] Failed to load markup conventions:', e);
+        markupConventions = {};
+        conventionsLoaded = true; // Mark as loaded to prevent infinite retries
     }
 }
 
 // Force reload conventions (e.g., after creating new ones)
-export async function reloadCustomConventions() {
-    customConventionsLoaded = false;
-    await loadCustomConventions();
+export async function reloadConventions() {
+    conventionsLoaded = false;
+    await loadConventions();
 }
 
 /**
@@ -315,18 +289,18 @@ function escapeHtml(text) {
 export function parseMarkup(text, keywordColor = '#ff00ff') {
     if (!text) return '';
     
-    // Load custom conventions if not already loaded (async, but we'll use cached version)
+    // Load conventions if not already loaded (async, but we'll use cached version)
     // Note: This is called synchronously, so we use cached conventions
     // Conventions should be pre-loaded when the page loads
-    if (!customConventionsLoaded) {
+    if (!conventionsLoaded) {
         // Trigger async load (won't block, will use empty object for now)
-        loadCustomConventions().catch(() => {});
+        loadConventions().catch(() => {});
     }
     
     const glowColor = keywordColor || '#ff00ff';
     
-    // Combine built-in and custom conventions
-    const allConventions = { ...MARKUP_CONVENTIONS, ...customMarkupConventions };
+    // Use conventions from database
+    const allConventions = markupConventions;
     
     // Separate line-start patterns from regular patterns
     const lineStartConventions = [];
@@ -655,16 +629,16 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
 // Make initializeTypewriterEffects available globally for markup-helper.js
 if (typeof window !== 'undefined') {
     window.initializeTypewriterEffects = initializeTypewriterEffects;
-    window.reloadCustomConventions = reloadCustomConventions;
+    window.reloadConventions = reloadConventions;
     
     // Pre-load conventions when module loads (if in browser)
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            loadCustomConventions().catch(() => {});
+            loadConventions().catch(() => {});
         });
     } else {
         // DOM already loaded, load immediately
-        loadCustomConventions().catch(() => {});
+        loadConventions().catch(() => {});
     }
 }
 

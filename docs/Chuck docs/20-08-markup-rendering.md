@@ -22,26 +22,22 @@ The client follows a fixed pipeline:
 2. **Process custom conventions**
    - Loaded from `markup_conventions`
    - Processed longest-opening-token → shortest for proper nesting
+   - All conventions (including `< >`, `[]`, `! !`) are treated as custom conventions
 
-3. **Process built-in conventions**
-   - `\\<text\\>` → keyword color + glow
-   - `\\[text\\]` → inherit color + glow
-   - `\\!text\\!` → red + glow
-
-4. **Escape HTML** (XSS protection)
+3. **Escape HTML** (XSS protection)
    - Raw `<`, `>`, `&`, etc. are safely encoded
    - Markup placeholders are preserved
 
-5. **Replace placeholders with `<span>` elements**
+4. **Replace placeholders with `<span>` elements**
    - Span includes: `style`, `class`, and effect attributes
 
-6. **Process line-start conventions**
+5. **Process line-start conventions**
    - Example: `^` (if custom-defined)
 
-7. **Convert line breaks**
+6. **Convert line breaks**
    - `\\n` → `<br>`
 
-8. **Initialize typewriter effects**
+7. **Initialize typewriter effects**
    - After innerHTML insertion: `initializeTypewriterEffects(element)`
 
 ### 1.2 Where Client Parsing Occurs
@@ -74,8 +70,7 @@ formatMessageForTerminal(text, type, keywordColor)
 ### 2.1 Server Processing Steps
 Server follows the same semantic rules as the client:
 - Typewriter extraction
-- Custom conventions
-- Built-in conventions
+- Custom conventions (all conventions, including `< >`, `[]`, `! !`, are treated as custom)
 - HTML escaping
 - Placeholder conversion
 - Line-start processing
@@ -136,7 +131,7 @@ This will:
 Most rendering happens inside custom Component classes, not Alpine.
 
 ### 4.1 Terminal Component
-File: `public/js/components/Terminal.js`
+File: `public/js/widgets/Terminal.js`
 
 Uses:
 ```

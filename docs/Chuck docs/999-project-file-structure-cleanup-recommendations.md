@@ -198,17 +198,17 @@ mv scripts/fix-vitalis-drain-migrations.sql migrations/
 
 ## 2.3 Remove Empty Directory
 
-### `public/components/` Directory
-**Status:** Empty directory
-**Recommendation:** DELETE
+### `public/components/` Directory (if exists)
+**Status:** Empty directory (if exists, separate from `public/js/widgets/`)
+**Recommendation:** DELETE if exists
 **Reason:**
 - Empty directory serves no purpose
 - May have been planned but never used
-- Components are in `public/js/components/` instead
+- Components/widgets are in `public/js/widgets/` instead
 
 **Evidence:**
-- Directory listing shows `public/components/` is empty
-- Actual components are in `public/js/components/`
+- Directory listing shows `public/components/` is empty (if it exists)
+- Actual components/widgets are in `public/js/widgets/`
 
 **Action:**
 ```bash
@@ -426,7 +426,7 @@ rm scripts/test.txt
 
 1. ✅ **Move SQL files from `scripts/` to `migrations/`**
 2. ✅ **Reorganize `ascii images/` contents** - Move files to appropriate locations
-3. ✅ **Delete empty `public/components/` directory**
+3. ✅ **Delete empty `public/components/` directory** (if exists, separate from `public/js/widgets/`)
 4. ✅ **Audit and consolidate documentation** - Remove duplicates, organize properly
 5. ✅ **Evaluate and potentially remove `public/markup-helper.js`** - After verifying usage
 
@@ -573,7 +573,7 @@ grep -r "client\.js" public/
 **Safe to Delete:**
 - `tall` - No references found
 - `scripts/test.txt` - Test file
-- `public/components/` - Empty directory
+- `public/components/` - Empty directory (if exists, separate from `public/js/widgets/` where actual widgets are located)
 - `game.db` and `game.db-journal` - After verification
 
 **Risk:** None
@@ -650,4 +650,7 @@ This cleanup will improve project organization, remove unused files, and make th
 ---
 
 **End of Project File Structure Cleanup Recommendations**
+
+
+
 

@@ -550,6 +550,41 @@ async function saveTerminalMessage(ctx, data) {
 }
 
 /**
+ * Handle getCommsHistory - retrieve comms history from database
+ */
+async function getCommsHistory(ctx, data) {
+  const { ws, db, connectionId, playerName } = ctx;
+  
+  if (!connectionId || !playerName) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    return;
+  }
+  
+  const player = await db.getPlayerByName(playerName);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  // Get comms history from database
+  const commsHistory = await db.getCommsHistory(player.id);
+  
+  // Fill in player name for sent telepath messages
+  const playerNameClean = player.name.replace(/^@|@$/g, '');
+  commsHistory.telepath.forEach(msg => {
+    if (!msg.isReceived && !msg.playerName) {
+      msg.playerName = playerNameClean;
+    }
+  });
+  
+  // Send to client
+  ws.send(JSON.stringify({
+    type: 'commsHistory',
+    history: commsHistory
+  }));
+}
+
+/**
  * Handle player movement
  */
 async function move(ctx, data) {
@@ -1808,42 +1843,94 @@ async function factoryCraft(ctx, data) {
   // Get all active recipes for this tier
   const recipes = await db.getFactoryRecipes({ tier: roomTier, active: true });
   
+  let recipe;
+  let craftResult;
+  let isFizzle = false;
+  let matchResult = null;
+  
   if (!recipes || recipes.length === 0) {
-    // No recipes available - fizzle
-    await handleCraftFizzle(ctx, factoryState, player, currentRoom, 'No recipes are available for this factory.');
-    return;
+    // No recipes available - create a fizzle craft
+    isFizzle = true;
+    console.log(`[Factory] Player ${playerName} starting fizzle craft (no recipes available)`);
+    
+    // Create a dummy recipe for fizzle (just for timing/display purposes)
+    recipe = {
+      recipe_id: null,
+      name: 'No Recipe Available',
+      base_time: 5000, // Default 5 second craft time for fizzle
+      success_rate: 0
+    };
+    
+    // Create a fizzle craft result
+    craftResult = {
+      recipeName: 'No Recipe Available',
+      recipeId: null,
+      success: false,
+      critical: false,
+      craftTimeMs: 5000, // Default craft time
+      successRate: { rate: 0 },
+      critChance: { chance: 0 },
+      craftTime: { timeMs: 5000 },
+      outputs: { items: [], byproducts: [], wornTriggered: false },
+      returnedIngredients: [],
+      message: 'No recipes are available for this factory.'
+    };
+  } else {
+    // Find matching recipe
+    matchResult = factoryRecipeMatcher.findMatchingRecipe(
+      recipes,
+      slots,
+      playerStats,
+      roomTier,
+      efficiencyModifier
+    );
+    
+    if (!matchResult) {
+      // No recipe matched - create a fizzle craft that will run normally then eject everything
+      isFizzle = true;
+      console.log(`[Factory] Player ${playerName} starting fizzle craft (invalid recipe)`);
+      
+      // Create a dummy recipe for fizzle (just for timing/display purposes)
+      recipe = {
+        recipe_id: null,
+        name: 'Invalid Recipe',
+        base_time: 5000, // Default 5 second craft time for fizzle
+        success_rate: 0
+      };
+      
+      // Create a fizzle craft result
+      craftResult = {
+        recipeName: 'Invalid Recipe',
+        recipeId: null,
+        success: false,
+        critical: false,
+        craftTimeMs: 5000, // Default craft time
+        successRate: { rate: 0 },
+        critChance: { chance: 0 },
+        craftTime: { timeMs: 5000 },
+        outputs: { items: [], byproducts: [], wornTriggered: false },
+        returnedIngredients: [],
+        message: 'The ingredients in the machine don\'t form a valid recipe.'
+      };
+    } else {
+      recipe = matchResult.recipe;
+      console.log(`[Factory] Player ${playerName} starting craft: ${recipe.name}`);
+      
+      // Execute the craft
+      craftResult = factoryCraftingEngine.executeCraft({
+        recipe,
+        slots,
+        playerStats,
+        quirk,
+        matchResult
+      });
+    }
   }
   
-  // Find matching recipe
-  const matchResult = factoryRecipeMatcher.findMatchingRecipe(
-    recipes,
-    slots,
-    playerStats,
-    roomTier,
-    efficiencyModifier
-  );
-  
-  if (!matchResult) {
-    // No recipe matched - fizzle
-    await handleCraftFizzle(ctx, factoryState, player, currentRoom, 'The ingredients in the machine don\'t form a valid recipe.');
-    return;
+  // Emit craft started event (only if not a fizzle)
+  if (!isFizzle) {
+    await factoryOutputRouter.emitCraftStarted(db, player.id, currentRoom.id, recipe.recipe_id, recipe.name);
   }
-  
-  const recipe = matchResult.recipe;
-  
-  console.log(`[Factory] Player ${playerName} starting craft: ${recipe.name}`);
-  
-  // Execute the craft
-  const craftResult = factoryCraftingEngine.executeCraft({
-    recipe,
-    slots,
-    playerStats,
-    quirk,
-    matchResult
-  });
-  
-  // Emit craft started event
-  await factoryOutputRouter.emitCraftStarted(db, player.id, currentRoom.id, recipe.recipe_id, recipe.name);
   
   // Send craft started message to client (for progress bar)
   ws.send(JSON.stringify({
@@ -1858,11 +1945,66 @@ async function factoryCraft(ctx, data) {
   await new Promise(resolve => setTimeout(resolve, craftResult.craftTimeMs));
   
   // Process result
-  if (craftResult.success) {
+  if (isFizzle) {
+    // Fizzle: Eject all items from machine to ground
+    console.log(`[Factory] Player ${playerName} craft fizzled: ${craftResult.message}`);
+    
+    // Eject all items from all slots to the ground
+    for (let i = 0; i < factoryState.slots.length; i++) {
+      const slot = factoryState.slots[i];
+      if (slot && slot.itemName) {
+        await db.addRoomItem(currentRoom.id, slot.itemName, slot.quantity);
+        console.log(`[Factory] Ejected ${slot.quantity}x ${slot.itemName} to ground (fizzle)`);
+      }
+    }
+    
+    // Clear all slots
+    factoryState.slots = [null, null, null, null, null];
+    
+    // Emit fizzle event
+    await factoryOutputRouter.emitCraftFizzle(db, player.id, currentRoom.id, craftResult.message);
+    
+    // Send fizzle message
+    ws.send(JSON.stringify({
+      type: 'factoryCraftFizzle',
+      message: craftResult.message + ' All items have been ejected to the ground.'
+    }));
+    
+    // Send updated factory widget state
+    ws.send(JSON.stringify({
+      type: 'factoryWidgetState',
+      state: {
+        slots: factoryState.slots
+      }
+    }));
+    
+    // Send updated inventory (in case anything changed)
+    const updatedItems = await db.getPlayerItems(player.id);
+    ws.send(JSON.stringify({ type: 'inventoryList', items: updatedItems }));
+    
+    // Send updated player stats (encumbrance may have changed)
+    await sendPlayerStats(connectedPlayers, db, connectionId);
+    
+    // Send updated room (items on floor have changed)
+    await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom);
+    
+    console.log(`[Factory] Player ${playerName} craft fizzled: ${craftResult.message}`);
+    return; // Exit early for fizzle - don't process success/failure
+    
+  } else if (craftResult.success) {
+    // Normalize output items to ensure they have item_name property
+    const normalizedOutputs = craftResult.outputs.items.map(item => ({
+      item_name: item.item_name || item.itemName,
+      item_id: item.item_id || null,
+      quantity: item.quantity || 1
+    }));
+    
+    console.log(`[Factory] Routing ${normalizedOutputs.length} output items:`, normalizedOutputs);
+    
     // Route outputs to inventory or floor
     const routingResult = await factoryOutputRouter.routeOutputs(
       db,
-      craftResult.outputs.items,
+      normalizedOutputs,
       player,
       currentRoom,
       true // player is in room (they initiated the craft)
@@ -1885,8 +2027,17 @@ async function factoryCraft(ctx, data) {
       factoryState.slots[slotIndex] = null;
     }
     
-    // Keep runes in slots (per design requirement)
-    // Runes are NOT consumed on success
+    // Eject production rune to ground after crafting (per user requirement)
+    // Production rune is ejected but other runes stay in slots
+    const productionRuneSlot = factoryConfig.SLOTS.PRODUCTION_RUNE_SLOT;
+    if (factoryState.slots[productionRuneSlot]) {
+      const productionRune = factoryState.slots[productionRuneSlot];
+      await db.addRoomItem(currentRoom.id, productionRune.itemName, productionRune.quantity);
+      factoryState.slots[productionRuneSlot] = null; // Clear slot 2
+      console.log(`[Factory] Ejected production rune ${productionRune.itemName} to ground`);
+    }
+    
+    // Keep other runes (speed/efficiency) in slots
     
     // Build success message
     const message = factoryOutputRouter.buildCraftResultMessage(craftResult, routingResult);
@@ -2031,7 +2182,7 @@ async function handleCraftFizzle(ctx, factoryState, player, room, reason) {
  * Handle harvest command
  */
 async function harvest(ctx, data) {
-  const { ws, db, playerName } = ctx;
+  const { ws, db, playerName, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId } = ctx;
   
   const player = await db.getPlayerByName(playerName);
   if (!player) {
@@ -2082,27 +2233,82 @@ async function harvest(ctx, data) {
   }
   
   // Check harvest prerequisite item (single item required for harvesting)
-  if (npcDef.harvest_prerequisite_item) {
+  // Now uses direct item_id foreign key instead of parsing JSON
+  // Backward compatibility: supports both new (item_id) and old (JSON) formats
+  let requiredItemName = null;
+  
+  if (npcDef.harvest_prerequisite_item_id) {
+    // New format: direct item_id foreign key
+    const requiredItem = await db.getItemById(npcDef.harvest_prerequisite_item_id);
+    if (!requiredItem) {
+      console.error(`[Harvest] ERROR: harvest_prerequisite_item_id ${npcDef.harvest_prerequisite_item_id} not found in items table`);
+      ws.send(JSON.stringify({ type: 'error', message: 'Harvest prerequisite item configuration error.' }));
+      return;
+    }
+    requiredItemName = requiredItem.name;
+  } else if (npcDef.harvest_prerequisite_item) {
+    // Old format: JSON array - parse and extract item_name
+    try {
+      const prerequisiteData = typeof npcDef.harvest_prerequisite_item === 'string' 
+        ? JSON.parse(npcDef.harvest_prerequisite_item) 
+        : npcDef.harvest_prerequisite_item;
+      if (Array.isArray(prerequisiteData) && prerequisiteData.length > 0 && prerequisiteData[0].item_name) {
+        requiredItemName = prerequisiteData[0].item_name;
+      } else if (typeof prerequisiteData === 'string') {
+        // Fallback: treat as plain string item name
+        requiredItemName = prerequisiteData;
+      }
+    } catch (e) {
+      console.error(`[Harvest] ERROR parsing harvest_prerequisite_item JSON:`, e);
+      // Fallback: treat as plain string
+      requiredItemName = npcDef.harvest_prerequisite_item;
+    }
+  }
+  
+  if (requiredItemName) {
     const playerItems = await db.getPlayerItems(player.id);
-    const hasPrerequisite = playerItems.some(i => 
-      i.item_name.toLowerCase() === npcDef.harvest_prerequisite_item.toLowerCase()
-    );
+    
+    // Debug logging
+    console.log(`[Harvest] Checking prerequisite item:`, {
+      requiredItemName: requiredItemName,
+      playerItems: playerItems.map(i => ({
+        item_name: i.item_name,
+        quantity: i.quantity
+      }))
+    });
+    
+    const hasPrerequisite = playerItems.some(i => {
+      const itemName = (i.item_name || '').toLowerCase().trim();
+      const matches = itemName === requiredItemName.toLowerCase().trim();
+      if (matches) {
+        console.log(`[Harvest] Found prerequisite item match: "${itemName}" === "${requiredItemName}"`);
+      }
+      return matches;
+    });
     
     if (!hasPrerequisite) {
       // Use customizable message or default
       const message = npcDef.harvest_prerequisite_message || 
                      `You lack the required item to harvest from ${roomNpc.name}.`;
+      console.log(`[Harvest] Prerequisite check failed - required: "${requiredItemName}", player has:`, 
+                  playerItems.map(i => i.item_name).join(', '));
       ws.send(JSON.stringify({ type: 'message', message }));
       return;
     }
+    
+    console.log(`[Harvest] Prerequisite check passed for: "${requiredItemName}"`);
   }
   
   // Check required items from NPC's input_items definition (data relationship)
-  let requiredItems = {};
-  try {
-    requiredItems = npcDef.input_items ? JSON.parse(npcDef.input_items) : {};
-  } catch (e) {
-    requiredItems = {};
+  // input_items is now JSONB, and may have item_id (as string) keys or item_name keys (backward compatibility)
+  let requiredItems = npcDef.input_items || {};
+  
+  // Convert item_id keys to item_name keys for lookup (if needed)
+  // Check if first key is numeric (item_id) or text (item_name)
+  const firstKey = Object.keys(requiredItems)[0];
+  if (firstKey && !isNaN(parseInt(firstKey, 10))) {
+    // Keys are item_ids, convert to item_names
+    requiredItems = await db.convertItemIdsToNames(requiredItems);
   }
   
   // Verify player has all required items
@@ -2122,12 +2328,8 @@ async function harvest(ctx, data) {
   // Get fresh NPC state from database
   const freshRoomNpcResult = await db.query('SELECT * FROM room_npcs WHERE id = $1', [roomNpc.id]);
   const freshRoomNpc = freshRoomNpcResult.rows[0];
-  let npcState = {};
-  try {
-    npcState = freshRoomNpc && freshRoomNpc.state ? JSON.parse(freshRoomNpc.state) : {};
-  } catch (e) {
-    npcState = {};
-  }
+  // state is now JSONB, so it's already an object
+  const npcState = (freshRoomNpc && freshRoomNpc.state) || {};
   
   // Check if NPC is on cooldown - no harvesting allowed during cooldown
   const now = Date.now();
@@ -2191,7 +2393,8 @@ async function harvest(ctx, data) {
   const verifyResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpc.id]);
   if (verifyResult.rows[0]) {
     try {
-      const savedState = verifyResult.rows[0].state ? JSON.parse(verifyResult.rows[0].state) : {};
+      // state is now JSONB, so it's already an object
+      const savedState = verifyResult.rows[0].state || {};
       if (savedState.harvest_active && savedState.harvest_start_time) {
         console.log(`[Harvest] State saved correctly: harvest_active=${savedState.harvest_active}, harvest_start_time=${savedState.harvest_start_time}`);
       } else {
@@ -2214,6 +2417,10 @@ async function harvest(ctx, data) {
     html: html,
     messageType: 'info'
   }));
+  
+  // Send room update immediately so NPC widget appears
+  // This ensures the conditional widget shows up right when harvest begins
+  await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, false);
 }
 
 /**
@@ -2263,12 +2470,8 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
       }
       
       // Get NPC state
-      let npcState = {};
-      try {
-        npcState = roomNpc.state ? JSON.parse(roomNpc.state) : {};
-      } catch (e) {
-        npcState = {};
-      }
+      // state is now JSONB, so it's already an object
+      const npcState = roomNpc.state || {};
       
       // Check if on cooldown
       const now = Date.now();
@@ -2281,16 +2484,44 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
         continue; // Skip NPCs already being harvested
       }
       
-      // Check prerequisite item
-      if (npcDef.harvest_prerequisite_item) {
+      // Check prerequisite item (now uses direct item_id foreign key)
+      // Backward compatibility: supports both new (item_id) and old (JSON) formats
+      let requiredItemName = null;
+      
+      if (npcDef.harvest_prerequisite_item_id) {
+        // New format: direct item_id foreign key
+        const requiredItem = await db.getItemById(npcDef.harvest_prerequisite_item_id);
+        if (!requiredItem) {
+          console.error(`[Auto-Harvest] ERROR: harvest_prerequisite_item_id ${npcDef.harvest_prerequisite_item_id} not found in items table`);
+          continue; // Skip NPCs with invalid prerequisite item configuration
+        }
+        requiredItemName = requiredItem.name;
+      } else if (npcDef.harvest_prerequisite_item) {
+        // Old format: JSON array - parse and extract item_name
+        try {
+          const prerequisiteData = typeof npcDef.harvest_prerequisite_item === 'string' 
+            ? JSON.parse(npcDef.harvest_prerequisite_item) 
+            : npcDef.harvest_prerequisite_item;
+          if (Array.isArray(prerequisiteData) && prerequisiteData.length > 0 && prerequisiteData[0].item_name) {
+            requiredItemName = prerequisiteData[0].item_name;
+          } else if (typeof prerequisiteData === 'string') {
+            requiredItemName = prerequisiteData;
+          }
+        } catch (e) {
+          console.error(`[Auto-Harvest] ERROR parsing harvest_prerequisite_item JSON:`, e);
+          requiredItemName = npcDef.harvest_prerequisite_item;
+        }
+      }
+      
+      if (requiredItemName) {
         const hasPrerequisite = playerItems.some(i => 
-          i.item_name.toLowerCase() === npcDef.harvest_prerequisite_item.toLowerCase()
+          (i.item_name || '').toLowerCase().trim() === requiredItemName.toLowerCase().trim()
         );
         if (!hasPrerequisite) {
           // Send skip message
           const skipMessage = messageCache.getFormattedMessage('auto_harvest_skip_missing_item', {
             npcName: roomNpc.name,
-            itemName: npcDef.harvest_prerequisite_item
+            itemName: requiredItemName
           });
           if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
             playerData.ws.send(JSON.stringify({ type: 'message', message: skipMessage }));
@@ -2300,11 +2531,14 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
       }
       
       // Check input_items requirements
-      let requiredItems = {};
-      try {
-        requiredItems = npcDef.input_items ? JSON.parse(npcDef.input_items) : {};
-      } catch (e) {
-        requiredItems = {};
+      // input_items is now JSONB, and may have item_id (as string) keys or item_name keys (backward compatibility)
+      let requiredItems = npcDef.input_items || {};
+      
+      // Convert item_id keys to item_name keys for lookup (if needed)
+      const firstKey = Object.keys(requiredItems)[0];
+      if (firstKey && !isNaN(parseInt(firstKey, 10))) {
+        // Keys are item_ids, convert to item_names
+        requiredItems = await db.convertItemIdsToNames(requiredItems);
       }
       
       let hasAllItems = true;
@@ -2391,12 +2625,8 @@ async function autoStartHarvest(ctx, connectionId, roomNpcId, playerId) {
     }
     
     // Get fresh NPC state
-    let npcState = {};
-    try {
-      npcState = roomNpc.state ? JSON.parse(roomNpc.state) : {};
-    } catch (e) {
-      npcState = {};
-    }
+    // state is now JSONB, so it's already an object
+    const npcState = roomNpc.state || {};
     
     // Check if already being harvested or on cooldown
     const now = Date.now();
@@ -6633,6 +6863,7 @@ module.exports = {
   who,
   pulseEcho,
   saveTerminalMessage,
+  getCommsHistory,
   assignAttributePoint,
   getAutoPathMaps,
   getAutoPathRooms,

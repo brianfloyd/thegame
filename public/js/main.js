@@ -5,30 +5,18 @@
  */
 
 import Game from './core/Game.js';
-import Terminal from './components/Terminal.js';
-import StatsWidget from './components/StatsWidget.js';
-import MapWidget from './components/MapWidget.js';
-import CompassWidget from './components/CompassWidget.js';
-import CommsWidget from './components/CommsWidget.js';
-import Inventory from './components/Inventory.js';
-import NPCWidget from './components/NPCWidget.js';
-import FactoryWidget from './components/FactoryWidget.js';
-import TicketsWidget from './components/TicketsWidget.js';
+import Terminal from './widgets/Terminal.js';
+import Inventory from './widgets/Inventory.js';
+import WidgetManager from './core/WidgetManager.js';
+import { WIDGETS } from './widgets/widget_registry.js';
 import MapRenderer from './utils/MapRenderer.js';
 
 // Initialize game
 const game = new Game();
 
-// Initialize components
+// Initialize components (non-widget components)
 const terminal = new Terminal(game);
-const statsWidget = new StatsWidget(game);
-const mapWidget = new MapWidget(game);
-const compassWidget = new CompassWidget(game);
-const commsWidget = new CommsWidget(game);
 const inventory = new Inventory(game);
-const npcWidget = new NPCWidget(game);
-const factoryWidget = new FactoryWidget(game);
-const ticketsWidget = new TicketsWidget(game);
 
 // Store terminal reference globally and on game object for easy access
 if (typeof window !== 'undefined') {
@@ -38,16 +26,13 @@ if (game) {
     game.terminal = terminal;
 }
 
-// Initialize all components
+// Initialize non-widget components
 terminal.init();
-statsWidget.init();
-mapWidget.init();
-compassWidget.init();
-commsWidget.init();
 inventory.init();
-npcWidget.init();
-factoryWidget.init();
-ticketsWidget.init();
+
+// Initialize WidgetManager (manages all widgets)
+game.widgetManager = new WidgetManager(game, WIDGETS);
+game.widgetManager.mountAll();
 
 // Track last command for /r repeat command
 let lastCommand = null;
@@ -569,8 +554,6 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Widget toggle system is initialized in initWidgetToggleBar() below
-
 // Exit button handler
 const exitBtn = document.getElementById('exitToCharacterSelection');
 if (exitBtn) {
@@ -702,39 +685,10 @@ function displayHelp() {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
-// Widget toggle functionality
-const TOGGLEABLE_WIDGETS = ['stats', 'compass', 'map', 'comms', 'warehouse', 'godmode', 'scripting', 'runekeeper', 'tickets'];
-let activeWidgets = ['stats', 'compass', 'map', 'comms']; // Default active widgets
+// Widget system is now managed by WidgetManager - no toggle bar needed
+
+// Track god mode for ZORK button visibility
 let godMode = false;
-let hasWarehouseDeed = false;
-let npcWidgetVisible = false; // NPC widget is special - auto-managed
-
-// Expose global game state for widget manager
-window.gameState = window.gameState || {};
-window.gameState.isGod = godMode;
-window.gameState.hasWarehouseDeed = hasWarehouseDeed;
-window.gameState.inFactoryRoom = false;
-window.gameState.currentRoom = null;
-
-// Update godMode and hasWarehouseDeed from server messages
-game.messageBus.on('player:stats', (data) => {
-    if (data.stats) {
-        // Check for godMode in stats (godMode is returned as an object with .value property)
-        if (data.stats.godMode !== undefined) {
-            const wasGodMode = godMode;
-            godMode = data.stats.godMode.value === true || data.stats.godMode === true;
-            // Update global game state
-            window.gameState = window.gameState || {};
-            window.gameState.isGod = godMode;
-            window.godMode = godMode; // Legacy support
-            // Only update widget display if godMode status changed
-            if (wasGodMode !== godMode) {
-                updateWidgetDisplay();
-                updateZorkButtonVisibility();
-            }
-        }
-    }
-});
 
 // Update ZORK button visibility based on god mode
 function updateZorkButtonVisibility() {
@@ -759,309 +713,26 @@ if (document.readyState === 'loading') {
     updateZorkButtonVisibility();
 }
 
-game.messageBus.on('room:update', (data) => {
-    if (data.hasWarehouseDeed !== undefined) {
-        const wasWarehouseDeed = hasWarehouseDeed;
-        hasWarehouseDeed = data.hasWarehouseDeed;
-        // Update global game state
-        window.gameState = window.gameState || {};
-        window.gameState.hasWarehouseDeed = hasWarehouseDeed;
-        window.hasWarehouseDeed = hasWarehouseDeed; // Legacy support
-        // Only update widget display if warehouse deed status changed
-        if (wasWarehouseDeed !== hasWarehouseDeed) {
-            updateWidgetDisplay();
-        }
-    }
-    // Track room type for factory detection
-    if (data.room) {
-        window.gameState = window.gameState || {};
-        window.gameState.currentRoom = data.room;
-        window.gameState.inFactoryRoom = data.room.room_type === 'factory';
-    }
-});
-
-game.messageBus.on('warehouse:widgetState', (data) => {
-    if (data.state && data.state.hasWarehouseDeed !== undefined) {
-        const wasWarehouseDeed = hasWarehouseDeed;
-        hasWarehouseDeed = data.state.hasWarehouseDeed;
-        // Only update widget display if warehouse deed status changed
-        if (wasWarehouseDeed !== hasWarehouseDeed) {
-            updateWidgetDisplay();
+// Update godMode from server messages
+game.messageBus.on('player:stats', (data) => {
+    if (data.stats) {
+        // Check for godMode in stats (godMode is returned as an object with .value property)
+        if (data.stats.godMode !== undefined) {
+            const wasGodMode = godMode;
+            godMode = data.stats.godMode.value === true || data.stats.godMode === true;
+            // Update global game state
+            window.gameState = window.gameState || {};
+            window.gameState.isGod = godMode;
+            window.godMode = godMode; // Legacy support
+            // Only update ZORK button if godMode status changed
+            if (wasGodMode !== godMode) {
+                updateZorkButtonVisibility();
+            }
         }
     }
 });
 
-game.messageBus.on('widget:config', (data) => {
-    if (data.config && data.config.activeWidgets) {
-        // Only update if the config actually changed
-        const configChanged = JSON.stringify(activeWidgets) !== JSON.stringify(data.config.activeWidgets);
-        if (configChanged) {
-            activeWidgets = data.config.activeWidgets;
-            updateWidgetDisplay();
-        }
-    }
-});
-
-// Initialize widget toggle bar
-function initWidgetToggleBar() {
-    const toggleBar = document.querySelector('.widget-toggle-bar');
-    if (!toggleBar) return;
-    
-    // Always hide godmode and warehouse icons initially (they'll be shown later if conditions are met)
-    const godmodeIcon = document.getElementById('godmode-widget-icon') || toggleBar.querySelector('[data-widget="godmode"]');
-    if (godmodeIcon) {
-        godmodeIcon.classList.add('hidden');
-    }
-    const warehouseIcon = document.getElementById('warehouse-widget-icon') || toggleBar.querySelector('[data-widget="warehouse"]');
-    if (warehouseIcon) {
-        warehouseIcon.classList.add('hidden');
-    }
-    
-    // Handle widget toggle icons
-    toggleBar.querySelectorAll('.widget-icon').forEach(icon => {
-        icon.addEventListener('click', () => {
-            const widgetName = icon.getAttribute('data-widget');
-            if (widgetName) {
-                toggleWidget(widgetName);
-            }
-        });
-    });
-    
-    // Handle exit to character selection button
-    const exitBtn = document.getElementById('exitToCharacterSelection');
-    if (exitBtn) {
-        exitBtn.addEventListener('click', () => {
-            if (window.opener) {
-                window.close();
-            } else {
-                window.location.href = '/';
-            }
-        });
-    }
-    
-    // Initial widget display
-    updateWidgetDisplay();
-}
-
-// Toggle widget visibility
-function toggleWidget(widgetName) {
-    if (!TOGGLEABLE_WIDGETS.includes(widgetName)) return;
-    
-    // Check if widget is available (godmode requires godMode, warehouse requires hasWarehouseDeed, tickets requires godMode)
-    if (widgetName === 'godmode' && !godMode) return;
-    if (widgetName === 'warehouse' && !hasWarehouseDeed) return;
-    if (widgetName === 'tickets' && !godMode) return;
-    
-    const isActive = activeWidgets.includes(widgetName);
-    
-    if (isActive) {
-        // Hide the widget - allow hiding all widgets
-        activeWidgets = activeWidgets.filter(w => w !== widgetName);
-    } else {
-        // Show the widget
-        // Limit to 4 widgets
-        if (activeWidgets.length >= 4) {
-            // Remove last widget to make room
-            activeWidgets.pop();
-        }
-        activeWidgets.push(widgetName);
-    }
-    
-    updateWidgetDisplay();
-    saveWidgetConfig();
-}
-
-// Expose updateWidgetDisplay globally for NPCWidget and other components
-window.updateWidgetDisplay = updateWidgetDisplay;
-
-// Update widget display
-function updateWidgetDisplay() {
-    // If scripting widget is being shown and execution is active, show status panel
-    if (activeWidgets.includes('scripting') && executionTracking.isActive) {
-        // Use setTimeout to ensure DOM is updated first
-        setTimeout(() => {
-            showAutomationStatus();
-        }, 50);
-    }
-    const toggleBar = document.querySelector('.widget-toggle-bar');
-    const slots = document.querySelectorAll('.widget-slot[data-slot]:not([data-slot^="scripting"])');
-    
-    // Update toggle bar icons
-    TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        // Use ID selector for godmode and warehouse (more reliable)
-        let icon;
-        if (widgetName === 'godmode') {
-            icon = document.getElementById('godmode-widget-icon');
-        } else if (widgetName === 'warehouse') {
-            icon = document.getElementById('warehouse-widget-icon');
-        } else {
-            icon = toggleBar?.querySelector(`[data-widget="${widgetName}"]`);
-        }
-        
-        if (!icon) return;
-        
-        // Handle icon visibility - godmode and warehouse are conditional
-        if (widgetName === 'godmode') {
-            // Always hide godmode icon unless player has godMode
-            if (godMode) {
-                icon.classList.remove('hidden');
-            } else {
-                icon.classList.add('hidden');
-                // Also remove from activeWidgets if it was there
-                if (activeWidgets.includes('godmode')) {
-                    activeWidgets = activeWidgets.filter(w => w !== 'godmode');
-                }
-                return; // Don't update active state for hidden icons
-            }
-        } else if (widgetName === 'warehouse') {
-            // Always hide warehouse icon unless player has warehouse deed
-            if (hasWarehouseDeed) {
-                icon.classList.remove('hidden');
-            } else {
-                icon.classList.add('hidden');
-                // Also remove from activeWidgets if it was there
-                if (activeWidgets.includes('warehouse')) {
-                    activeWidgets = activeWidgets.filter(w => w !== 'warehouse');
-                }
-                return; // Don't update active state for hidden icons
-            }
-        }
-        
-        // Update active state (only for visible icons)
-        if (activeWidgets.includes(widgetName)) {
-            icon.classList.add('active', 'widget-active');
-            icon.classList.remove('widget-inactive');
-        } else {
-            icon.classList.remove('active', 'widget-active');
-            icon.classList.add('widget-inactive');
-        }
-    });
-    
-    // Hide all widgets first (including empty placeholder)
-    TOGGLEABLE_WIDGETS.forEach(widgetName => {
-        const widget = document.getElementById(`widget-${widgetName}`);
-        if (widget) {
-            widget.classList.add('hidden');
-        }
-    });
-    
-    // Always hide the empty widget placeholder
-    const emptyWidget = document.getElementById('widget-empty');
-    if (emptyWidget) {
-        emptyWidget.classList.add('hidden');
-    }
-    
-    // Update NPC widget visibility from component
-    if (typeof npcWidget !== 'undefined' && npcWidget) {
-        npcWidgetVisible = npcWidget.getVisibility();
-    }
-    
-    // Update Factory widget visibility from component
-    let factoryWidgetVisible = false;
-    if (typeof factoryWidget !== 'undefined' && factoryWidget) {
-        factoryWidgetVisible = factoryWidget.getVisibility();
-    }
-    // Also check global variable for backward compatibility
-    if (typeof window.factoryWidgetVisible !== 'undefined') {
-        factoryWidgetVisible = window.factoryWidgetVisible || factoryWidgetVisible;
-    }
-    
-    // Build list of widgets to actually display in slots
-    // Auto-managed widgets (factory, npc, warehouse) take priority, then activeWidgets
-    let widgetsToShow = [];
-    
-    // Factory widget takes slot if visible (auto-managed)
-    if (factoryWidgetVisible) {
-        widgetsToShow.push('factory');
-    }
-    
-    // NPC widget takes slot if visible (auto-managed)
-    if (npcWidgetVisible) {
-        widgetsToShow.push('npc');
-    }
-    
-    // Add toggleable widgets from activeWidgets (filtered by availability)
-    const filteredActiveWidgets = activeWidgets.filter(w => {
-        if (w === 'godmode' && !godMode) return false;
-        if (w === 'warehouse' && !hasWarehouseDeed) return false;
-        if (w === 'tickets' && !godMode) return false;
-        return true;
-    });
-    widgetsToShow.push(...filteredActiveWidgets);
-    
-    // Limit to 4 slots
-    widgetsToShow = widgetsToShow.slice(0, 4);
-    
-    // Hide auto-managed widgets if not in widgetsToShow
-    const factoryWidgetEl = document.getElementById('widget-factory');
-    if (factoryWidgetEl && !widgetsToShow.includes('factory')) {
-        factoryWidgetEl.classList.add('hidden');
-    }
-    const npcWidgetEl = document.getElementById('widget-npc');
-    if (npcWidgetEl && !widgetsToShow.includes('npc')) {
-        npcWidgetEl.classList.add('hidden');
-    }
-    
-    // Show widgets in their slots
-    slots.forEach((slot, index) => {
-        // Always hide empty widget placeholder in this slot
-        const slotEmptyWidget = slot.querySelector('.widget-empty');
-        if (slotEmptyWidget) {
-            slotEmptyWidget.classList.add('hidden');
-        }
-        
-        if (index < widgetsToShow.length) {
-            const widgetName = widgetsToShow[index];
-            const widget = document.getElementById(`widget-${widgetName}`);
-            if (widget) {
-                slot.style.display = 'block';
-                if (widget.parentElement !== slot) {
-                    slot.appendChild(widget);
-                }
-                widget.classList.remove('hidden');
-                
-                // Trigger map render if map widget is shown
-                if (widgetName === 'map' && mapWidget) {
-                    // Force map to reload when shown (but don't send look command to avoid infinite loop)
-                    setTimeout(() => {
-                        mapWidget.render();
-                    }, 100);
-                }
-                
-                // Show automation status if scripting widget is shown and execution is active
-                if (widgetName === 'scripting' && executionTracking.isActive) {
-                    setTimeout(() => {
-                        showAutomationStatus();
-                    }, 100);
-                }
-            } else {
-                // Widget not found - hide slot
-                slot.style.display = 'none';
-            }
-        } else {
-            // Slot is empty - hide the slot itself, don't show empty placeholder
-            slot.style.display = 'none';
-        }
-    });
-}
-
-// Save widget configuration
-function saveWidgetConfig() {
-    const ws = game.getWebSocket();
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    
-    const config = {
-        activeWidgets: activeWidgets
-    };
-    
-    game.send({
-        type: 'updateWidgetConfig',
-        config: config
-    });
-}
-
-// Initialize widget toggle bar on page load
-initWidgetToggleBar();
+// Handle exit to character selection button (already handled above, removing duplicate)
 
 // Initialize god mode editor buttons
 function initGodModeEditors() {
@@ -1172,7 +843,7 @@ function openJumpWidget() {
         // Add resize observer to handle container size changes
         if (!jumpWidgetResizeObserver) {
             jumpWidgetResizeObserver = new ResizeObserver(() => {
-                if (jumpWidgetCanvas && container) {
+                if (jumpWidgetCanvas && container && jumpWidgetRooms.length > 0) {
                     jumpWidgetCanvas.width = container.clientWidth;
                     jumpWidgetCanvas.height = container.clientHeight;
                     if (jumpWidgetRenderer) {
@@ -1249,7 +920,19 @@ function openJumpWidget() {
     setupJumpWidgetKeyboard();
     
     // Request map list from server
-    game.send({ type: 'getJumpMaps' });
+    console.log('[JumpWidget] Requesting maps from server...');
+    if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
+        game.send({ type: 'getJumpMaps' });
+    } else {
+        console.error('[JumpWidget] WebSocket not connected, cannot request maps');
+        // Try again after a short delay
+        setTimeout(() => {
+            if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
+                console.log('[JumpWidget] Retrying map request...');
+                game.send({ type: 'getJumpMaps' });
+            }
+        }, 500);
+    }
     
     // Setup event listeners
     const closeBtn = document.getElementById('closeJumpWidget');
@@ -1352,21 +1035,46 @@ function closeJumpWidget() {
 
 // Handle jump maps from server
 game.messageBus.on('jump:maps', (data) => {
-    populateJumpMaps(data.maps);
+    console.log('[JumpWidget] Received maps from server:', data);
+    if (data && data.maps) {
+        populateJumpMaps(data.maps);
+    } else {
+        console.error('[JumpWidget] Invalid maps data received:', data);
+    }
 });
 
 function populateJumpMaps(maps) {
-    jumpWidgetMaps = maps;
+    console.log('[JumpWidget] populateJumpMaps called with:', maps);
+    jumpWidgetMaps = maps || [];
     const selector = document.getElementById('jumpMapSelector');
-    if (!selector) return;
+    if (!selector) {
+        console.error('[JumpWidget] jumpMapSelector element not found!');
+        return;
+    }
     
     selector.innerHTML = '<option value="">Select a map...</option>';
-    maps.forEach(map => {
+    if (jumpWidgetMaps.length === 0) {
+        console.warn('[JumpWidget] No maps received from server');
+        return;
+    }
+    
+    jumpWidgetMaps.forEach(map => {
         const option = document.createElement('option');
         option.value = map.id;
-        option.textContent = map.name;
+        option.textContent = map.name || `Map ${map.id}`;
         selector.appendChild(option);
     });
+    
+    console.log(`[JumpWidget] Populated ${jumpWidgetMaps.length} maps in selector`);
+    
+    // Auto-select current map if available
+    if (currentMapId) {
+        console.log(`[JumpWidget] Auto-selecting current map: ${currentMapId}`);
+        selector.value = currentMapId.toString();
+        // Trigger the change event to load rooms
+        const changeEvent = new Event('change', { bubbles: true });
+        selector.dispatchEvent(changeEvent);
+    }
 }
 
 function onJumpMapSelected(e) {
@@ -1379,6 +1087,7 @@ function onJumpMapSelected(e) {
     }
     
     jumpWidgetSelectedMap = mapId;
+    console.log(`[JumpWidget] Map selected: ${mapId}, requesting rooms...`);
     
     // Reset zoom and pan when selecting new map
     if (jumpWidgetRenderer) {
@@ -1387,16 +1096,58 @@ function onJumpMapSelected(e) {
     }
     
     // Request rooms for this map
-    game.send({ type: 'getJumpRooms', mapId });
+    if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
+        console.log(`[JumpWidget] Sending getJumpRooms request with mapId: ${mapId} (type: ${typeof mapId})`);
+        game.send({ type: 'getJumpRooms', mapId: mapId });
+    } else {
+        console.error('[JumpWidget] WebSocket not connected, cannot request rooms');
+    }
 }
 
 // Handle jump rooms from server
 game.messageBus.on('jump:rooms', (data) => {
-    populateJumpRooms(data.rooms);
+    console.log('[JumpWidget] Received rooms from server (full data):', JSON.stringify(data, null, 2));
+    // Handle both direct array and object with rooms property
+    let rooms = null;
+    if (Array.isArray(data)) {
+        rooms = data;
+    } else if (data && Array.isArray(data.rooms)) {
+        rooms = data.rooms;
+    } else if (data && data.rooms) {
+        // Sometimes it might be wrapped differently
+        rooms = data.rooms;
+    }
+    
+    if (rooms !== null) {
+        console.log(`[JumpWidget] Extracted ${rooms.length} rooms from data`);
+        populateJumpRooms(rooms);
+    } else {
+        console.error('[JumpWidget] Invalid rooms data received - not an array:', data);
+    }
 });
 
 function populateJumpRooms(rooms) {
-    jumpWidgetRooms = rooms;
+    console.log(`[JumpWidget] populateJumpRooms called with ${rooms ? rooms.length : 0} rooms`);
+    jumpWidgetRooms = rooms || [];
+    
+    if (jumpWidgetRooms.length === 0) {
+        console.warn('[JumpWidget] No rooms received for selected map');
+        clearJumpCanvas();
+        return;
+    }
+    
+    // Ensure rooms have required properties for MapRenderer
+    jumpWidgetRooms = jumpWidgetRooms.map(room => ({
+        id: room.id,
+        name: room.name || `Room ${room.id}`,
+        x: room.x || 0,
+        y: room.y || 0,
+        mapId: room.map_id || room.mapId || jumpWidgetSelectedMap,
+        roomType: room.room_type || room.roomType || 'normal',
+        connected_map_id: room.connected_map_id || null
+    }));
+    
+    console.log(`[JumpWidget] Processed ${jumpWidgetRooms.length} rooms, rendering map...`);
     renderJumpMap();
 }
 
@@ -1407,7 +1158,14 @@ function clearJumpCanvas() {
 }
 
 function renderJumpMap() {
-    if (!jumpWidgetRenderer || !jumpWidgetCanvas || !jumpWidgetCtx || jumpWidgetRooms.length === 0) {
+    if (!jumpWidgetRenderer || !jumpWidgetCanvas || !jumpWidgetCtx) {
+        console.warn('[JumpWidget] Renderer, canvas, or context not available');
+        clearJumpCanvas();
+        return;
+    }
+    
+    if (jumpWidgetRooms.length === 0) {
+        console.warn('[JumpWidget] No rooms to render');
         clearJumpCanvas();
         return;
     }
@@ -1427,8 +1185,23 @@ function renderJumpMap() {
         }
     }
     
+    // Find current room if we're viewing the current map
+    let centerRoom = null;
+    if (currentRoomPos && currentMapId && jumpWidgetSelectedMap === currentMapId) {
+        centerRoom = jumpWidgetRooms.find(r => 
+            r.x === currentRoomPos.x && 
+            r.y === currentRoomPos.y &&
+            (r.mapId === currentMapId || r.map_id === currentMapId)
+        );
+        if (centerRoom) {
+            console.log('[JumpWidget] Found current room for centering:', centerRoom);
+        }
+    }
+    
+    console.log(`[JumpWidget] Rendering ${jumpWidgetRooms.length} rooms with centerRoom:`, centerRoom);
+    
     // Render using MapRenderer (it handles zoom/pan internally)
-    jumpWidgetRenderer.render(jumpWidgetRooms, null, '#050505');
+    jumpWidgetRenderer.render(jumpWidgetRooms, centerRoom, '#050505');
 }
 
 function getJumpRoomAtPosition(canvasX, canvasY) {
@@ -1859,19 +1632,12 @@ function startAutoNavigation() {
     
     console.log('[startAutoNavigation] Starting with path length:', autoNavigationPath.length);
     
-    // Ensure automation widget is open to show status
-    if (!activeWidgets.includes('scripting')) {
-        console.log('[startAutoNavigation] Opening automation widget to show status');
-        toggleWidget('scripting');
-        // Give widget time to render
-        setTimeout(() => {
-            console.log('[startAutoNavigation] Widget should be open now, initializing tracking');
-            initializeAutoNavTracking();
-        }, 200);
-    } else {
-        console.log('[startAutoNavigation] Automation widget already open');
+    // Widget visibility is now managed by WidgetManager
+    // Give widget time to render if needed
+    setTimeout(() => {
+        console.log('[startAutoNavigation] Initializing tracking');
         initializeAutoNavTracking();
-    }
+    }, 200);
     
     game.send({ 
         type: 'startAutoNavigation', 
@@ -2323,11 +2089,7 @@ function startPathExecution() {
         previewDialog.style.display = 'none';
     }
     
-    // Ensure automation widget is open to show status
-    if (!activeWidgets.includes('scripting')) {
-        console.log('[startPathExecution] Opening automation widget to show status');
-        toggleWidget('scripting');
-    }
+    // Widget visibility is now managed by WidgetManager
     
     // Get selected path to check if it's a loop
     const selectedPath = allPlayerPaths.find(p => p.id === selectedPathId);
@@ -2458,17 +2220,11 @@ game.messageBus.on('paths:executionStarted', (data) => {
     isPathPaused = false;
     pausedPathRoomId = null;
     
-    // Ensure automation widget is open to show status
-    if (!activeWidgets.includes('scripting')) {
-        console.log('[paths:executionStarted] Opening automation widget to show status');
-        toggleWidget('scripting');
-        // Give widget time to render
-        setTimeout(() => {
-            initializePathExecutionTracking(data);
-        }, 200);
-    } else {
+    // Widget visibility is now managed by WidgetManager
+    // Give widget time to render if needed
+    setTimeout(() => {
         initializePathExecutionTracking(data);
-    }
+    }, 200);
     
     terminal.addMessage(data.message || 'Path/Loop execution started.', 'success');
     updatePathExecutionUI();

@@ -26,15 +26,15 @@
 **Required UI Components (Same as Local Development):**
 
 ### Core Components:
-- **Terminal** (`public/js/components/Terminal.js`) - Text terminal displaying game output
-- **StatsWidget** (`public/js/components/StatsWidget.js`) - Player statistics display
-- **MapWidget** (`public/js/components/MapWidget.js`) - Interactive map visualization
-- **CompassWidget** (`public/js/components/CompassWidget.js`) - Directional navigation buttons
-- **CommsWidget** (`public/js/components/CommsWidget.js`) - Chat/communication interface
-- **Inventory** (`public/js/components/Inventory.js`) - Player inventory display
-- **NPCWidget** (`public/js/components/NPCWidget.js`) - NPC activity display during harvest
-- **FactoryWidget** (`public/js/components/FactoryWidget.js`) - Factory crafting interface
-- **TicketsWidget** (`public/js/components/TicketsWidget.js`) - Ticket management (god mode only)
+- **Terminal** (`public/js/widgets/Terminal.js`) - Text terminal displaying game output
+- **StatsWidget** (`public/js/widgets/StatsWidget.js`) - Player statistics display
+- **MapWidget** (`public/js/widgets/MapWidget.js`) - Interactive map visualization
+- **CompassWidget** (`public/js/widgets/CompassWidget.js`) - Directional navigation buttons
+- **CommsWidget** (`public/js/widgets/CommsWidget.js`) - Chat/communication interface
+- **Inventory** (`public/js/widgets/Inventory.js`) - Player inventory display
+- **NPCWidget** (`public/js/widgets/NPCWidget.js`) - NPC activity display during harvest
+- **FactoryWidget** (`public/js/widgets/FactoryWidget.js`) - Factory crafting interface
+- **TicketsWidget** (`public/js/widgets/TicketsWidget.js`) - Ticket management (god mode only)
 
 ### Authentication/Selection Screens:
 - **Login/Register Screen** (`public/index.html:11-34`) - Account authentication
@@ -369,7 +369,7 @@ The frontend **does not directly consume environment variables**. All client-sid
 - `public/js/core/Game.js:185` - `console.log('WebSocket connected')`
 - `public/js/core/Game.js:216` - `console.error('WebSocket error:', error)`
 - `public/js/main.js:1851` - `console.log('[startAutoNavigation] Function called')`
-- `public/js/components/FactoryWidget.js:45` - `console.log('[FactoryWidget] Initialized')`
+- `public/js/widgets/FactoryWidget.js:45` - `console.log('[FactoryWidget] Initialized')`
 - `public/js/core/Game.js:748-811` - Debug observer console hooking
 
 **Not found in codebase:** No logging service or remote log aggregation. No log level configuration. No production log filtering. No user-facing error reporting UI (errors only in console).
@@ -577,7 +577,7 @@ public/
 **Evidence:**
 - `public/js/main.js:7-17` - Import statements show component locations
 - `public/js/core/Component.js` - Base component class
-- `public/js/components/StatsWidget.js:25` - Component subscription pattern
+- `public/js/widgets/StatsWidget.js:25` - Component subscription pattern
 - Directory structure verified via project layout
 
 ---
@@ -646,7 +646,7 @@ public/
 **Player Stats:**
 - Message: `playerStats` → Event: `'player:stats'`
 - Updates: StatsWidget displays current stats
-- **Evidence:** `public/js/components/StatsWidget.js:25` - Subscribes to `'player:stats'`
+- **Evidence:** `public/js/widgets/StatsWidget.js:25` - Subscribes to `'player:stats'`
 
 **Inventory:**
 - Message: `inventoryUpdate` → Event: `'inventory:update'`
@@ -656,7 +656,7 @@ public/
 **Factory State:**
 - Message: `factoryWidgetState` → Event: `'factory:state'`
 - Updates: FactoryWidget shows/hides based on room type, updates slot contents
-- **Evidence:** `public/js/components/FactoryWidget.js:210-229` - Room type detection
+- **Evidence:** `public/js/widgets/FactoryWidget.js:210-229` - Room type detection
 
 #### 3. **Conditional UI Display:**
 - **God Mode Widget:** Only shown if player has god mode
@@ -671,7 +671,7 @@ public/
 
 **Evidence:**
 - `public/js/core/Game.js:249-692` - Message routing to MessageBus
-- `public/js/components/FactoryWidget.js:210` - Room type-based widget display
+- `public/js/widgets/FactoryWidget.js:210` - Room type-based widget display
 - `public/game.html:63-65` - Warehouse widget icon (hidden by default)
 - `public/game.html:66-68` - God mode widget icon (hidden by default)
 
@@ -816,5 +816,8 @@ public/
 ---
 
 **END OF ANALYSIS**
+
+
+
 
 

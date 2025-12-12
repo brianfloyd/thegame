@@ -413,7 +413,7 @@ public/
 
 **Subdirectories:**
 - `js/` - ES6 module-based frontend (35 files total)
-  - `components/` - UI components (9 files)
+  - `widgets/` - UI widgets and components (9 files)
   - `core/` - Core infrastructure (3 files)
   - `editorComponents/` - Editor components (7 files)
   - `editorShared/` - Shared editor code (1 file)
@@ -744,7 +744,7 @@ utils/
 **Location:** `public/js/`
 **Structure:**
 - `core/` - Core infrastructure (Game, Component, MessageBus)
-- `components/` - UI components (Terminal, StatsWidget, etc.)
+- `widgets/` - UI widgets and components (Terminal, StatsWidget, etc.)
 - `models/` - Data models
 - `utils/` - Utilities
 - `services/` - Services
@@ -833,7 +833,7 @@ utils/
 **Entry Point:** `public/js/main.js`
 **Imports:**
 - `core/Game.js` - Game controller
-- `components/*.js` - UI components
+- `widgets/*.js` - UI widgets and components
 - `utils/*.js` - Utilities
 
 **Evidence:**
@@ -919,7 +919,7 @@ utils/
 **Pattern:** ES6 modules in `public/js/`
 **Size:** Typically 100-500 lines per module
 **Evidence:**
-- `public/js/components/` - Component files are modular
+- `public/js/widgets/` - Widget files are modular
 - `public/js/core/` - Core files are modular
 
 ---
@@ -951,11 +951,12 @@ utils/
 
 ## 11.1 Empty Directories
 
-**Location:** `public/components/`
-**Status:** Empty directory
+**Location:** `public/components/` (if exists, separate from `public/js/widgets/`)
+**Status:** Empty directory (if exists)
 **Purpose:** Unclear (possibly planned but unused)
 **Evidence:**
-- Directory listing shows `public/components/` is empty
+- Directory listing shows `public/components/` is empty (if it exists)
+- Actual components/widgets are in `public/js/widgets/`
 
 ## 11.2 Incomplete Migrations
 
@@ -985,7 +986,7 @@ utils/
 1. **Legacy Files:** `client.js`, `markup-helper.js` kept but not used
 2. **Directory Naming:** Space in `ascii images/` directory name
 3. **Mixed Content:** `ascii images/` contains various file types
-4. **Empty Directories:** `public/components/` is empty
+4. **Empty Directories:** `public/components/` is empty (if exists, separate from `public/js/widgets/` where actual widgets are located)
 5. **SQL Files in Scripts:** Some SQL files in `scripts/` instead of `migrations/`
 6. **Accidental Files:** `tall` file appears to be accidental
 
@@ -1008,4 +1009,7 @@ utils/
 ---
 
 **End of Project File Structure Canonical Specification**
+
+
+
 

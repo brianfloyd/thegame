@@ -1,5 +1,5 @@
 const fs = require('fs');
-const path = 'protected/editors/map-editor.js';
+const path = 'public/gameeditors/map-editor.js';
 let content = fs.readFileSync(path, 'utf8');
 
 const oldCode = `        handleKeyDown(e) {

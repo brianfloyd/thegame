@@ -6,7 +6,7 @@
     <title>Ticket Editor - The Game</title>
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/css/editor-core.css">
-    <link rel="stylesheet" href="/ticket-editor.css">
+    <link rel="stylesheet" href="/protected/editors/editor-shared.css">
 </head>
 <body>
     <!-- Ticket Editor -->
@@ -21,6 +21,7 @@
                     <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
                 </div>
             </div>
             <div class="editor-header-right">
@@ -77,19 +78,19 @@
                 <div class="list-header">
                     <span class="list-count" x-text="'Tickets: ' + filteredTickets.length"></span>
                 </div>
-                <div class="ticket-list">
+                <div class="editor-list">
                     <template x-for="ticket in filteredTickets" :key="ticket.id">
-                        <div class="ticket-list-item" 
+                        <div class="editor-list-item" 
                              :class="{ 'selected': selectedTicket && selectedTicket.id === ticket.id }"
                              @click="selectTicket(ticket)">
-                            <div class="ticket-list-header">
+                            <div class="editor-list-header">
                                 <span class="ticket-status-emoji" x-text="getStatusEmoji(ticket.status)"></span>
-                                <span class="ticket-id" x-text="'#' + ticket.id"></span>
-                                <span class="ticket-priority-badge" 
+                                <span class="editor-id" x-text="'#' + ticket.id"></span>
+                                <span class="editor-badge" 
                                       :class="'priority-' + ticket.priority"
                                       x-text="getPriorityLabel(ticket.priority)"></span>
                             </div>
-                            <div class="ticket-list-title" x-text="ticket.title"></div>
+                            <div class="editor-list-title" x-text="ticket.title"></div>
                             <div class="ticket-list-meta">
                                 <span class="ticket-type" x-text="getTypeLabel(ticket.ticket_type)"></span>
                                 <span class="ticket-date" x-text="formatDate(ticket.created_at)"></span>
@@ -112,7 +113,7 @@
                 </template>
 
                 <template x-if="selectedTicket || isCreating">
-                    <div class="ticket-form">
+                    <div class="editor-form">
                         <!-- Action Buttons -->
                         <div class="form-actions">
                             <template x-if="!isCreating">

@@ -587,13 +587,25 @@ async function getJumpRooms(ctx, data) {
   }
 
   const { mapId } = data;
-  if (!mapId) {
+  if (!mapId && mapId !== 0) {
     ws.send(JSON.stringify({ type: 'error', message: 'Map ID required' }));
     return;
   }
 
-  const rooms = await db.getRoomsByMap(mapId);
-  ws.send(JSON.stringify({ type: 'jumpRooms', rooms }));
+  // Ensure mapId is a number
+  const numericMapId = parseInt(mapId, 10);
+  if (isNaN(numericMapId)) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Invalid map ID' }));
+    return;
+  }
+
+  console.log(`[getJumpRooms] Requested rooms for mapId: ${numericMapId} (original: ${mapId}, type: ${typeof mapId})`);
+  const rooms = await db.getRoomsByMap(numericMapId);
+  console.log(`[getJumpRooms] Found ${rooms ? rooms.length : 0} rooms for map ${numericMapId}`);
+  if (rooms && rooms.length > 0) {
+    console.log(`[getJumpRooms] First room sample:`, rooms[0]);
+  }
+  ws.send(JSON.stringify({ type: 'jumpRooms', rooms: rooms || [] }));
 }
 
 /**

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markup Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/gameeditors/editor-shared.css">
+</head>
+<body>
+    <div id="markupEditor" class="editor-container" x-data="markupEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Markup Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="saveConvention()" :disabled="(!selectedConvention && !isCreating) || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <input type="text" class="editor-input search-input" placeholder="Search conventions..." x-model="filters.search" @input="applyFilter()">
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadConventions()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+                <button class="editor-btn editor-btn-primary" @click="createConvention()">+ New Convention</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Convention List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Conventions: ' + filteredConventions.length"></span>
+                </div>
+                <div class="editor-list">
+                    <template x-for="convention in filteredConventions" :key="convention.id">
+                        <div class="editor-list-item" 
+                             :class="{ 'selected': selectedConvention && selectedConvention.id === convention.id }"
+                             @click="selectConvention(convention)"
+                             style="position: relative;">
+                            <button class="preview-refresh-btn" @click.stop="refreshPreview('list-preview-' + convention.id)" title="Replay effect" style="position: absolute; top: 8px; right: 8px; padding: 4px 8px; font-size: 0.85em; background: var(--editor-bg-subtle); border: 1px solid var(--editor-border-dim); color: var(--editor-text-dim); cursor: pointer; border-radius: 3px; z-index: 10;">↻</button>
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + convention.id"></span>
+                            </div>
+                            <div class="editor-list-title" x-text="convention.syntax || 'No syntax'"></div>
+                            <div class="editor-list-subtitle" x-text="convention.description || 'No description'"></div>
+                            <div class="editor-list-preview-container" style="position: relative;">
+                                <div class="editor-list-preview" :id="'list-preview-' + convention.id" x-html="renderPreviewForList(convention)" x-init="$nextTick(() => initPreviewTypewriter($el))"></div>
+                            </div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredConventions.length === 0">
+                        <span x-show="loading">Loading conventions...</span>
+                        <span x-show="!loading">No conventions found matching filters.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Convention Form -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedConvention && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select a convention or click "+ New Convention" to create one.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedConvention || isCreating">
+                    <div class="editor-form">
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <template x-if="selectedConvention && !isCreating">
+                                <button class="editor-btn editor-btn-danger" @click="deleteConvention()" :disabled="loading">Delete</button>
+                            </template>
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedConvention = null; isCreating = false; resetForm()">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="saveConvention()" :disabled="loading">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Basic Info Section -->
+                        <div class="form-section">
+                            <div class="section-header">Basic Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Syntax Display *</label>
+                                    <input type="text" class="editor-input" x-model="formData.syntax" placeholder="e.g., &lt;text&gt; or **text**">
+                                </div>
+                                <div class="form-field">
+                                    <label>Opening Token *</label>
+                                    <input type="text" class="editor-input" x-model="formData.opening" placeholder="e.g., &lt; or **" maxlength="3" @input="onOpeningTokenChange()">
+                                    <small style="color: var(--editor-text-dim); font-size: 0.85em;">Max 3 characters</small>
+                                </div>
+                                <div class="form-field">
+                                    <label>Closing Token *</label>
+                                    <input type="text" class="editor-input" x-model="formData.closing" placeholder="e.g., &gt; or **" @input="checkConflictsOnChange()">
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" x-model="formData.description" rows="2" placeholder="What this markup convention is used for..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Conflict Warning -->
+                        <div class="form-section" x-show="conflictCheck.hasConflict">
+                            <div class="section-header" style="color: var(--editor-danger);">⚠ Conflict Detected</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <p style="color: var(--editor-warning);">The opening/closing tokens conflict with an existing convention:</p>
+                                    <div x-show="conflictCheck.conflicting" style="margin-top: 8px; padding: 8px; background: var(--editor-bg-subtle); border: 1px solid var(--editor-danger);">
+                                        <strong x-text="conflictCheck.conflicting.syntax"></strong>
+                                        <div x-html="renderPreviewForConflict(conflictCheck.conflicting)" style="margin-top: 4px;"></div>
+                                    </div>
+                                    <p style="color: var(--editor-text-dim); margin-top: 8px; font-size: 0.9em;">You can still save, but this may cause rendering conflicts in the game.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Styling Section -->
+                        <div class="form-section">
+                            <div class="section-header">Styling</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Color</label>
+                                    <select class="editor-select" x-model="formData.color">
+                                        <option value="keyword">Keyword (NPC color, default magenta)</option>
+                                        <option value="inherit">Inherit (keep parent color)</option>
+                                        <template x-for="colorOption in MARKUP_COLORS" :key="colorOption.value">
+                                            <option :value="colorOption.value" x-text="colorOption.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Effects</label>
+                                    <div class="effects-toggles" style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px;">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.glow" @change="updateEffects()">
+                                            <span>Glow</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.bold" @change="updateEffects()">
+                                            <span>Bold</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.italic" @change="updateEffects()">
+                                            <span>Italic</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.flash" @change="updateEffects()">
+                                            <span>Flash</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.pulse" @change="updateEffects()">
+                                            <span>Pulse</span>
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" x-model="formData.effects.typewriter" @change="updateEffects()">
+                                            <span>Typewriter</span>
+                                        </label>
+                                        <div x-show="formData.effects.typewriter" style="display: flex; align-items: center; gap: 8px;">
+                                            <label style="font-size: 0.9em;">Delay (ms):</label>
+                                            <input type="number" class="editor-input" x-model="formData.effects.typewriterDelay" style="width: 80px;" min="1" placeholder="100">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Example Section -->
+                        <div class="form-section">
+                            <div class="section-header">Example</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <label>Example Text</label>
+                                    <input type="text" class="editor-input" x-model="formData.example" placeholder="Text to demonstrate this markup convention" @input="updatePreview()">
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Live Preview</label>
+                                    <div class="preview-panel" style="position: relative; min-height: 60px; padding: 12px; background: var(--editor-bg-dark); border: 1px solid var(--editor-border-dim); border-radius: 4px; margin-top: 8px;">
+                                        <div id="editor-preview" x-html="renderPreview()" style="color: var(--editor-text);" x-init="$nextTick(() => initPreviewTypewriter($el))"></div>
+                                        <button class="preview-refresh-btn" @click="refreshPreview('editor-preview')" title="Replay effect" style="position: absolute; top: 8px; right: 8px; padding: 4px 8px; font-size: 0.85em; background: var(--editor-bg-subtle); border: 1px solid var(--editor-border-dim); color: var(--editor-text-dim); cursor: pointer; border-radius: 3px;">↻</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Metadata Section -->
+                        <div class="form-section" x-show="selectedConvention && !isCreating">
+                            <div class="section-header">Metadata</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Convention ID</label>
+                                    <input type="text" class="editor-input" :value="selectedConvention?.id" readonly>
+                                </div>
+                                <div class="form-field span-2">
+                                    <label>Created At</label>
+                                    <input type="text" class="editor-input" :value="selectedConvention?.created_at ? new Date(selectedConvention.created_at).toLocaleString() : 'N/A'" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/gameeditors/markup-editor.js');
+        console.log('[MarkupEditor] Module loaded, markupEditor available:', typeof window.markupEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
+
