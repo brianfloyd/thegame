@@ -71,3 +71,4 @@ DROP FUNCTION convert_byproducts_to_ids(JSONB);
 -- Note: Old format (item_name) is completely replaced with item_id format
 -- No backward compatibility needed as this is internal system data
 
+

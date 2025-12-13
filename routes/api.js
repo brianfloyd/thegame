@@ -541,8 +541,12 @@ function setupRoutes(app, options) {
     res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'ticket-editor.html'));
   });
   
+  app.get('/formulas', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'formula-editor.html'));
+  });
+  
   // Serve editor CSS and JS files (these need to be accessible after auth)
-  app.get('/:file(map|npc|item|player|ticket|crafting)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
+  app.get('/:file(map|npc|item|player|ticket|crafting|formula)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
     const file = `${req.params.file}-editor.${req.params.ext}`;
     const filePath = path.join(__dirname, '..', 'public', 'gameeditors', file);
     

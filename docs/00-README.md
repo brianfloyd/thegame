@@ -6,6 +6,8 @@
 > Cursor exists to **extend, maintain, and protect canon** while allowing **explicit, intentional evolution**.
 > Cursor must never invent canon — but must never block growth either.
 
+**🚨 CRITICAL: Cursor MUST IGNORE `/docs/Chuck docs/` when referencing canon. Only numbered documents in `docs/` root (00-XX, 10-XX, 20-XX, 30-XX, 50-XX) are canonical. Documents in `/docs/Chuck docs/` are reference materials (999-*) and are NOT canonical sources.**
+
 ---
 
 ## 🔴 VISUAL DRIFT CUE (MANDATORY)
@@ -21,6 +23,23 @@ Every Cursor response MUST internally classify its actions using **exactly one**
 
 → Safe to execute immediately
 
+---
+## 🧠 Canon Creation & Update Flow (MANDATORY)
+
+**CRITICAL: Cursor MUST ignore `/docs/Chuck docs/` when referencing canon. Documents in `/docs/Chuck docs/` are reference materials (999-*) and are NOT canonical sources of truth.**
+
+Cursor must follow this sequence exactly:
+
+1. **Consult existing canon** (via this README)
+   - **ONLY reference documents in `docs/` root (numbered: 00-XX, 10-XX, 20-XX, 30-XX, 50-XX)**
+   - **NEVER reference documents in `/docs/Chuck docs/` as canon**
+2. If canon exists → apply or propose changes
+3. If canon is missing or unclear:
+   - Use **01-00-scrub-prompt-template.md**
+   - Produce a `999-` reference document in `/docs/Chuck docs/`
+4. Canon may ONLY be created or updated using:
+   - **01-01-scrub-add-cannon-template.md**
+5. No other process may introduce canonical rules
 ---
 
 ### 🟡 CANON PROPOSE
@@ -70,10 +89,6 @@ Cursor must NEVER skip steps.
 ---
 
 ## 🧭 PLAN / ASK MODE ENTRY RULE (NEW – MANDATORY)
-
-If the user intent is ambiguous, Cursor MUST default to:
-ASK mode → Canon relevance check → 🟡 CANON PROPOSE (never 🟢 APPLY).
-
 
 When Cursor is operating in **PLAN mode** or **ASK mode**, the **very first step** in the response MUST be:
 
@@ -298,18 +313,33 @@ If knowledge persistence is required:
 
 ## 🗂️ FILE & WRITE RULES
 
-* Canon docs live in their canonical locations
+**CRITICAL RULE: Cursor MUST IGNORE `/docs/Chuck docs/` when referencing canon.**
+
+* Canon docs live in their canonical locations (`docs/` root, numbered: 00-XX, 10-XX, 20-XX, 30-XX, 50-XX)
 * Reference docs MUST:
 
   * Start with `999-`
   * Live in `/docs/Chuck docs/`
-  * Never be cited as source of truth
+  * **NEVER be cited as source of truth**
+  * **NEVER be treated as canonical specifications**
+  * **MUST be ignored when determining canonical rules or specifications**
+
+**File Structure:** Cursor MUST follow **`20-00-file-structure-canonical.md`** when creating, moving, or organizing files. This document defines:
+  * Directory structure and purpose
+  * File naming conventions
+  * Archive policies and organization
+  * Documentation organization rules
+  * Root directory cleanup rules
 
 Cursor remains in **ASK mode** until explicitly approved.
 
 ---
 
 ## 🧠 PRIME DIRECTIVE (NON-NEGOTIABLE)
+
+> **Scrubs (01-00) produce evidence.**
+> **Canon (01-01) produces law.**
+> **Governance rules decide when each is allowed.**
 
 > **Cursor exists to make the system more legible over time.**
 > If an action increases ambiguity, drift, or silent complexity — it is wrong.

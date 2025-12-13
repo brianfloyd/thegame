@@ -1,66 +1,241 @@
 /**
- * FactoryWidget Component
+ * FactoryWidget - Auto-managed widget for factory crafting
  * 
  * Handles Factory widget display when player is in factory-type rooms.
  * Auto-shows/hides based on room type.
+ * 
+ * **ARCHITECTURE:** Extends Widget (render-based) - ALL panel widgets use Widget system
  */
 
-import Component from '../core/Component.js';
+import Widget from './Widget.js';
 
-export default class FactoryWidget extends Component {
-    constructor(game) {
-        super(game);
-        this.isVisible = false;
+export default class FactoryWidget extends Widget {
+    constructor(game, id) {
+        super(game, id);
         this.currentState = null;
         this.delegationSetup = false;
         this.isCrafting = false;
         this.craftProgress = 0;
         this.craftProgressInterval = null;
+        this.inFactoryRoom = false; // Track factory room state for visibility
     }
     
     init() {
         super.init();
-        
-        // Subscribe to room updates to check for factory rooms
-        this.subscribe('room:update', (data) => this.handleRoomUpdate(data));
-        this.subscribe('room:moved', (data) => this.handleRoomMoved(data));
-        
-        // Subscribe to factoryWidgetState messages for direct state updates
-        this.subscribe('factoryWidgetState', (data) => this.handleFactoryWidgetState(data));
-        
-        // Subscribe to craft-related messages
-        this.subscribe('factoryCraftStarted', (data) => this.handleCraftStarted(data));
-        this.subscribe('factoryCraftComplete', (data) => this.handleCraftComplete(data));
-        this.subscribe('factoryCraftFizzle', (data) => this.handleCraftFizzle(data));
-        
-        // Initialize drag and drop using event delegation
-        this.initDragDropDelegation();
-        
-        // Initialize empty slot button handlers
-        this.initEmptyButtons();
-        
-        // Initialize craft button handler
-        this.initCraftButton();
-        
-        console.log('[FactoryWidget] Initialized');
+        // No DOM lookups in init - done in onAttach
     }
     
     /**
-     * Initialize drag and drop - attach handlers directly to each slot
+     * Render widget - returns single root element
      */
-    initDragDropDelegation() {
-        // Wait for DOM to be ready, then setup
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => this.attachSlotHandlers());
-        } else {
-            this.attachSlotHandlers();
+    render() {
+        const root = document.createElement('div');
+        root.className = 'widget widget-factory widget-theme-factory';
+        root.setAttribute('data-widget', 'factory');
+        root.id = 'widget-factory';
+        
+        // Create header
+        const header = document.createElement('div');
+        header.className = 'widget-header';
+        header.textContent = 'Factory Machine';
+        root.appendChild(header);
+        
+        // Create content container
+        const content = document.createElement('div');
+        content.className = 'widget-content';
+        
+        // Quantity input (for ingredient slots)
+        const quantityInputContainer = document.createElement('div');
+        quantityInputContainer.style.cssText = 'margin-bottom: 10px; display: flex; align-items: center; gap: 8px;';
+        
+        const quantityLabel = document.createElement('label');
+        quantityLabel.textContent = 'Quantity:';
+        quantityLabel.style.cssText = 'color: #ff8800; font-size: 10px;';
+        
+        const quantityInput = document.createElement('input');
+        quantityInput.id = 'factory-quantity-input';
+        quantityInput.type = 'number';
+        quantityInput.min = '1';
+        quantityInput.value = '1';
+        quantityInput.className = 'widget-input';
+        quantityInput.style.cssText = 'width: 60px; padding: 4px;';
+        
+        quantityInputContainer.appendChild(quantityLabel);
+        quantityInputContainer.appendChild(quantityInput);
+        content.appendChild(quantityInputContainer);
+        
+        // Slot container
+        const slotContainer = document.createElement('div');
+        slotContainer.className = 'factory-slot-container';
+        slotContainer.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px;';
+        
+        // Create 5 slots (2 ingredient slots + 3 rune slots)
+        for (let i = 0; i < 5; i++) {
+            const slot = document.createElement('div');
+            slot.id = `factory-slot-${i}`;
+            slot.className = 'widget-factory-slot';
+            
+            // Slot label
+            const slotLabel = document.createElement('div');
+            slotLabel.style.cssText = 'font-size: 9px; color: #888; margin-bottom: 4px; text-transform: uppercase;';
+            if (i === 0) slotLabel.textContent = 'Ingredient 1';
+            else if (i === 1) slotLabel.textContent = 'Ingredient 2';
+            else if (i === 2) slotLabel.textContent = 'Production Rune';
+            else if (i === 3) slotLabel.textContent = 'Enhancement Rune';
+            else if (i === 4) slotLabel.textContent = 'Modifier Rune';
+            slot.appendChild(slotLabel);
+            
+            // Slot content
+            const slotContent = document.createElement('div');
+            slotContent.className = 'factory-slot-content';
+            slotContent.style.cssText = 'flex: 1; display: flex; align-items: center; justify-content: center; min-height: 40px; color: #ff8800; font-size: 10px; text-align: center;';
+            slot.appendChild(slotContent);
+            
+            // Empty button (hidden initially)
+            const emptyBtn = document.createElement('button');
+            emptyBtn.className = 'factory-slot-empty-btn widget-btn widget-btn-small';
+            emptyBtn.setAttribute('data-slot', i.toString());
+            emptyBtn.textContent = 'Empty';
+            emptyBtn.style.cssText = 'display: none; margin-top: 4px; width: 100%; font-size: 9px; padding: 2px 4px;';
+            slot.appendChild(emptyBtn);
+            
+            slotContainer.appendChild(slot);
         }
+        
+        content.appendChild(slotContainer);
+        
+        // Craft button
+        const craftBtn = document.createElement('button');
+        craftBtn.id = 'factory-craft-btn';
+        craftBtn.className = 'widget-btn widget-btn-primary';
+        craftBtn.textContent = 'Craft';
+        craftBtn.style.cssText = 'width: 100%; margin-bottom: 10px; display: none;';
+        content.appendChild(craftBtn);
+        
+        // Progress container (hidden initially)
+        const progressContainer = document.createElement('div');
+        progressContainer.id = 'factory-progress-container';
+        progressContainer.style.cssText = 'display: none; margin-bottom: 10px;';
+        
+        const progressBar = document.createElement('div');
+        progressBar.style.cssText = 'width: 100%; height: 20px; background: #0a0a0a; border: 1px solid #ff8800; border-radius: 4px; overflow: hidden; margin-bottom: 4px;';
+        
+        const progressFill = document.createElement('div');
+        progressFill.id = 'factory-progress-fill';
+        progressFill.style.cssText = 'height: 100%; width: 0%; background: #ff8800; transition: width 0.1s linear;';
+        progressBar.appendChild(progressFill);
+        progressContainer.appendChild(progressBar);
+        
+        const progressText = document.createElement('div');
+        progressText.id = 'factory-progress-text';
+        progressText.style.cssText = 'text-align: center; color: #ff8800; font-size: 10px;';
+        progressText.textContent = 'Crafting...';
+        progressContainer.appendChild(progressText);
+        
+        content.appendChild(progressContainer);
+        
+        // Message element
+        const messageEl = document.createElement('div');
+        messageEl.id = 'factory-message';
+        messageEl.style.cssText = 'display: none; padding: 8px; margin-top: 10px; border: 1px solid #ff8800; border-radius: 4px; font-size: 10px; text-align: center;';
+        content.appendChild(messageEl);
+        
+        root.appendChild(content);
+        
+        return root;
+    }
+    
+    /**
+     * Called after widget is attached
+     */
+    onAttach() {
+        // Attach drag-drop handlers to slots
+        this.attachSlotHandlers();
+        
+        // Setup empty button handlers
+        this.setupEmptyButtons();
+        
+        // Setup craft button handler
+        this.setupCraftButton();
+        
+        console.log('[FactoryWidget] Attached and initialized');
+    }
+    
+    /**
+     * Called before widget is detached
+     */
+    onDetach() {
+        // Clean up progress interval
+        if (this.craftProgressInterval) {
+            clearInterval(this.craftProgressInterval);
+            this.craftProgressInterval = null;
+        }
+        
+        // Clear state
+        this.currentState = null;
+        this.isCrafting = false;
+        this.inFactoryRoom = false;
+    }
+    
+    /**
+     * Handle backend messages routed from WidgetManager
+     */
+    onMessage(msg) {
+        if (msg.type === 'roomUpdate' || msg.type === 'moved') {
+            this.handleRoomChange(msg);
+        } else if (msg.type === 'factoryWidgetState') {
+            this.handleFactoryWidgetState(msg);
+        } else if (msg.type === 'factoryCraftStarted') {
+            this.handleCraftStarted(msg);
+        } else if (msg.type === 'factoryCraftComplete') {
+            this.handleCraftComplete(msg);
+        } else if (msg.type === 'factoryCraftFizzle') {
+            this.handleCraftFizzle(msg);
+        }
+    }
+    
+    /**
+     * Handle room change (update or moved)
+     */
+    handleRoomChange(data) {
+        if (!data.room) {
+            this.inFactoryRoom = false;
+            return;
+        }
+        
+        const roomType = data.room.roomType || data.room.room_type;
+        console.log('[FactoryWidget] Room change detected - roomType:', roomType, 'room:', data.room.name);
+        
+        if (roomType === 'factory') {
+            // In factory room - update state
+            this.inFactoryRoom = true;
+            const factoryState = data.factoryWidgetState || { slots: [null, null, null, null, null] };
+            console.log('[FactoryWidget] In factory room, updating state:', factoryState);
+            this.currentState = factoryState;
+            this.updateSlots(factoryState);
+        } else {
+            // Not in factory room
+            this.inFactoryRoom = false;
+            console.log('[FactoryWidget] Not in factory room');
+        }
+    }
+    
+    /**
+     * Handle factoryWidgetState message directly
+     */
+    handleFactoryWidgetState(data) {
+        if (!data || !data.state) return;
+        console.log('[FactoryWidget] Received factoryWidgetState message:', data.state);
+        this.currentState = data.state;
+        this.updateSlots(data.state);
     }
     
     /**
      * Attach drag-drop handlers DIRECTLY to each factory slot element
      */
     attachSlotHandlers() {
+        if (!this.rootElement) return;
+        
         console.log('[FactoryWidget] Attaching handlers to all 5 slots');
         
         for (let i = 0; i < 5; i++) {
@@ -75,7 +250,7 @@ export default class FactoryWidget extends Component {
      * Attach handlers to a specific slot by index
      */
     attachHandlerToSlot(slotIndex) {
-        const slot = document.getElementById(`factory-slot-${slotIndex}`);
+        const slot = this.rootElement.querySelector(`#factory-slot-${slotIndex}`);
         if (!slot) {
             console.warn(`[FactoryWidget] Slot ${slotIndex} not found in DOM`);
             return;
@@ -139,7 +314,7 @@ export default class FactoryWidget extends Component {
                 
                 if (!isRuneSlot) {
                     // Ingredient slots (0, 1) can use quantity input
-                    const quantityInput = document.getElementById('factory-quantity-input');
+                    const quantityInput = widget.rootElement.querySelector('#factory-quantity-input');
                     if (quantityInput) {
                         const inputValue = parseInt(quantityInput.value, 10);
                         if (!isNaN(inputValue) && inputValue > 0) {
@@ -169,146 +344,20 @@ export default class FactoryWidget extends Component {
     }
     
     /**
-     * Re-attach handlers (called when widget is shown)
-     */
-    setupDelegation() {
-        // Re-attach handlers to all slots in case DOM was updated
-        for (let i = 0; i < 5; i++) {
-            const slot = document.getElementById(`factory-slot-${i}`);
-            if (slot) {
-                // Force re-attach by clearing the flag
-                slot._factoryHandlersAttached = false;
-            }
-        }
-        this.attachSlotHandlers();
-    }
-    
-    /**
-     * Handle room update events
-     */
-    handleRoomUpdate(data) {
-        this.handleRoomChange(data);
-    }
-    
-    /**
-     * Handle room moved events
-     */
-    handleRoomMoved(data) {
-        this.handleRoomChange(data);
-    }
-    
-    /**
-     * Handle room change (update or moved)
-     */
-    handleRoomChange(data) {
-        if (!data.room) {
-            this.hide();
-            return;
-        }
-        
-        const roomType = data.room.roomType || data.room.room_type;
-        console.log('[FactoryWidget] Room change detected - roomType:', roomType, 'room:', data.room.name);
-        
-        if (roomType === 'factory') {
-            // In factory room - show widget
-            const factoryState = data.factoryWidgetState || { slots: [null, null, null, null, null] };
-            console.log('[FactoryWidget] In factory room, showing widget with state:', factoryState);
-            this.show(factoryState);
-        } else {
-            // Not in factory room - hide widget
-            console.log('[FactoryWidget] Not in factory room, hiding widget');
-            this.hide();
-        }
-    }
-    
-    /**
-     * Show the Factory widget with state
-     */
-    show(state) {
-        const widget = document.getElementById('widget-factory');
-        if (!widget) {
-            console.error('[FactoryWidget] Widget element not found: widget-factory');
-            return;
-        }
-        
-        this.isVisible = true;
-        this.currentState = state || { slots: [null, null, null, null, null] };
-        
-        // Update widget slots
-        this.updateSlots(this.currentState);
-        
-        // Ensure delegation is setup (only runs once)
-        this.setupDelegation();
-        
-        // Set global flag for updateWidgetDisplay
-        if (typeof window.factoryWidgetVisible !== 'undefined') {
-            window.factoryWidgetVisible = true;
-        }
-        
-        // Update widget display
-        if (typeof window.updateWidgetDisplay === 'function') {
-            window.updateWidgetDisplay();
-        }
-        
-        console.log('[FactoryWidget] Widget shown, isVisible:', this.isVisible);
-    }
-    
-    /**
-     * Hide the Factory widget
-     */
-    hide() {
-        if (!this.isVisible) return;
-        
-        this.isVisible = false;
-        this.currentState = null;
-        
-        // Set global flag for updateWidgetDisplay
-        if (typeof window.factoryWidgetVisible !== 'undefined') {
-            window.factoryWidgetVisible = false;
-        }
-        
-        // Update widget display
-        if (typeof window.updateWidgetDisplay === 'function') {
-            window.updateWidgetDisplay();
-        }
-        
-        console.log('[FactoryWidget] Widget hidden');
-    }
-    
-    /**
-     * Handle factoryWidgetState message directly
-     */
-    handleFactoryWidgetState(data) {
-        if (!data || !data.state) return;
-        console.log('[FactoryWidget] Received factoryWidgetState message:', data.state);
-        this.currentState = data.state;
-        this.updateSlots(data.state);
-    }
-    
-    /**
-     * Initialize empty slot button handlers
-     */
-    initEmptyButtons() {
-        // Wait for DOM to be ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => this.setupEmptyButtons());
-        } else {
-            this.setupEmptyButtons();
-        }
-    }
-    
-    /**
      * Setup empty slot button event listeners using delegation
      */
     setupEmptyButtons() {
-        const container = document.querySelector('.factory-slot-container');
+        if (!this.rootElement) return;
+        
+        const container = this.rootElement.querySelector('.factory-slot-container');
         if (!container) return;
         
-        // Use delegation for empty buttons too
+        // Use delegation for empty buttons
         if (container._emptyButtonHandler) {
             container.removeEventListener('click', container._emptyButtonHandler);
         }
         
+        const widget = this;
         container._emptyButtonHandler = (e) => {
             // Check if clicked on empty button
             if (e.target.classList.contains('factory-slot-empty-btn')) {
@@ -317,7 +366,7 @@ export default class FactoryWidget extends Component {
                 
                 const slotIndex = parseInt(e.target.dataset.slot, 10);
                 if (!isNaN(slotIndex)) {
-                    this.emptySlot(slotIndex);
+                    widget.emptySlot(slotIndex);
                 }
             }
         };
@@ -348,11 +397,11 @@ export default class FactoryWidget extends Component {
      * Update factory widget slots display
      */
     updateSlots(state) {
-        if (!state || !state.slots) return;
+        if (!this.rootElement || !state || !state.slots) return;
         
         // Update all 5 slots (2 supply slots + 3 rune slots)
         for (let i = 0; i < 5; i++) {
-            const slotEl = document.getElementById(`factory-slot-${i}`);
+            const slotEl = this.rootElement.querySelector(`#factory-slot-${i}`);
             if (!slotEl) continue;
             
             const content = slotEl.querySelector('.factory-slot-content');
@@ -426,33 +475,18 @@ export default class FactoryWidget extends Component {
     }
     
     /**
-     * Get visibility state
-     */
-    getVisibility() {
-        return this.isVisible;
-    }
-    
-    /**
      * Initialize craft button handler
      */
-    initCraftButton() {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => this.setupCraftButton());
-        } else {
-            this.setupCraftButton();
-        }
-    }
-    
-    /**
-     * Setup craft button click handler
-     */
     setupCraftButton() {
-        const craftBtn = document.getElementById('factory-craft-btn');
+        if (!this.rootElement) return;
+        
+        const craftBtn = this.rootElement.querySelector('#factory-craft-btn');
         if (!craftBtn) return;
         
+        const widget = this;
         craftBtn.addEventListener('click', () => {
-            if (this.isCrafting) return;
-            this.startCraft();
+            if (widget.isCrafting) return;
+            widget.startCraft();
         });
         
         console.log('[FactoryWidget] Craft button handler setup');
@@ -478,7 +512,9 @@ export default class FactoryWidget extends Component {
      * Update craft button visibility based on Production Rune presence
      */
     updateCraftButtonVisibility() {
-        const craftBtn = document.getElementById('factory-craft-btn');
+        if (!this.rootElement) return;
+        
+        const craftBtn = this.rootElement.querySelector('#factory-craft-btn');
         if (!craftBtn) return;
         
         const hasRune = this.hasProductionRune();
@@ -503,16 +539,18 @@ export default class FactoryWidget extends Component {
      * Handle craft started message
      */
     handleCraftStarted(data) {
+        if (!this.rootElement) return;
+        
         console.log('[FactoryWidget] Craft started:', data);
         
         this.isCrafting = true;
         this.craftProgress = 0;
         
         // Hide craft button, show progress
-        const craftBtn = document.getElementById('factory-craft-btn');
-        const progressContainer = document.getElementById('factory-progress-container');
-        const progressFill = document.getElementById('factory-progress-fill');
-        const progressText = document.getElementById('factory-progress-text');
+        const craftBtn = this.rootElement.querySelector('#factory-craft-btn');
+        const progressContainer = this.rootElement.querySelector('#factory-progress-container');
+        const progressFill = this.rootElement.querySelector('#factory-progress-fill');
+        const progressText = this.rootElement.querySelector('#factory-progress-text');
         
         if (craftBtn) craftBtn.style.display = 'none';
         if (progressContainer) progressContainer.style.display = 'block';
@@ -534,8 +572,9 @@ export default class FactoryWidget extends Component {
             currentUpdate++;
             const progress = Math.min(100, (currentUpdate / totalUpdates) * 100);
             
-            if (progressFill) {
-                progressFill.style.width = `${progress}%`;
+            const fill = this.rootElement?.querySelector('#factory-progress-fill');
+            if (fill) {
+                fill.style.width = `${progress}%`;
             }
             
             if (currentUpdate >= totalUpdates) {
@@ -549,6 +588,8 @@ export default class FactoryWidget extends Component {
      * Handle craft complete message
      */
     handleCraftComplete(data) {
+        if (!this.rootElement) return;
+        
         console.log('[FactoryWidget] Craft complete:', data);
         
         this.isCrafting = false;
@@ -559,8 +600,8 @@ export default class FactoryWidget extends Component {
             this.craftProgressInterval = null;
         }
         
-        // Hide progress, show result
-        const progressContainer = document.getElementById('factory-progress-container');
+        // Hide progress
+        const progressContainer = this.rootElement.querySelector('#factory-progress-container');
         if (progressContainer) progressContainer.style.display = 'none';
         
         // Show result message
@@ -579,6 +620,8 @@ export default class FactoryWidget extends Component {
      * Handle craft fizzle message (invalid recipe)
      */
     handleCraftFizzle(data) {
+        if (!this.rootElement) return;
+        
         console.log('[FactoryWidget] Craft fizzle:', data);
         
         this.isCrafting = false;
@@ -590,7 +633,7 @@ export default class FactoryWidget extends Component {
         }
         
         // Hide progress
-        const progressContainer = document.getElementById('factory-progress-container');
+        const progressContainer = this.rootElement.querySelector('#factory-progress-container');
         if (progressContainer) progressContainer.style.display = 'none';
         
         // Show fizzle message
@@ -604,7 +647,9 @@ export default class FactoryWidget extends Component {
      * Show a message in the factory widget
      */
     showMessage(text, type = 'info') {
-        const messageEl = document.getElementById('factory-message');
+        if (!this.rootElement) return;
+        
+        const messageEl = this.rootElement.querySelector('#factory-message');
         if (!messageEl) return;
         
         messageEl.textContent = text;
@@ -613,7 +658,17 @@ export default class FactoryWidget extends Component {
         
         // Auto-hide after delay
         setTimeout(() => {
-            messageEl.style.display = 'none';
+            if (messageEl.parentElement) {
+                messageEl.style.display = 'none';
+            }
         }, type === 'critical' || type === 'success' ? 5000 : 3000);
+    }
+    
+    /**
+     * Get visibility state (for WidgetManager)
+     * WidgetManager checks this.inFactoryRoom to determine visibility
+     */
+    getVisibility() {
+        return this.inFactoryRoom;
     }
 }

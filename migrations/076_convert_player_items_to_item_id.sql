@@ -95,3 +95,4 @@ COMMENT ON COLUMN player_items.item_id IS
 -- Note: The old item_name column has been dropped.
 -- All code should now use item_id instead of item_name.
 
+

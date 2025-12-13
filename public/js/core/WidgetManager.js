@@ -75,8 +75,10 @@ export default class WidgetManager {
             }
             this.updateToggleBar();
             // Route to widgets FIRST so they can update their state
+            console.log('[WidgetManager] room:update received, routing to widgets');
             this.handleMessage({ type: 'roomUpdate', ...data });
             // THEN update visibility after widgets have processed the message
+            console.log('[WidgetManager] Updating visibility after room update');
             this.updateVisibility();
         });
         
@@ -84,8 +86,10 @@ export default class WidgetManager {
             this.playerState.inFactoryRoom = data.room?.roomType === 'factory';
             this.updateToggleBar();
             // Route to widgets FIRST so they can update their state
+            console.log('[WidgetManager] room:moved received, routing to widgets');
             this.handleMessage({ type: 'moved', ...data });
             // THEN update visibility after widgets have processed the message
+            console.log('[WidgetManager] Updating visibility after room moved');
             this.updateVisibility();
         });
         
@@ -104,6 +108,20 @@ export default class WidgetManager {
         
         this.game.messageBus.on('telepathSent', (data) => {
             this.handleMessage({ type: 'telepathSent', ...data });
+        });
+        
+        // Route inventory updates to widgets (for NPC widget resource tracking)
+        this.game.messageBus.on('inventory:update', (data) => {
+            this.handleMessage({ type: 'inventory:update', ...data });
+        });
+        
+        this.game.messageBus.on('inventoryList', (data) => {
+            this.handleMessage({ type: 'inventoryList', items: data.items || data });
+        });
+        
+        // Route direct NPC widget resource gain messages from NPC cycle engine
+        this.game.messageBus.on('npcWidget:resourceGain', (data) => {
+            this.handleMessage({ type: 'npcWidget:resourceGain', ...data });
         });
         
         // Route other game messages to widgets
@@ -198,6 +216,10 @@ export default class WidgetManager {
                 }
                 widget.init();
                 this.widgets.set(widgetDef.id, widget);
+                
+                if (widgetDef.id === 'npc') {
+                    console.log('[WidgetManager] NPC widget created and initialized');
+                }
                 
                 // Initialize active widgets from defaultActive
                 if (widgetDef.defaultActive && !widgetDef.autoManaged) {
@@ -454,7 +476,12 @@ export default class WidgetManager {
                     // Check if widget has onMessage method (Widget-based widgets)
                     // Component-based widgets use MessageBus subscriptions instead
                     if (typeof widget.onMessage === 'function') {
+                        if (id === 'npc' && (msg.type === 'roomUpdate' || msg.type === 'moved')) {
+                            console.log(`[WidgetManager] Routing ${msg.type} to NPC widget`);
+                        }
                         widget.onMessage(msg);
+                    } else if (isAutoManaged) {
+                        console.warn(`[WidgetManager] Auto-managed widget ${id} does not have onMessage method`);
                     }
                 } catch (error) {
                     console.error(`[WidgetManager] Error in widget ${id} onMessage:`, error);
@@ -475,13 +502,21 @@ export default class WidgetManager {
             let shouldShow = false;
             
             if (widgetDef.autoManaged) {
-                // Auto-managed widgets
+                // Auto-managed widgets - check widget's own visibility state
                 if (widgetDef.id === 'npc') {
                     // NPC widget manages its own visibility based on harvest state
-                    // Check if widget has active NPC
+                    // Widget sets this.activeNPC when NPC is active
                     shouldShow = !!widget.activeNPC;
+                    if (shouldShow) {
+                        console.log('[WidgetManager] NPC widget should show, activeNPC:', widget.activeNPC?.name, 'activeNPC type:', typeof widget.activeNPC);
+                    } else {
+                        console.log('[WidgetManager] NPC widget should hide, activeNPC:', widget.activeNPC, 'activeNPC type:', typeof widget.activeNPC);
+                    }
                 } else if (widgetDef.id === 'factory') {
-                    shouldShow = this.playerState.inFactoryRoom;
+                    // Factory widget manages its own visibility based on room type
+                    // Widget sets this.inFactoryRoom when in factory room
+                    // Also check playerState as fallback for initial state
+                    shouldShow = widget.inFactoryRoom !== undefined ? widget.inFactoryRoom : this.playerState.inFactoryRoom;
                 }
             } else {
                 // Regular widgets - check requirements and toggle state

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formula Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/gameeditors/editor-shared.css">
+</head>
+<body>
+    <div id="formulaEditor" class="editor-container" x-data="formulaEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Global Formula Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" 
+                        @click="saveFormula()" 
+                        :disabled="!selectedFormula || loading">
+                    Save
+                </button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <input type="text" class="editor-input search-input" 
+                       placeholder="Search formulas..." 
+                       x-model="filters.search" 
+                       @input="applyFilter()">
+                <select class="editor-select" x-model="filters.category" @change="applyFilter()">
+                    <option value="all">All Categories</option>
+                    <option value="harvest">Harvest</option>
+                    <option value="attunement">Attunement</option>
+                    <option value="pulse_echo">Pulse Echo</option>
+                    <option value="factory">Factory</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadFormulas()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Formula List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Formulas: ' + filteredFormulas.length"></span>
+                </div>
+                <div class="editor-list">
+                    <template x-for="formula in filteredFormulas" :key="formula.config_key">
+                        <div class="editor-list-item" 
+                             :class="{ 'selected': selectedFormula && selectedFormula.config_key === formula.config_key }"
+                             @click="selectFormula(formula)">
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="formula.config_key"></span>
+                                <template x-for="badge in getFormulaBadges(formula.config_key)" :key="badge">
+                                    <span class="editor-badge" 
+                                          :class="getBadgeClass(badge)" 
+                                          x-text="badge"></span>
+                                </template>
+                            </div>
+                            <div class="editor-list-title" x-text="formula.description || formula.config_key"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredFormulas.length === 0">
+                        <span x-show="loading">Loading formulas...</span>
+                        <span x-show="!loading">No formulas found matching filters.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Formula Editor -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedFormula">
+                    <div class="empty-detail">
+                        <p>Select a formula from the list to edit.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedFormula">
+                    <div class="editor-form">
+                        <!-- Formula Info -->
+                        <div class="form-section">
+                            <div class="section-header">Formula Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <label>Config Key</label>
+                                    <input type="text" class="editor-input" :value="selectedFormula.config_key" readonly>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" 
+                                              x-model="formData.description" 
+                                              rows="2" 
+                                              placeholder="Formula description..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Formula Parameters -->
+                        <div class="form-section">
+                            <div class="section-header">Formula Parameters</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Min Stat Value</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="formData.min_resonance" 
+                                           @input="updateSimulation()"
+                                           min="0" 
+                                           step="1">
+                                    <small class="form-hint">Stat value for minimum effect</small>
+                                </div>
+                                <div class="form-field">
+                                    <label>Min Value</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="formData.min_value" 
+                                           @input="updateSimulation()"
+                                           step="0.0001">
+                                    <small class="form-hint">Minimum formula output</small>
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Stat Value</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="formData.max_resonance" 
+                                           @input="updateSimulation()"
+                                           min="0" 
+                                           step="1">
+                                    <small class="form-hint">Stat value for maximum effect</small>
+                                </div>
+                                <div class="form-field">
+                                    <label>Max Value</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="formData.max_value" 
+                                           @input="updateSimulation()"
+                                           step="0.0001">
+                                    <small class="form-hint">Maximum formula output</small>
+                                </div>
+                                <div class="form-field span-2">
+                                    <label>Curve Exponent</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="formData.curve_exponent" 
+                                           @input="updateSimulation()"
+                                           min="0.1" 
+                                           max="10" 
+                                           step="0.01">
+                                    <small class="form-hint">Exponential curve shape (1.0 = linear, 2.0 = quadratic, etc.)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Formula Simulation -->
+                        <div class="form-section">
+                            <div class="section-header">Formula Simulation</div>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label>Test Stat Value</label>
+                                    <input type="number" 
+                                           class="editor-input" 
+                                           x-model.number="simulation.statValue" 
+                                           min="0" 
+                                           step="1"
+                                           @input="updateSimulation()">
+                                </div>
+                                <div class="form-field span-2">
+                                    <label>Calculated Result</label>
+                                    <input type="text" 
+                                           class="editor-input" 
+                                           :value="simulation.result" 
+                                           readonly>
+                                </div>
+                            </div>
+                            <div class="form-grid" style="margin-top: 12px;">
+                                <div class="form-field span-3">
+                                    <label>Preview at Different Stat Levels</label>
+                                    <div class="simulation-preview">
+                                        <template x-for="level in simulation.levels" :key="level.stat">
+                                            <div class="simulation-row">
+                                                <span class="sim-label" x-text="'Stat ' + level.stat + ':'"></span>
+                                                <span class="sim-value" x-text="level.result.toFixed(4)"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Application Badges -->
+                        <div class="form-section">
+                            <div class="section-header">Where This Formula Is Applied</div>
+                            <div class="badge-container">
+                                <template x-for="badge in getFormulaBadges(selectedFormula.config_key)" :key="badge">
+                                    <span class="editor-badge large" 
+                                          :class="getBadgeClass(badge)" 
+                                          x-text="badge"></span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="resetForm()">Reset</button>
+                                <button class="editor-btn editor-btn-success" 
+                                        @click="saveFormula()" 
+                                        :disabled="loading">
+                                    Save Formula
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/formula-editor.js');
+        console.log('[FormulaEditor] Module loaded, formulaEditor available:', typeof window.formulaEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
+

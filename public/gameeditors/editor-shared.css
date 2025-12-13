@@ -163,8 +163,28 @@
     color: #000000;
 }
 
+.editor-badge.cyan {
+    background: #006666;
+    color: #000000;
+}
+
+.editor-badge.yellow {
+    background: #666600;
+    color: #000000;
+}
+
+.editor-badge.green {
+    background: #003300;
+    color: #000000;
+}
+
 .editor-badge.orange {
     background: #ff9900;
+    color: #000000;
+}
+
+.editor-badge.gray {
+    background: #333333;
     color: #000000;
 }
 
@@ -471,4 +491,61 @@
 .editor-detail-pane::-webkit-scrollbar-thumb {
     background: #333;
     border-radius: 4px;
+}
+
+/* =============================
+   FORMULA EDITOR SPECIFIC
+   ============================= */
+.simulation-preview {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    margin-top: 8px;
+}
+
+.simulation-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #222;
+}
+
+.simulation-row:last-child {
+    border-bottom: none;
+}
+
+.sim-label {
+    color: #00ffff;
+    font-weight: bold;
+}
+
+.sim-value {
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+}
+
+.badge-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+
+.editor-badge.large {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.form-hint {
+    display: block;
+    color: #888;
+    font-size: 11px;
+    margin-top: 4px;
+    font-style: italic;
 }

@@ -36,3 +36,4 @@ COMMENT ON COLUMN scriptable_npcs.puzzle_reward_item_id IS
 -- Note: We keep puzzle_reward_item column temporarily for rollback safety
 -- It will be dropped in a future migration after code updates are verified
 
+

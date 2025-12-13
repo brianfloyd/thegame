@@ -5,7 +5,7 @@ Opens the game in the browser at http://localhost:3434/game with the Fliz player
 Run this PowerShell command to open the game:
 
 ```powershell
-powershell -Command "Start-Process 'http://localhost:3434/game?popup=true&playerName=%40Fliz%40&windowId=window_1764897074771_a3rhwu0jx'"
+powershell -Command "Start-Process 'http://localhost:3434/dev-login/fliz'"
 ```
 
 Or use the script:

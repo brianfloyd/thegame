@@ -454,6 +454,7 @@
                                     </div>
                                 </button>
                             </div>
+                            <button class="god-mode-editor-btn" data-player="${char.name}" data-mode="formula-editor" style="background: #00bcd4; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;" title="Formula Editor">Formulas</button>
                             ${isActive ? `
                                 <span class="active-badge" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Active</span>
                                 ${isWindowOpen ? `
@@ -503,6 +504,17 @@
                 });
             });
             
+            // Attach click handlers for god mode editor buttons
+            document.querySelectorAll('.god-mode-editor-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const playerName = btn.getAttribute('data-player');
+                    const mode = btn.getAttribute('data-mode');
+                    selectCharacterForMode(playerName, mode);
+                });
+            });
+            
             // Attach close window handlers
             document.querySelectorAll('.close-window-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -537,11 +549,13 @@
                         let editorUrl = '';
                         
                         if (mode === 'map-editor') {
-                            editorUrl = '/map-editor.html';
+                            editorUrl = '/map';
                         } else if (mode === 'npc-editor') {
-                            editorUrl = '/npc-editor.html';
+                            editorUrl = '/npc';
                         } else if (mode === 'item-editor') {
-                            editorUrl = '/item-editor.html';
+                            editorUrl = '/items';
+                        } else if (mode === 'formula-editor') {
+                            editorUrl = '/formulas';
                         }
                         
                         // Open editor in popup window

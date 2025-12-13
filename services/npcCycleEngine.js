@@ -678,6 +678,62 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                           if (!itemSent2) {
                             console.log(`[NPC Cycle] WARNING: Failed to send harvest_item_produced (player) message to player ${harvestingPlayerId}`);
                           }
+                          
+                          // Send inventory update to the harvesting player so widgets can track resources
+                          // Find connectionId for the harvesting player
+                          let harvestingConnectionId = null;
+                          for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                            if (playerData.playerId === harvestingPlayerId) {
+                              harvestingConnectionId = connId;
+                              break;
+                            }
+                          }
+                          
+                          if (harvestingConnectionId) {
+                            try {
+                              const updatedItems = await db.getPlayerItems(harvestingPlayerId);
+                              // Enrich items with item_type and rune_color for display (same as inventory command)
+                              const enrichedItems = await Promise.all(updatedItems.map(async (invItem) => {
+                                const itemData = await db.getItemByName(invItem.item_name);
+                                return {
+                                  ...invItem,
+                                  item_type: itemData?.item_type || null,
+                                  rune_color: itemData?.rune_color || null
+                                };
+                              }));
+                              
+                              const hasWarehouseDeed = await db.hasPlayerWarehouseDeed(harvestingPlayerId);
+                              const harvestingPlayerData = currentConnectedPlayers.get(harvestingConnectionId);
+                              if (harvestingPlayerData && harvestingPlayerData.ws && harvestingPlayerData.ws.readyState === WebSocket.OPEN) {
+                                harvestingPlayerData.ws.send(JSON.stringify({ 
+                                  type: 'inventoryList', 
+                                  items: enrichedItems, 
+                                  hasWarehouseDeed,
+                                  silent: true // Flag to suppress terminal display - widgets still receive it
+                                }));
+                                
+                                // Send direct NPC widget update for precise tracking
+                                // Find pulse resin quantity for the widget
+                                const pulseResinItem = enrichedItems.find(i => {
+                                  const itemName = (i.item_name || i.name || '').toLowerCase();
+                                  return itemName.includes('pulse') && itemName.includes('resin');
+                                });
+                                const pulseResinQuantity = pulseResinItem ? (parseInt(pulseResinItem.quantity) || 0) : 0;
+                                
+                                harvestingPlayerData.ws.send(JSON.stringify({
+                                  type: 'npcWidget:resourceGain',
+                                  resourceType: 'pulseResin',
+                                  amount: item.quantity,
+                                  total: pulseResinQuantity
+                                }));
+                                
+                                console.log(`[NPC Cycle] Sent silent inventory update and NPC widget resource gain to player ${harvestingPlayerId} after adding ${item.itemName}`);
+                              }
+                            } catch (invErr) {
+                              console.error(`[NPC Cycle] Error sending inventory update:`, invErr);
+                              // Non-fatal - continue with harvest
+                            }
+                          }
                         } else {
                           // Player is too encumbered, drop to ground instead
                           await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
@@ -793,6 +849,16 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       for (const [connId, playerData] of currentConnectedPlayers.entries()) {
                         if (playerData.playerId === harvestingPlayerId) {
                           await sendPlayerStats(currentConnectedPlayers, db, connId);
+                          
+                          // Send direct NPC widget update for precise tracking
+                          if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                            playerData.ws.send(JSON.stringify({
+                              type: 'npcWidget:resourceGain',
+                              resourceType: 'pulseEchoes',
+                              amount: echoYield,
+                              total: totalEchoes
+                            }));
+                          }
                           break;
                         }
                       }

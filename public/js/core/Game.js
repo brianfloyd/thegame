@@ -451,7 +451,17 @@ export default class Game {
             case 'inventoryList':
                 this.messageBus.emit('inventory:update', {
                     items: data.items,
-                    hasWarehouseDeed: data.hasWarehouseDeed
+                    hasWarehouseDeed: data.hasWarehouseDeed,
+                    silent: data.silent || false // Pass through silent flag
+                });
+                break;
+                
+            case 'npcWidget:resourceGain':
+                // Direct message from NPC cycle engine for precise resource tracking
+                this.messageBus.emit('npcWidget:resourceGain', {
+                    resourceType: data.resourceType,
+                    amount: data.amount,
+                    total: data.total
                 });
                 break;
                 

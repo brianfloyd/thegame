@@ -15,7 +15,13 @@ export default class Inventory extends Component {
         super.init();
         
         // Subscribe to inventory updates
-        this.subscribe('inventory:update', (data) => this.displayInventory(data.items));
+        // Only display if not a silent update (silent updates are for widgets only)
+        this.subscribe('inventory:update', (data) => {
+            if (!data.silent) {
+                this.displayInventory(data.items);
+            }
+            // Silent updates are still passed through for widgets that need them
+        });
     }
     
     /**

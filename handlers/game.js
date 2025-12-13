@@ -1284,7 +1284,16 @@ async function inventory(ctx, data) {
   }));
   
   const hasWarehouseDeed = await db.hasPlayerWarehouseDeed(player.id);
-  ws.send(JSON.stringify({ type: 'inventoryList', items: enrichedItems, hasWarehouseDeed }));
+  
+  // Check if this is a silent request (for widgets, not terminal display)
+  const silent = data.silent === true;
+  
+  ws.send(JSON.stringify({ 
+    type: 'inventoryList', 
+    items: enrichedItems, 
+    hasWarehouseDeed,
+    silent: silent // Pass through silent flag
+  }));
 }
 
 /**

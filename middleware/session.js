@@ -46,9 +46,11 @@ function createSessionMiddleware() {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      // Use 'lax' in production to work with Railway's proxy and redirects
-      // 'strict' can block cookies when navigating from login to character selection
-      sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'strict'
+      path: '/', // Ensure cookie is available for all routes
+      // Use 'lax' to allow cookies when navigating between editors (popup windows)
+      // 'strict' blocks cookies when navigating between popup windows or using window.location.href
+      // This is necessary for editor navigation to preserve authentication
+      sameSite: 'lax'
     }
   });
 }
@@ -61,21 +63,66 @@ function createSessionMiddleware() {
 function createValidateSession(db) {
   return async function validateSession(req, res, next) {
     const sessionId = req.sessionID;
+    const url = req.originalUrl || req.url;
     
-    if (!sessionId || !req.session.playerName) {
-      return res.status(401).send('Session required. Please select a character first.');
+    // Wait a bit for express-session to finish loading the session from store
+    // This handles race conditions during rapid navigation between editors
+    let retries = 3;
+    while ((!req.session || Object.keys(req.session).length === 0) && retries > 0) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      retries--;
     }
     
+    // Check if session exists and has playerName
+    if (!sessionId || !req.session || !req.session.playerName) {
+      console.log(`[validateSession] Missing session - url=${url}, sessionId=${sessionId?.substring(0, 8) || 'none'}, hasSession=${!!req.session}, playerName=${req.session?.playerName || 'none'}, cookies=${req.headers.cookie ? 'present' : 'missing'}`);
+      // Redirect to character selection instead of showing error
+      if (req.session) {
+        req.session.destroy();
+      }
+      return res.redirect('/?editor_auth_failed=true');
+    }
+    
+    // Check our custom session store
     const sessionData = sessionStore.get(sessionId);
-    if (!sessionData || sessionData.expiresAt < Date.now()) {
+    const now = Date.now();
+    
+    if (!sessionData) {
+      console.log(`[validateSession] Session data not found in sessionStore - url=${url}, sessionId=${sessionId?.substring(0, 8)}..., playerName=${req.session.playerName}`);
+      // Try to restore session from express-session data if available
+      if (req.session.playerName && req.session.playerId) {
+        // Session exists in express-session but not in our store - restore it
+        const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        sessionStore.set(sessionId, {
+          accountId: req.session.accountId,
+          playerName: req.session.playerName,
+          playerId: req.session.playerId,
+          createdAt: Date.now(),
+          expiresAt: expiresAt
+        });
+        console.log(`[validateSession] ✅ Restored session data for ${req.session.playerName} - url=${url}`);
+      } else {
+        console.log(`[validateSession] Cannot restore session - missing playerName or playerId`);
+        req.session.destroy();
+        return res.redirect('/?editor_auth_failed=true&reason=session_not_found');
+      }
+    } else if (sessionData.expiresAt < now) {
+      console.log(`[validateSession] Session expired - url=${url}, sessionId=${sessionId?.substring(0, 8)}..., expiredAt=${new Date(sessionData.expiresAt).toISOString()}`);
+      sessionStore.delete(sessionId);
       req.session.destroy();
-      return res.status(401).send('Session expired. Please select a character again.');
+      return res.redirect('/?editor_auth_failed=true&reason=expired');
+    } else {
+      // Session is valid - log for debugging
+      console.log(`[validateSession] ✅ Valid session - url=${url}, player=${req.session.playerName}, sessionId=${sessionId?.substring(0, 8)}...`);
     }
     
+    // Verify player still exists
     const player = await db.getPlayerByName(req.session.playerName);
     if (!player) {
+      console.log(`[validateSession] Player not found in database: ${req.session.playerName}`);
+      sessionStore.delete(sessionId);
       req.session.destroy();
-      return res.status(404).send('Player not found.');
+      return res.redirect('/?editor_auth_failed=true&reason=player_not_found');
     }
     
     req.player = player;

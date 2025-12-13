@@ -12,6 +12,7 @@ const itemEditorHandlers = require('./itemEditor');
 const playerEditorHandlers = require('./playerEditor');
 const craftingEditorHandlers = require('./craftingEditor');
 const markupEditorHandlers = require('./markupEditor');
+const formulaEditorHandlers = require('./formulaEditor');
 const { isHarvestSafeCommand, findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
 
 // Map of message types to handler functions
@@ -148,7 +149,11 @@ const handlerMap = {
   getAllMarkupConventions: markupEditorHandlers.getAllMarkupConventions,
   createMarkupConvention: markupEditorHandlers.createMarkupConvention,
   updateMarkupConvention: markupEditorHandlers.updateMarkupConvention,
-  deleteMarkupConvention: markupEditorHandlers.deleteMarkupConvention
+  deleteMarkupConvention: markupEditorHandlers.deleteMarkupConvention,
+  
+  // Formula editor handlers
+  getAllFormulas: formulaEditorHandlers.getAllFormulas,
+  updateFormula: formulaEditorHandlers.updateFormula
 };
 
 /**
