@@ -107,8 +107,12 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
   const npcDef = await db.getScriptableNPCById(roomNpc.npc_id);
   const baseCooldownTime = npcDef ? (npcDef.cooldown_time || 120000) : 120000;
   
-  // state is now JSONB, so it's already an object
-  const state = roomNpc.state || {};
+  let state = {};
+  try {
+    state = roomNpc.state ? JSON.parse(roomNpc.state) : {};
+  } catch (e) {
+    state = {};
+  }
   
   // Only end harvest if it's actually active (prevent accidental ending)
   if (!state.harvest_active) {
@@ -174,8 +178,12 @@ async function findPlayerHarvestSession(db, playerId) {
   const rhythmNpcs = result.rows;
   
   for (const npc of rhythmNpcs) {
-    // state is now JSONB, so it's already an object
-    const state = npc.state || {};
+    let state = {};
+    try {
+      state = npc.state ? JSON.parse(npc.state) : {};
+    } catch (e) {
+      state = {};
+    }
     if (state.harvest_active && state.harvesting_player_id === playerId) {
       return { roomNpcId: npc.id, npcName: npc.npc_name, state };
     }
@@ -583,8 +591,9 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 const freshNPC = await db.getAllActiveNPCs();
                 const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
                 if (freshRoomNpc && freshRoomNpc.state) {
-                  // state is now JSONB, so it's already an object
-                  const freshState = freshRoomNpc.state || {};
+                  const freshState = typeof freshRoomNpc.state === 'string' 
+                    ? JSON.parse(freshRoomNpc.state) 
+                    : freshRoomNpc.state;
                   if (!freshState.harvest_active) {
                     console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
                     // Update local state reference
@@ -677,62 +686,6 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                           const itemSent2 = await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, itemMessage, 'info', db);
                           if (!itemSent2) {
                             console.log(`[NPC Cycle] WARNING: Failed to send harvest_item_produced (player) message to player ${harvestingPlayerId}`);
-                          }
-                          
-                          // Send inventory update to the harvesting player so widgets can track resources
-                          // Find connectionId for the harvesting player
-                          let harvestingConnectionId = null;
-                          for (const [connId, playerData] of currentConnectedPlayers.entries()) {
-                            if (playerData.playerId === harvestingPlayerId) {
-                              harvestingConnectionId = connId;
-                              break;
-                            }
-                          }
-                          
-                          if (harvestingConnectionId) {
-                            try {
-                              const updatedItems = await db.getPlayerItems(harvestingPlayerId);
-                              // Enrich items with item_type and rune_color for display (same as inventory command)
-                              const enrichedItems = await Promise.all(updatedItems.map(async (invItem) => {
-                                const itemData = await db.getItemByName(invItem.item_name);
-                                return {
-                                  ...invItem,
-                                  item_type: itemData?.item_type || null,
-                                  rune_color: itemData?.rune_color || null
-                                };
-                              }));
-                              
-                              const hasWarehouseDeed = await db.hasPlayerWarehouseDeed(harvestingPlayerId);
-                              const harvestingPlayerData = currentConnectedPlayers.get(harvestingConnectionId);
-                              if (harvestingPlayerData && harvestingPlayerData.ws && harvestingPlayerData.ws.readyState === WebSocket.OPEN) {
-                                harvestingPlayerData.ws.send(JSON.stringify({ 
-                                  type: 'inventoryList', 
-                                  items: enrichedItems, 
-                                  hasWarehouseDeed,
-                                  silent: true // Flag to suppress terminal display - widgets still receive it
-                                }));
-                                
-                                // Send direct NPC widget update for precise tracking
-                                // Find pulse resin quantity for the widget
-                                const pulseResinItem = enrichedItems.find(i => {
-                                  const itemName = (i.item_name || i.name || '').toLowerCase();
-                                  return itemName.includes('pulse') && itemName.includes('resin');
-                                });
-                                const pulseResinQuantity = pulseResinItem ? (parseInt(pulseResinItem.quantity) || 0) : 0;
-                                
-                                harvestingPlayerData.ws.send(JSON.stringify({
-                                  type: 'npcWidget:resourceGain',
-                                  resourceType: 'pulseResin',
-                                  amount: item.quantity,
-                                  total: pulseResinQuantity
-                                }));
-                                
-                                console.log(`[NPC Cycle] Sent silent inventory update and NPC widget resource gain to player ${harvestingPlayerId} after adding ${item.itemName}`);
-                              }
-                            } catch (invErr) {
-                              console.error(`[NPC Cycle] Error sending inventory update:`, invErr);
-                              // Non-fatal - continue with harvest
-                            }
                           }
                         } else {
                           // Player is too encumbered, drop to ground instead
@@ -849,16 +802,6 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                       for (const [connId, playerData] of currentConnectedPlayers.entries()) {
                         if (playerData.playerId === harvestingPlayerId) {
                           await sendPlayerStats(currentConnectedPlayers, db, connId);
-                          
-                          // Send direct NPC widget update for precise tracking
-                          if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
-                            playerData.ws.send(JSON.stringify({
-                              type: 'npcWidget:resourceGain',
-                              resourceType: 'pulseEchoes',
-                              amount: echoYield,
-                              total: totalEchoes
-                            }));
-                          }
                           break;
                         }
                       }
@@ -873,8 +816,9 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                   const freshNPC = await db.getAllActiveNPCs();
                   const freshRoomNpc = freshNPC.find(n => n.id === roomNpc.id);
                   if (freshRoomNpc && freshRoomNpc.state) {
-                    // state is now JSONB, so it's already an object
-                    const freshState = freshRoomNpc.state || {};
+                    const freshState = typeof freshRoomNpc.state === 'string' 
+                      ? JSON.parse(freshRoomNpc.state) 
+                      : freshRoomNpc.state;
                     if (!freshState.harvest_active) {
                       console.log(`[NPC Cycle] WARNING: Harvest became inactive after drain for player ${harvestingPlayerId} (fresh state check)`);
                       // Update local state reference
@@ -1020,10 +964,13 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
             // This ensures we have the latest harvest state
             const freshRoomNpcResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpc.id]);
             if (freshRoomNpcResult.rows[0]) {
-              // state is now JSONB, so it's already an object
-              const freshState = freshRoomNpcResult.rows[0].state || {};
-              // Update roomNpc.state with fresh state to ensure we're working with latest data
-              roomNpc.state = freshState;
+              try {
+                const freshState = freshRoomNpcResult.rows[0].state ? JSON.parse(freshRoomNpcResult.rows[0].state) : {};
+                // Update roomNpc.state with fresh state to ensure we're working with latest data
+                roomNpc.state = freshState;
+              } catch (e) {
+                // If parsing fails, keep existing state
+              }
             }
             
             // Structure data for npcLogic: npc data and roomNpc data

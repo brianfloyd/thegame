@@ -50,6 +50,7 @@ const {
   findPlayerHarvestSession,
   endHarvestSession
 } = require('./services/npcCycleEngine');
+const { startAutomationEngine } = require('./services/automationEngine');
 
 // Broadcast utilities
 const { sendRoomUpdate, isRoomEmpty, broadcastToAll } = require('./utils/broadcast');
@@ -312,7 +313,7 @@ wss.on('connection', (ws, req) => {
         }
       }
       
-      // Clean up factory state and Lore Keeper engagement timers
+      // Clean up factory state and engagement timers
       factoryWidgetState.delete(connId);
       cleanupLoreKeeperEngagement(connId);
       
@@ -383,6 +384,9 @@ async function startServer() {
       // Start NPC cycle engine after server starts
       // CRITICAL: Pass connectedPlayers reference - the engine will store it internally
       startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdateWrapper);
+      
+      // Start automation engine
+      startAutomationEngine(db, connectedPlayers);
       
       // Load global room update interval from config and set it
       const { setGlobalRoomUpdateInterval } = require('./services/npcCycleEngine');

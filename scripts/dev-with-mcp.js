@@ -5,6 +5,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const { isZorkEnabled } = require('../utils/zorkFlag');
 
 const PORT = process.env.PORT || 3434;
@@ -167,6 +168,36 @@ if (isPort3434) {
   
   // Initial start
   startZork();
+  
+  // Watch for flag file changes to start/stop ZORK dynamically
+  const flagFile = path.join(__dirname, '..', '.zork-enabled');
+  let lastFlagState = isZorkEnabled();
+  
+  // Check flag file every 2 seconds
+  setInterval(() => {
+    const currentFlagState = isZorkEnabled();
+    if (currentFlagState !== lastFlagState) {
+      lastFlagState = currentFlagState;
+      if (currentFlagState) {
+        // Flag was enabled - start ZORK if not already running
+        console.log('[dev-with-mcp] ZORK flag enabled - starting ZORK...');
+        if (!autoFollow) {
+          startZork();
+        }
+      } else {
+        // Flag was disabled - stop ZORK if running
+        console.log('[dev-with-mcp] ZORK flag disabled - stopping ZORK...');
+        if (autoFollow) {
+          try {
+            autoFollow.kill('SIGTERM');
+          } catch (e) {
+            // Ignore errors
+          }
+          autoFollow = null;
+        }
+      }
+    }
+  }, 2000); // Check every 2 seconds
   
   // Note: Restart detection is now handled via stdout monitoring above
   // This is more reliable than SIGUSR2 which doesn't propagate to parent process

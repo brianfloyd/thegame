@@ -5,6 +5,24 @@
    ============================================================ */
 
 /* =============================
+   CSS VARIABLES (Theme Tokens)
+   ============================= */
+:root {
+    /* Toggle switch dimensions (matches editor-core.css exactly) */
+    --toggle-width: 44px;
+    --toggle-height: 22px;
+    --toggle-knob-size: 16px;
+    --toggle-knob-offset: 2px;
+    
+    /* Editor colors (for toggle switches - matches editor-core.css) */
+    --editor-primary: #00ff00;
+    --editor-primary-glow: rgba(0, 255, 0, 0.5);
+    --editor-border-dim: #333;
+    --editor-text: #00ff00;
+    --editor-spacing-sm: 8px;
+}
+
+/* =============================
    CORE WIDGET STRUCTURE
    ============================= */
 
@@ -44,7 +62,7 @@
     overflow-y: auto;
     overflow-x: hidden;
     color: #00ff00;
-    font-size: 10px;
+    font-size: 12px; /* Increased from 10px for better readability */
 }
 
 /* =============================
@@ -257,6 +275,294 @@
     color: #666;
 }
 
+/* Comms Widget Player Select */
+.comm-player-select {
+    background: #0a0a0a;
+    border: 1px solid #333;
+    color: #00ff00;
+    padding: 6px 10px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    width: 100%;
+    margin-bottom: 6px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.comm-player-select:focus {
+    outline: none;
+    border-color: #00ff00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+}
+
+.comm-player-select option {
+    background: #1a1a1a;
+    color: #00ff00;
+}
+
+.comm-input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Broadcast Layout */
+.comm-broadcast-layout {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+    gap: 8px;
+}
+
+.comm-broadcast-groups-container {
+    width: 200px;
+    flex-shrink: 0;
+    border-right: 1px solid #333;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+}
+
+.comm-broadcast-groups {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+.comm-broadcast-group-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: #0a0a0a;
+    transition: all 0.2s;
+}
+
+.comm-broadcast-group-item:hover {
+    border-color: #555;
+    background: #111;
+}
+
+.comm-broadcast-group-item.active {
+    border-color: #00ff00;
+    background: #1a2a1a;
+}
+
+.comm-broadcast-group-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    background: #00ff00;
+    color: #000;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.comm-broadcast-group-item.active .comm-broadcast-group-badge {
+    background: #00ff00;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.5);
+}
+
+.comm-broadcast-group-name {
+    flex: 1;
+    font-size: 11px;
+    color: #00ff00;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.comm-broadcast-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.comm-broadcast-chat .comm-chat-container {
+    flex: 1;
+    min-height: 0;
+}
+
+.comm-broadcast-chat .comm-input-container {
+    flex-shrink: 0;
+    margin-top: 4px;
+}
+
+/* Broadcast Group Modal */
+.broadcast-group-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', monospace;
+}
+
+.broadcast-group-modal {
+    background: #0a0a0a;
+    border: 3px solid #00ff00;
+    border-radius: 8px;
+    min-width: 500px;
+    max-width: 700px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+}
+
+.broadcast-group-modal-header {
+    padding: 16px 20px;
+    border-bottom: 2px solid #00ff00;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #00ff00;
+    font-size: 14px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.broadcast-group-modal-close {
+    background: transparent;
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+    padding: 0;
+    transition: all 0.2s;
+}
+
+.broadcast-group-modal-close:hover {
+    background: #1a2a1a;
+    box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+}
+
+.broadcast-group-modal-content {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.broadcast-group-modal-label {
+    display: block;
+    color: #00ffff;
+    font-size: 11px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+
+.broadcast-group-add-member {
+    margin-bottom: 12px;
+}
+
+.broadcast-group-add-member .widget-select {
+    flex: 1;
+}
+
+.broadcast-group-selected {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #333;
+}
+
+.broadcast-group-selected-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.broadcast-group-selected-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: #1a2a1a;
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    color: #00ff00;
+    font-size: 10px;
+}
+
+.broadcast-group-chip-remove {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+}
+
+.broadcast-group-chip-remove:hover {
+    color: #ff0000;
+}
+
+.broadcast-group-modal-footer {
+    padding: 16px 20px;
+    border-top: 2px solid #00ff00;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.broadcast-group-members-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 8px;
+    background: #0a0a0a;
+    margin-bottom: 12px;
+}
+
+.broadcast-group-member-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #222;
+}
+
+.broadcast-group-member-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.broadcast-group-member-name {
+    color: #00ff00;
+    font-size: 11px;
+    flex: 1;
+}
+
 .widget-textarea {
     resize: vertical;
     min-height: 60px;
@@ -293,7 +599,7 @@
     color: #ffff00;
     font-weight: bold;
     margin-bottom: 8px;
-    font-size: 0.9em;
+    font-size: 13px; /* Increased from 0.9em for better readability */
     text-transform: uppercase;
     padding-bottom: 4px;
     border-bottom: 1px solid #333;
@@ -352,11 +658,13 @@
 
 .widget-stat-label {
     color: #00ffff;
+    font-size: 13px; /* Increased for better readability */
 }
 
 .widget-stat-value {
     color: #00ff00;
     font-weight: bold;
+    font-size: 13px; /* Increased for better readability */
     min-width: 30px;
     text-align: right;
 }
@@ -491,6 +799,71 @@
     background: #111;
 }
 
+/* Merchant List Table */
+.merchant-list {
+    margin: 8px 0;
+}
+
+.merchant-title {
+    color: #ffff00;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    font-size: 1.08em;
+}
+
+.merchant-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 1.02em;
+    margin-top: 4px;
+}
+
+.merchant-table th {
+    color: #ffff00;
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #333;
+    text-transform: uppercase;
+    font-size: 0.96em;
+    font-weight: bold;
+}
+
+.merchant-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #222;
+    color: #00ff00;
+    font-size: 1.02em;
+}
+
+.merchant-table tr:hover {
+    background: #111;
+}
+
+.merchant-table tr.out-of-stock {
+    opacity: 0.6;
+}
+
+.merchant-table tr.out-of-stock td {
+    color: #666;
+}
+
+.merchant-table .price-adjusted {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.merchant-table .price-base {
+    color: #888;
+    font-size: 1.02em;
+    font-weight: normal;
+}
+
+.merchant-table .out-of-stock {
+    color: #ff6666;
+    font-style: italic;
+}
+
 /* =============================
    WIDGET-SPECIFIC FLEXIBILITY
    ============================= */
@@ -615,4 +988,164 @@
 
 .widget-godmode-editor-btn:active {
     background: rgba(255, 204, 0, 0.25);
+}
+
+/* =============================
+   TOGGLE SWITCH (Canonical - Matches Editor Style EXACTLY)
+   ============================= */
+/* 
+ * CANONICAL TOGGLE SWITCH PATTERN
+ * 
+ * HTML Structure (required - matches editor-core.css exactly):
+ * <label class="toggle-switch">
+ *     <input type="checkbox" id="toggle_xxx">
+ *     <span class="toggle-slider"></span>
+ *     <span class="toggle-label">Label Text</span>
+ * </label>
+ * 
+ * This CSS matches editor-core.css toggle switches EXACTLY.
+ * All widgets MUST use this structure and CSS for consistency.
+ * 
+ * Source: public/css/editor-core.css lines 492-565
+ */
+
+.toggle-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--editor-spacing-sm);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.toggle-slider {
+    position: relative;
+    width: var(--toggle-width);
+    height: var(--toggle-height);
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 2px solid var(--editor-border-dim);
+    border-radius: var(--toggle-height);
+    transition: all 0.3s;
+}
+
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: var(--toggle-knob-size);
+    width: 5px;
+    left: var(--toggle-knob-offset);
+    bottom: var(--toggle-knob-offset);
+    background-color: var(--editor-border-dim);
+    border-radius: 2px;
+    transition: all 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: rgba(0, 255, 0, 0.2);
+    border-color: var(--editor-primary);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(calc(var(--toggle-width) - 5px - var(--toggle-knob-offset) * 2 - 4px));
+    background-color: var(--editor-primary);
+    box-shadow: 0 0 8px var(--editor-primary-glow);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 5px var(--editor-primary-glow);
+}
+
+.toggle-label {
+    color: var(--editor-text);
+    font-size: 12px;
+}
+
+/* Small toggle variant */
+.toggle-switch--small {
+    --toggle-width: 36px;
+    --toggle-height: 18px;
+    --toggle-knob-size: 12px;
+    --toggle-knob-offset: 2px;
+}
+
+.toggle-switch--small .toggle-slider::before {
+    width: 4px; /* Slightly narrower for small variant */
+}
+
+.toggle-switch--small input:checked + .toggle-slider::before {
+    transform: translateX(calc(var(--toggle-width) - 4px - var(--toggle-knob-offset) * 2 - 4px));
+}
+
+.toggle-switch--small .toggle-label {
+    font-size: 11px;
+}
+
+/* Toggle switch in vertical layout (for cards) */
+.toggle-switch.toggle-vertical {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Toggle Card Container (Compact) */
+.toggle-card {
+    padding: 6px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background-color: #0a0a0a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-height: 60px;
+    cursor: pointer;
+    transition: all 0.2s;
+    /* Ensure status indicator stays at bottom */
+    justify-content: flex-start;
+}
+
+.toggle-card:hover {
+    border-color: #555;
+    background-color: #111;
+}
+
+.toggle-card:active {
+    transform: translateY(1px);
+}
+
+/* Toggles Grid Layout - 2 rows, 5 columns */
+.toggles-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* Toggle label in card (centered, word-wrap, smaller) */
+.toggle-card .toggle-label {
+    text-align: center;
+    word-wrap: break-word;
+    line-height: 1.2;
+    max-width: 100%;
+    font-size: 11px;
+    /* Prevent label from taking all space, allow status to sit at bottom */
+    flex-shrink: 1;
+}
+
+/* Toggle status indicator in card (positioned at bottom) */
+.toggle-card .toggle-status {
+    margin-top: auto;
+    margin-bottom: 2px;
 }

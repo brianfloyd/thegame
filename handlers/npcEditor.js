@@ -27,6 +27,10 @@ async function getAllNPCs(ctx, data) {
     if (npc.npc_type === 'lorekeeper') {
       npc.lorekeeper = await db.getLoreKeeperByNpcId(npc.id);
     }
+    // Attach merchant data for merchant type NPCs
+    if (npc.npc_type === 'merchant') {
+      npc.merchant = await db.getMerchantByNpcId(npc.id);
+    }
   }
   
   ws.send(JSON.stringify({
@@ -74,7 +78,6 @@ async function createNPC(ctx, data) {
         keyword_color: npc.lorekeeper.keyword_color || '#ff00ff',
         incorrect_response: npc.lorekeeper.incorrect_response || 'I do not understand what you mean.',
         puzzle_mode: npc.lorekeeper.puzzle_mode || null,
-        puzzle_clues: npc.lorekeeper.puzzle_clues || null,
         puzzle_solution: npc.lorekeeper.puzzle_solution || null,
         puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
         puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.',
@@ -87,11 +90,31 @@ async function createNPC(ctx, data) {
       await db.createLoreKeeper(lkConfig);
     }
     
+    // If this is a merchant type, create the merchants record
+    if (npc.npc_type === 'merchant' && npc.merchant) {
+      const merchantConfig = {
+        npc_id: id,
+        engagement_enabled: npc.merchant.engagement_enabled !== false,
+        engagement_delay: npc.merchant.engagement_delay || 3000,
+        initial_message: npc.merchant.initial_message || null,
+        initial_message_color: npc.merchant.initial_message_color || '#00ffff',
+        keywords_responses: npc.merchant.keywords_responses || {},
+        keyword_color: npc.merchant.keyword_color || '#ff00ff',
+        incorrect_response: npc.merchant.incorrect_response || 'I do not understand what you mean.'
+      };
+      await db.createMerchant(merchantConfig);
+    }
+    
     const created = await db.getScriptableNPCById(id);
     
     // Attach lorekeeper data if this is a lorekeeper
     if (created.npc_type === 'lorekeeper') {
       created.lorekeeper = await db.getLoreKeeperByNpcId(id);
+    }
+    
+    // Attach merchant data if this is a merchant
+    if (created.npc_type === 'merchant') {
+      created.merchant = await db.getMerchantByNpcId(id);
     }
     
     ws.send(JSON.stringify({
@@ -131,6 +154,8 @@ async function updateNPC(ctx, data) {
     const oldNpc = await db.getScriptableNPCById(npc.id);
     const wasLoreKeeper = oldNpc && oldNpc.npc_type === 'lorekeeper';
     const isLoreKeeper = npc.npc_type === 'lorekeeper';
+    const wasMerchant = oldNpc && oldNpc.npc_type === 'merchant';
+    const isMerchant = npc.npc_type === 'merchant';
     
     await db.updateScriptableNPC(npc);
     
@@ -147,7 +172,6 @@ async function updateNPC(ctx, data) {
         keyword_color: npc.lorekeeper.keyword_color || '#ff00ff',
         incorrect_response: npc.lorekeeper.incorrect_response || 'I do not understand what you mean.',
         puzzle_mode: npc.lorekeeper.puzzle_mode || null,
-        puzzle_clues: npc.lorekeeper.puzzle_clues || null,
         puzzle_solution: npc.lorekeeper.puzzle_solution || null,
         puzzle_success_message: npc.lorekeeper.puzzle_success_message || null,
         puzzle_failure_message: npc.lorekeeper.puzzle_failure_message || 'That is not the answer I seek.',
@@ -170,11 +194,41 @@ async function updateNPC(ctx, data) {
       await db.deleteLoreKeeperByNpcId(npc.id);
     }
     
+    // Handle merchant data transitions
+    if (isMerchant && npc.merchant) {
+      const merchantConfig = {
+        npc_id: npc.id,
+        engagement_enabled: npc.merchant.engagement_enabled !== false,
+        engagement_delay: npc.merchant.engagement_delay || 3000,
+        initial_message: npc.merchant.initial_message || null,
+        initial_message_color: npc.merchant.initial_message_color || '#00ffff',
+        keywords_responses: npc.merchant.keywords_responses || {},
+        keyword_color: npc.merchant.keyword_color || '#ff00ff',
+        incorrect_response: npc.merchant.incorrect_response || 'I do not understand what you mean.'
+      };
+      
+      if (wasMerchant) {
+        // Update existing merchant record
+        await db.updateMerchant(merchantConfig);
+      } else {
+        // Create new merchant record
+        await db.createMerchant(merchantConfig);
+      }
+    } else if (wasMerchant && !isMerchant) {
+      // NPC type changed from merchant to something else - delete merchant record
+      await db.deleteMerchantByNpcId(npc.id);
+    }
+    
     const updated = await db.getScriptableNPCById(npc.id);
     
     // Attach lorekeeper data if this is a lorekeeper
     if (updated.npc_type === 'lorekeeper') {
       updated.lorekeeper = await db.getLoreKeeperByNpcId(npc.id);
+    }
+    
+    // Attach merchant data if this is a merchant
+    if (updated.npc_type === 'merchant') {
+      updated.merchant = await db.getMerchantByNpcId(npc.id);
     }
     
     ws.send(JSON.stringify({

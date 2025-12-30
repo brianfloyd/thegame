@@ -18,6 +18,7 @@
                 <div class="editor-nav-buttons">
                     <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
                     <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/merchant')">Merchant</button>
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
@@ -106,15 +107,19 @@
                             <button class="editor-tab" 
                                     :class="{ 'active': activeTab === 'timing' }" 
                                     @click="activeTab = 'timing'"
-                                    x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">Timing</button>
+                                    x-show="(!selectedNpc || (selectedNpc.npc_type !== 'lorekeeper' && selectedNpc.npc_type !== 'merchant'))">Timing</button>
                             <button class="editor-tab" 
                                     :class="{ 'active': activeTab === 'output' }" 
                                     @click="activeTab = 'output'"
-                                    x-show="!selectedNpc || selectedNpc.npc_type !== 'lorekeeper'">Output</button>
+                                    x-show="(!selectedNpc || (selectedNpc.npc_type !== 'lorekeeper' && selectedNpc.npc_type !== 'merchant'))">Output</button>
                             <button class="editor-tab" 
                                     :class="{ 'active': activeTab === 'lorekeeper' }" 
                                     @click="activeTab = 'lorekeeper'"
                                     x-show="selectedNpc && selectedNpc.npc_type === 'lorekeeper'">Lorekeeper</button>
+                            <button class="editor-tab" 
+                                    :class="{ 'active': activeTab === 'merchant' }" 
+                                    @click="activeTab = 'merchant'"
+                                    x-show="selectedNpc && selectedNpc.npc_type === 'merchant'">Merchant</button>
                             <button class="editor-tab" 
                                     :class="{ 'active': activeTab === 'history' }" 
                                     @click="activeTab = 'history'"
@@ -185,7 +190,7 @@
                         <!-- Timing Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'timing' }"
-                             x-show="activeTab === 'timing' && (!selectedNpc || selectedNpc.npc_type !== 'lorekeeper')">
+                             x-show="activeTab === 'timing' && (!selectedNpc || (selectedNpc.npc_type !== 'lorekeeper' && selectedNpc.npc_type !== 'merchant'))">
                             <div class="form-section">
                                 <div class="section-header">Timing Configuration</div>
                                 <div class="form-grid">
@@ -230,7 +235,7 @@
                         <!-- Output Tab -->
                         <div class="tab-content" 
                              :class="{ 'active': activeTab === 'output' }"
-                             x-show="activeTab === 'output' && (!selectedNpc || selectedNpc.npc_type !== 'lorekeeper')">
+                             x-show="activeTab === 'output' && (!selectedNpc || (selectedNpc.npc_type !== 'lorekeeper' && selectedNpc.npc_type !== 'merchant'))">
                             <div class="form-section">
                                 <div class="section-header">
                                     <span>Output Items</span>
@@ -468,14 +473,14 @@
                                                placeholder="The answer to the puzzle">
                                     </div>
                                     <div class="form-field span-3">
-                                        <label>Puzzle Clues (keyword:answer pairs)</label>
+                                        <label>Keyword Responses (Puzzle Clues)</label>
                                         <textarea class="editor-textarea json-input" 
-                                                  :value="lorekeeperData.puzzle_clues ? JSON.stringify(lorekeeperData.puzzle_clues, null, 2) : '{}'"
-                                                  @input="handleLorekeeperJsonInput('puzzle_clues', $event.target.value)"
+                                                  :value="lorekeeperData.keywords_responses ? JSON.stringify(lorekeeperData.keywords_responses, null, 2) : '{}'"
+                                                  @input="handleLorekeeperJsonInput('keywords_responses', $event.target.value)"
                                                   rows="6" 
                                                   placeholder='{"resin": "This is the stuff that holds pulse resin together", "pulse": "The energy that flows through all things"}'></textarea>
                                         <div style="font-size: 11px; color: #888; margin-top: 5px;">
-                                            Format: {"keyword": "answer text", "keyword2": "answer text 2"} (stored as array in database)
+                                            Format: {"keyword": "answer text", "keyword2": "answer text 2"} (stored as JSONB object in database)
                                         </div>
                                     </div>
                                     <div class="form-field span-3">
@@ -527,6 +532,152 @@
                                                   x-model="lorekeeperData.puzzle_award_delay_response" 
                                                   rows="2" 
                                                   placeholder="Message shown during delay before awarding item..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Merchant Tab -->
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'merchant' }"
+                             x-show="activeTab === 'merchant' && selectedNpc && selectedNpc.npc_type === 'merchant'">
+                            
+                            <div class="form-section">
+                                <div class="section-header">Merchant NPC Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-3">
+                                        <p style="color: var(--editor-text-dim); font-size: 0.9rem; margin: 0;">
+                                            <strong>Note:</strong> Merchant NPCs provide dialogue and greeting functionality only. 
+                                            Inventory is managed in the <strong>Merchant Editor</strong> and is room-based, not NPC-based.
+                                            To configure merchant inventory, use the Merchant Editor.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Engagement Section -->
+                            <div class="form-section">
+                                <div class="section-header">Engagement</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Engagement Enabled</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="merchantData.engagement_enabled">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="merchantData.engagement_enabled ? 'Yes' : 'No'"></span>
+                                        </label>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Engagement Delay (ms)</label>
+                                        <input type="number" class="editor-input" x-model="merchantData.engagement_delay" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Initial Message</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="merchantData.initial_message" 
+                                                  rows="5" 
+                                                  placeholder="Message sent when player enters room..."></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Initial Message Color</label>
+                                        <input type="color" class="editor-input" x-model="merchantData.initial_message_color">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Dialogue Fields -->
+                            <div class="form-section">
+                                <div class="section-header">Dialogue Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-3">
+                                        <label>Keywords/Responses (JSON)</label>
+                                        <textarea class="editor-textarea json-input" 
+                                                  :value="JSON.stringify(merchantData.keywords_responses, null, 2)"
+                                                  @input="handleMerchantJsonInput('keywords_responses', $event.target.value)"
+                                                  rows="6" 
+                                                  placeholder='{"keyword": "response", "help": "I can help with..."}'></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Keyword Color</label>
+                                        <input type="color" class="editor-input" x-model="merchantData.keyword_color">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Incorrect Response</label>
+                                        <input type="text" class="editor-input" x-model="merchantData.incorrect_response" 
+                                               placeholder="Response when no keyword matches">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Merchant Tab -->
+                        <div class="tab-content" 
+                             :class="{ 'active': activeTab === 'merchant' }"
+                             x-show="activeTab === 'merchant' && selectedNpc && selectedNpc.npc_type === 'merchant'">
+                            
+                            <div class="form-section">
+                                <div class="section-header">Merchant NPC Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-3">
+                                        <p style="color: var(--editor-text-dim); font-size: 0.9rem; margin: 0;">
+                                            <strong>Note:</strong> Merchant NPCs provide dialogue and greeting functionality only. 
+                                            Inventory is managed in the <strong>Merchant Editor</strong> and is room-based, not NPC-based.
+                                            To configure merchant inventory, use the Merchant Editor.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Engagement Section -->
+                            <div class="form-section">
+                                <div class="section-header">Engagement</div>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Engagement Enabled</label>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" x-model="merchantData.engagement_enabled">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label" x-text="merchantData.engagement_enabled ? 'Yes' : 'No'"></span>
+                                        </label>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Engagement Delay (ms)</label>
+                                        <input type="number" class="editor-input" x-model="merchantData.engagement_delay" min="0" step="1000">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Initial Message</label>
+                                        <textarea class="editor-textarea" 
+                                                  x-model="merchantData.initial_message" 
+                                                  rows="5" 
+                                                  placeholder="Message sent when player enters room..."></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Initial Message Color</label>
+                                        <input type="color" class="editor-input" x-model="merchantData.initial_message_color">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Dialogue Fields -->
+                            <div class="form-section">
+                                <div class="section-header">Dialogue Configuration</div>
+                                <div class="form-grid">
+                                    <div class="form-field span-3">
+                                        <label>Keywords/Responses (JSON)</label>
+                                        <textarea class="editor-textarea json-input" 
+                                                  :value="JSON.stringify(merchantData.keywords_responses, null, 2)"
+                                                  @input="handleMerchantJsonInput('keywords_responses', $event.target.value)"
+                                                  rows="6" 
+                                                  placeholder='{"keyword": "response", "help": "I can help with..."}'></textarea>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Keyword Color</label>
+                                        <input type="color" class="editor-input" x-model="merchantData.keyword_color">
+                                    </div>
+                                    <div class="form-field span-3">
+                                        <label>Incorrect Response</label>
+                                        <input type="text" class="editor-input" x-model="merchantData.incorrect_response" 
+                                               placeholder="Response when no keyword matches">
                                     </div>
                                 </div>
                             </div>

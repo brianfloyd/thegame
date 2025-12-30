@@ -220,7 +220,11 @@ export function mapRowToNpc(row) {
         
         // Lorekeeper data (attached by handler if npc_type === 'lorekeeper')
         // Preserve the lorekeeper object if it exists on the row
-        lorekeeper: row.lorekeeper || null
+        lorekeeper: row.lorekeeper || null,
+        
+        // Merchant data (attached by handler if npc_type === 'merchant')
+        // Preserve the merchant object if it exists on the row
+        merchant: row.merchant || null
     };
 }
 

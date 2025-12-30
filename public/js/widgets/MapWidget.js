@@ -119,7 +119,7 @@ export default class MapWidget extends Widget {
         
         root.appendChild(pathingIndicator);
         
-        // Create canvas container
+        // Create canvas container - uses 98% of available widget space
         const canvasContainer = document.createElement('div');
         canvasContainer.className = 'map-viewport';
         
@@ -232,36 +232,64 @@ export default class MapWidget extends Widget {
         
         const viewport = this.mapCanvas.parentElement;
         if (viewport) {
-            // Set initial size - use a default if viewport is 0
-            const initialWidth = viewport.clientWidth || 400;
-            const initialHeight = viewport.clientHeight || 400;
-            this.mapCanvas.width = initialWidth;
-            this.mapCanvas.height = initialHeight;
-            
-            const resizeObserver = new ResizeObserver(() => {
-                const newWidth = viewport.clientWidth || 400;
-                const newHeight = viewport.clientHeight || 400;
-                this.mapCanvas.width = newWidth;
-                this.mapCanvas.height = newHeight;
-                if (this.mapRenderer) {
+            // Function to update canvas size to fill viewport (accounting for padding)
+            // CRITICAL: Canvas has two sizes - display (CSS) and drawing buffer (width/height)
+            // These must be synchronized for proper rendering
+            const updateCanvasSize = () => {
+                // Ensure CSS makes canvas fill the viewport content area (98% of widget space)
+                // The viewport has 1% padding, so clientWidth/clientHeight gives us the 98% area
+                this.mapCanvas.style.width = '100%';
+                this.mapCanvas.style.height = '100%';
+                
+                // Get the viewport's content area dimensions (excludes padding)
+                // This is the actual pixel space available for the canvas
+                const width = Math.floor(viewport.clientWidth) || 400;
+                const height = Math.floor(viewport.clientHeight) || 400;
+                
+                // Set canvas internal drawing buffer to match display size
+                // canvas.width/height are the source of truth for all map coordinate calculations
+                // They must match the actual pixel dimensions the canvas is displayed at
+                if (this.mapCanvas.width !== width || this.mapCanvas.height !== height) {
+                    this.mapCanvas.width = width;
+                    this.mapCanvas.height = height;
+                }
+                
+                // Update grid dimensions to match canvas aspect ratio
+                // Keep rows fixed at VIEWPORT_SIZE, compute cols from aspect ratio
+                // This ensures the map uses the full width of the widget
+                if (this.mapRenderer && width > 0 && height > 0) {
+                    const gridRows = this.VIEWPORT_SIZE; // Keep 20 rows
+                    const gridCols = Math.round(gridRows * (width / height)); // Compute cols from aspect ratio
+                    
+                    // Update renderer with new canvas dimensions and grid size
                     this.mapRenderer.canvas = this.mapCanvas;
                     this.mapRenderer.ctx = this.mapCtx;
+                    this.mapRenderer.gridSize = { cols: gridCols, rows: gridRows };
                 }
                 this.renderMap();
+            };
+            
+            // Set initial size
+            updateCanvasSize();
+            
+            // Observe viewport size changes
+            const resizeObserver = new ResizeObserver(() => {
+                updateCanvasSize();
             });
             resizeObserver.observe(viewport);
         }
         
-        // Initialize MapRenderer
+        // Initialize MapRenderer with dynamic grid sizing
+        // Grid will be updated in updateCanvasSize() to match aspect ratio
         this.mapRenderer = new MapRenderer({
             canvas: this.mapCanvas,
             ctx: this.mapCtx,
             cellSize: 10,
-            gridSize: this.VIEWPORT_SIZE, // Fixed 20x20 grid
+            gridSize: { cols: this.VIEWPORT_SIZE, rows: this.VIEWPORT_SIZE }, // Will be updated dynamically
             zoom: 1.0,
             panX: 0,
             panY: 0,
-            minCellSize: 8,
+            minCellSize: 4, // Reduced from 8 to allow 50% smaller cells (2x more map area)
             maxCellSize: null,
             shouldDrawConnections: true,
             getRoomColor: (room) => this.getRoomColor(room),
@@ -287,14 +315,17 @@ export default class MapWidget extends Widget {
         // Add mouse wheel handler for zoom
         this.mapCanvas.addEventListener('wheel', (e) => {
             e.preventDefault();
-            const zoomSpeed = 0.1;
             const currentZoom = this.mapRenderer.zoom;
+            // Use multiplicative zoom: zoom out shows 100% more map (2x area)
+            // To show 2x more area, zoom = currentZoom / 2.0 = currentZoom * 0.5
+            // To zoom in by same factor, zoom = currentZoom * 2.0
+            const zoomFactor = 2.0;
             if (e.deltaY < 0) {
                 // Zoom in
-                this.mapRenderer.setZoom(currentZoom + zoomSpeed);
+                this.mapRenderer.setZoom(currentZoom * zoomFactor);
             } else {
-                // Zoom out
-                this.mapRenderer.setZoom(currentZoom - zoomSpeed);
+                // Zoom out - show 100% more of the map
+                this.mapRenderer.setZoom(currentZoom / zoomFactor);
             }
             this.renderMap();
         });

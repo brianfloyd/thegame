@@ -8,6 +8,7 @@
  */
 
 import Widget from './Widget.js';
+import { parseMarkup } from '../utils/Markup.js';
 
 export default class NPCWidget extends Widget {
     constructor(game, id) {
@@ -430,7 +431,8 @@ export default class NPCWidget extends Widget {
         // Get NPC name - try multiple possible fields
         const npcName = npc.name || npc.npcName || 'Unknown NPC';
         if (nameEl) {
-            nameEl.textContent = npcName;
+            // CRITICAL: Use parseMarkup to support markup in NPC names
+            nameEl.innerHTML = parseMarkup(npcName, '#00ffff');
         }
         
         // Determine status - server sends harvestStatus: 'active' or 'cooldown'

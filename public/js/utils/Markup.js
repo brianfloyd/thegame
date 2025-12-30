@@ -244,27 +244,29 @@ function generateMarkupCSS(effects, color) {
         css += `color: ${color};`;
     }
     
-    if (effects.glow) {
+    // CRITICAL: Only add text-shadow (glow) if effects.glow is explicitly true
+    // This prevents accidental glow from being applied
+    if (effects && effects.glow === true) {
         css += `text-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor, 0 0 20px currentColor;`;
     }
     
-    if (effects.bold) {
+    if (effects && effects.bold === true) {
         css += `font-weight: bold;`;
     }
     
-    if (effects.flash) {
+    if (effects && effects.flash === true) {
         css += `animation: markup-flash 1s ease-in-out infinite;`;
     }
     
-    if (effects.pulse) {
+    if (effects && effects.pulse === true) {
         css += `display: inline-block; transform-origin: center; vertical-align: baseline; animation: markup-pulse 2s ease 3;`;
     }
     
-    if (effects.italic) {
+    if (effects && effects.italic === true) {
         css += `font-style: italic;`;
     }
     
-    if (effects.fontSize) {
+    if (effects && effects.fontSize) {
         css += `font-size: ${effects.fontSize};`;
     }
     
@@ -423,6 +425,14 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
         
         result = result.replace(pattern, (match, content) => {
+            // CRITICAL: Skip if this match contains a markup placeholder
+            // This prevents nested markup from being processed multiple times
+            // When a convention matches content that's already been processed by another convention,
+            // that content will have been replaced with a placeholder
+            if (match.includes('__MARKUP_')) {
+                return match; // Already processed by another convention, skip
+            }
+            
             // Escape the content to prevent XSS
             const escapedContent = escapeHtml(content);
             

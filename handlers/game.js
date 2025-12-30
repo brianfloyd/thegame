@@ -3288,7 +3288,8 @@ async function talk(ctx, data) {
   for (const lk of loreKeepers) {
     let foundKeyword = false;
     
-    // Check keywords_responses for dialogue-type lorekeepers
+    // Check keywords_responses for all lorekeeper types (dialogue and puzzle)
+    // For puzzle-type lorekeepers, keywords_responses contains the puzzle clues
     if (lk.keywordsResponses) {
       for (const [keyword, response] of Object.entries(lk.keywordsResponses)) {
         if (messageLower.includes(keyword.toLowerCase())) {
@@ -3303,28 +3304,6 @@ async function talk(ctx, data) {
           });
           foundKeyword = true;
           break; // Only respond once per Lore Keeper
-        }
-      }
-    }
-    
-    // Check puzzle_clues for puzzle-type lorekeepers (array format: [{"keyword": "key", "answer": "value"}])
-    if (!foundKeyword && lk.loreType === 'puzzle' && lk.puzzleClues && Array.isArray(lk.puzzleClues)) {
-      for (const clueObj of lk.puzzleClues) {
-        if (clueObj && clueObj.keyword && clueObj.answer) {
-          const keywordLower = clueObj.keyword.toLowerCase();
-          if (messageLower.includes(keywordLower)) {
-            // Found matching keyword in puzzle clues - send answer to room
-            broadcastToRoom(connectedPlayers, currentRoom.id, {
-              type: 'loreKeeperMessage',
-              npcName: lk.name,
-              npcColor: lk.displayColor,
-              message: clueObj.answer,
-              messageColor: lk.initialMessageColor,
-              keywordColor: lk.keywordColor
-            });
-            foundKeyword = true;
-            break; // Only respond once per Lore Keeper
-          }
         }
       }
     }
@@ -3401,9 +3380,14 @@ async function telepath(ctx, data) {
   }
   
   // Find target player's connection
+  // Strip @ symbols from target player name for comparison (user may type with or without @)
+  const targetPlayerNameClean = stripPlayerNameMarkup(targetPlayerName).toLowerCase();
+  
   let targetConnectionId = null;
   for (const [connId, playerData] of connectedPlayers) {
-    if (playerData.playerName.toLowerCase() === targetPlayerName.toLowerCase() && 
+    // Strip @ symbols from stored player name for comparison
+    const playerNameClean = stripPlayerNameMarkup(playerData.playerName).toLowerCase();
+    if (playerNameClean === targetPlayerNameClean && 
         playerData.ws.readyState === WebSocket.OPEN) {
       targetConnectionId = connId;
       break;
@@ -4995,6 +4979,48 @@ async function sell(ctx, data) {
 }
 
 /**
+ * Get list of connected players (for telepath dropdown)
+ */
+async function getConnectedPlayersList(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  try {
+    const playersList = [];
+    
+    for (const [connectionId, playerData] of connectedPlayers.entries()) {
+      // Skip if WebSocket is not open
+      if (!playerData.ws || playerData.ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      
+      // Get player info
+      const player = await db.getPlayerByName(playerData.playerName);
+      if (!player) continue;
+      
+      // Strip @ symbols from player name for display
+      const displayName = stripPlayerNameMarkup(player.name);
+      
+      playersList.push({
+        name: player.name, // Original name with @ symbols (for backend matching)
+        displayName: displayName // Display name without @ symbols (for UI)
+      });
+    }
+    
+    // Sort by display name
+    playersList.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    
+    // Send list to client
+    ws.send(JSON.stringify({
+      type: 'connectedPlayersList',
+      players: playersList
+    }));
+  } catch (err) {
+    console.error('Get connected players list error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get player list' }));
+  }
+}
+
+/**
  * Handle who command - show all players currently in the world
  */
 async function who(ctx, data) {
@@ -5589,10 +5615,22 @@ async function updateWidgetConfig(ctx, data) {
     return;
   }
   
-  console.log(`Saving widget config for player ${playerData.playerId}:`, config);
-  await db.updatePlayerWidgetConfig(playerData.playerId, config);
+  // Merge with existing config to preserve other widget settings
+  const existingConfig = await db.getPlayerWidgetConfig(playerData.playerId);
+  const mergedConfig = {
+    ...existingConfig,
+    ...config,
+    // Deep merge automation config if it exists
+    automation: config.automation ? {
+      ...(existingConfig.automation || {}),
+      ...config.automation
+    } : existingConfig.automation
+  };
+  
+  console.log(`Saving widget config for player ${playerData.playerId}:`, mergedConfig);
+  await db.updatePlayerWidgetConfig(playerData.playerId, mergedConfig);
   console.log(`Widget config saved successfully for player ${playerData.playerId}`);
-  ws.send(JSON.stringify({ type: 'widgetConfigUpdated', config }));
+  ws.send(JSON.stringify({ type: 'widgetConfigUpdated', config: mergedConfig }));
 }
 
 async function startPathingMode(ctx, data) {
@@ -5818,6 +5856,7 @@ async function getMapData(ctx, data) {
     const allRooms = mapRooms.map(r => ({
       id: r.id,
       name: r.name,
+      description: r.description || '',
       x: r.x,
       y: r.y,
       mapId: r.map_id,
@@ -5835,13 +5874,18 @@ async function getMapData(ctx, data) {
       colorMap[rtc.room_type] = rtc.color;
     });
 
-    // Get current room for the player
-    const playerRoom = await db.getRoomById(playerData.roomId);
-    const currentRoom = playerRoom ? {
-      x: playerRoom.x,
-      y: playerRoom.y,
-      id: playerRoom.id
-    } : null;
+    // Get current room for the player (only if they're in this map)
+    let currentRoom = null;
+    if (playerData.roomId) {
+      const playerRoom = await db.getRoomById(playerData.roomId);
+      if (playerRoom && playerRoom.map_id === mapId) {
+        currentRoom = {
+          x: playerRoom.x,
+          y: playerRoom.y,
+          id: playerRoom.id
+        };
+      }
+    }
 
     ws.send(JSON.stringify({
       type: 'mapData',
@@ -6823,6 +6867,522 @@ async function clientDebugEvent(ctx, data) {
   });
 }
 
+// ============================================================
+// Automation Program Handlers (Phase 1 & 2)
+// ============================================================
+
+async function getAutomationPrograms(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function createAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { name, description } = data;
+  if (!name) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program name required' }));
+    return;
+  }
+  
+  const program = await db.createAutomationProgram(playerData.playerId, name, description);
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function updateAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId, name, description, isActive } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  await db.updateAutomationProgram(programId, name, description, isActive, null);
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function deleteAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  await db.deleteAutomationProgram(programId);
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function getAutomationSteps(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  const steps = await db.getAutomationStepsByProgramId(programId);
+  ws.send(JSON.stringify({
+    type: 'automation:steps',
+    programId: programId,
+    steps: steps
+  }));
+}
+
+async function createAutomationStep(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId, stepOrder, instructionType, instructionConfig, conditions, loopTargetStep, loopMaxIterations } = data;
+  if (!programId || !stepOrder || !instructionType) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID, step order, and instruction type required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  // Validate step order
+  if (stepOrder < 1) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step order must be positive' }));
+    return;
+  }
+  
+  // Validate instruction type
+  const validInstructionTypes = [
+    'harvest', 'auto_harvest', 'attune', 'wait', 'move',
+    'collect', 'store', 'deliver',
+    'factory_insert_item', 'factory_insert_rune', 'factory_start', 'factory_repeat', 'factory_store_output',
+    'loop', 'loop_custom'
+  ];
+  if (!validInstructionTypes.includes(instructionType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid instruction type: ${instructionType}` }));
+    return;
+  }
+  
+  // Validate attune vitalis bounds
+  if (instructionType === 'attune' && instructionConfig) {
+    const vitalisMin = instructionConfig.vitalis_min;
+    const vitalisMax = instructionConfig.vitalis_max;
+    if (vitalisMin !== undefined && vitalisMax !== undefined) {
+      if (vitalisMin < 0 || vitalisMin > 100) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis min must be 0-100' }));
+        return;
+      }
+      if (vitalisMax < 0 || vitalisMax > 100) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis max must be 0-100' }));
+        return;
+      }
+      if (vitalisMin > vitalisMax) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis min must be <= max' }));
+        return;
+      }
+    }
+  }
+  
+  // Validate loop target step
+  if (instructionType === 'loop_custom') {
+    const targetStep = loopTargetStep || instructionConfig?.targetStep;
+    if (!targetStep || targetStep < 1) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Custom loop requires valid target step' }));
+      return;
+    }
+    // Check if target step exists (will be validated when program runs)
+    if (loopMaxIterations !== undefined && loopMaxIterations !== null && loopMaxIterations < 1) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Loop max iterations must be positive' }));
+      return;
+    }
+  }
+  
+  const step = await db.createAutomationStep(
+    programId,
+    stepOrder,
+    instructionType,
+    instructionConfig || {},
+    conditions || [],
+    loopTargetStep,
+    loopMaxIterations
+  );
+  
+  // Send updated steps
+  const steps = await db.getAutomationStepsByProgramId(programId);
+  ws.send(JSON.stringify({
+    type: 'automation:steps',
+    programId: programId,
+    steps: steps
+  }));
+  
+  ws.send(JSON.stringify({
+    type: 'automation:stepCreated',
+    stepId: step.id
+  }));
+}
+
+async function updateAutomationStep(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { stepId, stepOrder, instructionType, instructionConfig, conditions, loopTargetStep, loopMaxIterations } = data;
+  if (!stepId || !stepOrder || !instructionType) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step ID, step order, and instruction type required' }));
+    return;
+  }
+  
+  // Verify step belongs to player's program
+  const step = await db.getAutomationStepById(stepId);
+  if (!step) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step not found' }));
+    return;
+  }
+  
+  const program = await db.getAutomationProgramById(step.program_id);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step not found' }));
+    return;
+  }
+  
+  // Validate step order
+  if (stepOrder < 1) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step order must be positive' }));
+    return;
+  }
+  
+  // Validate instruction type
+  const validInstructionTypes = [
+    'harvest', 'auto_harvest', 'attune', 'wait', 'move',
+    'collect', 'store', 'deliver',
+    'factory_insert_item', 'factory_insert_rune', 'factory_start', 'factory_repeat', 'factory_store_output',
+    'loop', 'loop_custom'
+  ];
+  if (!validInstructionTypes.includes(instructionType)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Invalid instruction type: ${instructionType}` }));
+    return;
+  }
+  
+  // Validate attune vitalis bounds
+  if (instructionType === 'attune' && instructionConfig) {
+    const vitalisMin = instructionConfig.vitalis_min;
+    const vitalisMax = instructionConfig.vitalis_max;
+    if (vitalisMin !== undefined && vitalisMax !== undefined) {
+      if (vitalisMin < 0 || vitalisMin > 100) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis min must be 0-100' }));
+        return;
+      }
+      if (vitalisMax < 0 || vitalisMax > 100) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis max must be 0-100' }));
+        return;
+      }
+      if (vitalisMin > vitalisMax) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Vitalis min must be <= max' }));
+        return;
+      }
+    }
+  }
+  
+  // Validate loop target step
+  if (instructionType === 'loop_custom') {
+    const targetStep = loopTargetStep || instructionConfig?.targetStep;
+    if (!targetStep || targetStep < 1) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Custom loop requires valid target step' }));
+      return;
+    }
+    if (loopMaxIterations !== undefined && loopMaxIterations !== null && loopMaxIterations < 1) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Loop max iterations must be positive' }));
+      return;
+    }
+  }
+  
+  await db.updateAutomationStep(
+    stepId,
+    stepOrder,
+    instructionType,
+    instructionConfig || {},
+    conditions || [],
+    loopTargetStep,
+    loopMaxIterations
+  );
+  
+  // Send updated steps
+  const steps = await db.getAutomationStepsByProgramId(step.program_id);
+  ws.send(JSON.stringify({
+    type: 'automation:steps',
+    programId: step.program_id,
+    steps: steps
+  }));
+  
+  ws.send(JSON.stringify({
+    type: 'automation:stepUpdated',
+    stepId: stepId
+  }));
+}
+
+async function deleteAutomationStep(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { stepId } = data;
+  if (!stepId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step ID required' }));
+    return;
+  }
+  
+  // Verify step belongs to player's program
+  const step = await db.getAutomationStepById(stepId);
+  if (!step) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step not found' }));
+    return;
+  }
+  
+  const program = await db.getAutomationProgramById(step.program_id);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Step not found' }));
+    return;
+  }
+  
+  await db.deleteAutomationStep(stepId);
+  
+  // Send updated steps
+  const steps = await db.getAutomationStepsByProgramId(step.program_id);
+  ws.send(JSON.stringify({
+    type: 'automation:steps',
+    programId: step.program_id,
+    steps: steps
+  }));
+  
+  ws.send(JSON.stringify({
+    type: 'automation:stepDeleted',
+    stepId: stepId
+  }));
+}
+
+async function startAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  // Check if program has steps
+  const steps = await db.getAutomationStepsByProgramId(programId);
+  if (!steps || steps.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program has no steps' }));
+    return;
+  }
+  
+  // Initialize execution state
+  const executionState = {
+    currentStepIndex: 0,
+    executionState: 'running',
+    lastExecutionTime: Date.now(),
+    loopCount: 0,
+    currentLoopId: null,
+    loopIterationCount: {},
+    variableValues: {},
+    conditionCache: {},
+    harvestState: {
+      isHarvesting: false,
+      targetNPCs: [],
+      collectedItems: {}
+    }
+  };
+  
+  await db.updateAutomationProgram(programId, null, null, true, executionState);
+  
+  ws.send(JSON.stringify({
+    type: 'automation:programStarted',
+    programId: programId
+  }));
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function stopAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  const executionState = program.execution_state || {};
+  executionState.executionState = 'stopped';
+  executionState.pauseReason = 'manual_stop';
+  
+  await db.updateAutomationProgram(programId, null, null, false, executionState);
+  
+  ws.send(JSON.stringify({
+    type: 'automation:programStopped',
+    programId: programId
+  }));
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
+async function pauseAutomationProgram(ctx, data) {
+  const { ws, db, connectedPlayers, connectionId } = ctx;
+  const playerData = connectedPlayers.get(connectionId);
+  if (!playerData || !playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
+    return;
+  }
+  
+  const { programId } = data;
+  if (!programId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program ID required' }));
+    return;
+  }
+  
+  // Verify program belongs to player
+  const program = await db.getAutomationProgramById(programId);
+  if (!program || program.player_id !== playerData.playerId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Program not found' }));
+    return;
+  }
+  
+  const executionState = program.execution_state || {};
+  executionState.executionState = 'paused';
+  executionState.pauseReason = 'manual_pause';
+  
+  await db.updateAutomationProgram(programId, null, null, false, executionState);
+  
+  ws.send(JSON.stringify({
+    type: 'automation:programPaused',
+    programId: programId
+  }));
+  
+  // Send updated list
+  const programs = await db.getAutomationProgramsByPlayerId(playerData.playerId);
+  ws.send(JSON.stringify({
+    type: 'automation:programs',
+    programs: programs
+  }));
+}
+
 module.exports = {
   authenticateSession,
   getWidgetConfig,
@@ -6870,6 +7430,7 @@ module.exports = {
   sell,
   wealth,
   who,
+  getConnectedPlayersList,
   pulseEcho,
   saveTerminalMessage,
   getCommsHistory,
@@ -6885,6 +7446,17 @@ module.exports = {
   getTickets,
   updateTicket,
   addTicketFeedback,
-  zork
+  zork,
+  getAutomationPrograms,
+  createAutomationProgram,
+  updateAutomationProgram,
+  deleteAutomationProgram,
+  getAutomationSteps,
+  createAutomationStep,
+  updateAutomationStep,
+  deleteAutomationStep,
+  startAutomationProgram,
+  stopAutomationProgram,
+  pauseAutomationProgram
 };
 

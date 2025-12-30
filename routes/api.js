@@ -514,7 +514,7 @@ function setupRoutes(app, options) {
   // ===========================================
   // GOD MODE EDITORS (protected from static serving)
   // All editors are in /public/gameeditors/ folder
-  // Routes: /map, /npc, /items, /player, /tickets, /crafting
+  // Routes: /map, /npc, /items, /merchant, /player, /tickets, /crafting, /formulas, /markup
   // ===========================================
   
   app.get('/map', validateSession, checkGodMode, (req, res) => {
@@ -527,6 +527,10 @@ function setupRoutes(app, options) {
   
   app.get('/items', validateSession, checkGodMode, (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'item-editor.html'));
+  });
+  
+  app.get('/merchant', validateSession, checkGodMode, (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'gameeditors', 'merchant-editor.html'));
   });
   
   app.get('/crafting', validateSession, checkGodMode, (req, res) => {
@@ -546,7 +550,7 @@ function setupRoutes(app, options) {
   });
   
   // Serve editor CSS and JS files (these need to be accessible after auth)
-  app.get('/:file(map|npc|item|player|ticket|crafting|formula)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
+  app.get('/:file(map|npc|item|merchant|player|ticket|crafting|formula|markup)-editor.:ext(js|css)', validateSession, checkGodMode, (req, res) => {
     const file = `${req.params.file}-editor.${req.params.ext}`;
     const filePath = path.join(__dirname, '..', 'public', 'gameeditors', file);
     

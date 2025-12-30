@@ -226,6 +226,17 @@ The codebase uses TWO different base classes for different purposes. Understandi
 - `.widget-btn-group` - Button container
 - `.widget-mode-btn` - Mode/tab button (for CommsWidget)
 
+**Modals:**
+**File:** `public/css/widget-shared.css` (lines 318-450)
+- `.broadcast-group-modal-overlay` - Full-screen modal overlay
+- `.broadcast-group-modal` - Modal container
+- `.broadcast-group-modal-header` - Modal header with title and close button
+- `.broadcast-group-modal-content` - Scrollable content area
+- `.broadcast-group-modal-footer` - Footer with action buttons
+- `.broadcast-group-players-list` - Scrollable list container
+- `.broadcast-group-member-item` - Member list item with remove button
+- `.broadcast-group-selected-chip` - Selected player chip with remove button
+
 **Inputs:**
 **File:** `public/css/widget-shared.css` (lines 234-277)
 - `.widget-input` - Text input
@@ -284,8 +295,13 @@ The codebase uses TWO different base classes for different purposes. Understandi
 
 ### 3.3 Slot Types
 - **`'standard'`** - Normal widget, appears in standard widget panel
-- **`'fullwidth'`** - Wide widget, takes full width
+- **`'fullwidth'`** - Wide widget, takes full width (spans 2 columns)
 - **`'special'`** - Auto-managed widgets (NPC, Factory)
+
+**Dynamic Width:**
+- CommsWidget uses `widget-fullwidth` class to expand to 2 slots when broadcast mode is selected
+- Applied via `this.rootElement.classList.add('widget-fullwidth')` in `setCommMode()`
+- Removed when switching to other modes
 
 ### 3.4 Registry Functions
 **File:** `public/js/widgets/widget_registry.js` (lines 162-246)
@@ -494,6 +510,25 @@ Use shared CSS classes for consistent styling:
 - `.widget-stat-row`, `.widget-stat-label`, `.widget-stat-value` for stats
 - `.widget-table` for tables
 - `.widget-progress` for progress bars
+- `.toggle-switch`, `.toggle-slider`, `.toggle-label` for toggle switches (canonical pattern)
+
+**Toggle Switch Example (REQUIRED structure):**
+```html
+<label class="toggle-switch">
+    <input type="checkbox" id="myToggle">
+    <span class="toggle-slider"></span>
+    <span class="toggle-label">Enable Feature</span>
+</label>
+```
+
+**Implementation Notes:**
+- The checkbox MUST be the first child of the label
+- The slider MUST be the immediate next sibling (for CSS selector `input:checked + .toggle-slider` to work)
+- The label can be placed after the slider
+- CSS is located in `public/css/widget-shared.css` and matches `editor-core.css` exactly
+- All toggle switches automatically get sliding animation and green highlight when checked
+
+**All widgets MUST use this exact toggle switch structure and CSS to match editor style.**
 
 ---
 
@@ -617,6 +652,66 @@ To route new message type:
 - `.widget-list` - List container
 - `.widget-list-item` - List item
 
+### 9.8 Toggle Switch Classes (Canonical)
+- `.toggle-switch` - Toggle switch container (label element)
+- `.toggle-slider` - Visual slider element
+- `.toggle-label` - Label text next to toggle
+- `.toggle-switch--small` - Small variant (36x18px)
+
+**Canonical HTML Structure (REQUIRED):**
+```html
+<label class="toggle-switch">
+    <input type="checkbox" id="toggle_xxx">
+    <span class="toggle-slider"></span>
+    <span class="toggle-label">Label Text</span>
+</label>
+```
+
+**CSS Location:** `public/css/widget-shared.css` (matches `editor-core.css` pattern exactly)
+
+**CSS Variables (defined in `:root`):**
+- `--toggle-width: 44px` - Width of toggle slider track
+- `--toggle-height: 22px` - Height of toggle slider track
+- `--toggle-knob-size: 16px` - Size of the sliding knob
+- `--toggle-knob-offset: 2px` - Offset from edges for knob positioning
+- `--editor-primary: #00ff00` - Green color for active state
+- `--editor-primary-glow: rgba(0, 255, 0, 0.5)` - Glow effect for active state
+- `--editor-border-dim: #333` - Border color for inactive state
+- `--editor-text: #00ff00` - Text color for label
+- `--editor-spacing-sm: 8px` - Gap between slider and label
+
+**CSS Behavior:**
+- Checkbox is hidden (`opacity: 0`, `width: 0`, `height: 0`, `position: absolute`)
+- Slider track changes background and border color when checked
+- Knob (`.toggle-slider::before`) is a vertical line (5px wide, height matches `--toggle-knob-size`)
+- Knob slides from left to right when checked
+- Smooth 0.3s transition on all state changes
+- Green glow effect when toggle is active
+- Disabled state shows reduced opacity
+- Small variant uses 4px wide knob
+
+**Complete CSS Specification:**
+The toggle switch CSS in `widget-shared.css` matches `editor-core.css` lines 492-565 exactly. All widgets MUST use this CSS without modification to maintain consistency.
+
+**Visual States:**
+- **Unchecked:** Dark background, grey border, vertical line knob on left, grey knob
+- **Checked:** Green-tinted background, green border, vertical line knob on right, green knob with glow
+- **Disabled:** Reduced opacity (0.4), not-allowed cursor
+- **Focus:** Green glow outline
+
+**Knob Design:**
+- Standard: 5px wide vertical line, height matches `--toggle-knob-size` (16px)
+- Small variant: 4px wide vertical line, height matches `--toggle-knob-size` (12px)
+- Border radius: 2px (slightly rounded corners)
+- Slides horizontally from left to right when toggled
+
+**CSS Files:**
+- `public/css/widget-shared.css` - For widget toggles
+- `public/css/editor-core.css` - For editor toggles
+- Both files use IDENTICAL toggle switch CSS for consistency
+
+**All widgets and editors MUST use this exact structure and CSS for toggle switches to maintain consistency across the application.**
+
 ---
 
 ## 10. WIDGET PATTERNS & EXAMPLES
@@ -632,7 +727,15 @@ To route new message type:
 - User input (text input, buttons)
 - Sends messages to server
 - Stores state in localStorage
-- Multiple modes/tabs
+- Multiple modes/tabs: Talk, Resonate, Telepath, Broadcast
+- **Broadcast Mode Features:**
+  - Expands widget to 2 slots wide (fullwidth) when broadcast tab selected
+  - Left slot: Scrollable list of broadcast groups with numbered badges
+  - Right slot: Conversation history and input box
+  - Double-click group to open management modal
+  - Management modal: View members, add/remove members, delete group
+  - Full conversation history regardless of player presence
+  - Messages persist in database and appear in terminal_history for offline players
 
 ### 10.3 Auto-Managed Widget (NPCWidget Pattern)
 
@@ -824,6 +927,47 @@ If you have a Component that should be in the widget panel:
 - [ ] Test widget appears and functions
 - [ ] Test message routing
 - [ ] Test visibility logic
+
+---
+
+## 15. WIDGET-SPECIFIC FEATURES
+
+### 15.1 CommsWidget Broadcast Feature
+
+**Implementation:**
+- **File:** `public/js/widgets/CommsWidget.js`
+- **Mode:** Broadcast tab added alongside Talk, Resonate, Telepath
+- **Layout:** Two-slot wide when broadcast mode active
+- **Groups List:** Left side with numbered badges, scrollable
+- **Conversation:** Right side with history and input
+- **Management:** Double-click group to open management modal
+
+**Database Integration:**
+- Groups stored in `broadcast_groups` table
+- Members in `broadcast_group_members` table
+- Messages in `broadcast_messages` table
+- All messages written to `terminal_history` for offline players
+
+**Terminal Commands:**
+- `-N "message"` - Send message to group by ID number
+- `createbroadcastgroup <name>` or `cbg <name>` - Create group
+- `addtobroadcast <groupName> <playerName>` or `atb` - Add member
+- `removefrombroadcast <groupName> <playerName>` or `rfb` - Remove member
+- `listbroadcastgroups` or `lbg` - List groups
+
+**Modal Features:**
+- Create Group Modal: Group name input, player dropdown, add members, create button
+- Management Modal: View members, add/remove members, delete group
+- All players (online and offline) available for selection
+- Current player excluded from selection lists
+
+**Message Routing:**
+- `broadcast` - Received broadcast message
+- `broadcastGroups` - Groups list update
+- `broadcastHistory` - Message history for all groups
+- `broadcastGroupMembers` - Members list for management
+- `broadcastGroupDeleted` - Group deletion notification
+- `allPlayers` - All players list for modals
 
 ---
 

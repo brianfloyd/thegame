@@ -64,23 +64,59 @@ export default class FactoryWidget extends Widget {
         quantityInputContainer.appendChild(quantityInput);
         content.appendChild(quantityInputContainer);
         
-        // Slot container
-        const slotContainer = document.createElement('div');
-        slotContainer.className = 'factory-slot-container';
-        slotContainer.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px;';
+        // Ingredient slots container (2 slots in a row)
+        const ingredientContainer = document.createElement('div');
+        ingredientContainer.className = 'factory-ingredient-container';
         
-        // Create 5 slots (2 ingredient slots + 3 rune slots)
-        for (let i = 0; i < 5; i++) {
+        // Create 2 ingredient slots
+        for (let i = 0; i < 2; i++) {
             const slot = document.createElement('div');
             slot.id = `factory-slot-${i}`;
             slot.className = 'widget-factory-slot';
             
             // Slot label
             const slotLabel = document.createElement('div');
+            slotLabel.className = 'factory-slot-label';
             slotLabel.style.cssText = 'font-size: 9px; color: #888; margin-bottom: 4px; text-transform: uppercase;';
             if (i === 0) slotLabel.textContent = 'Ingredient 1';
             else if (i === 1) slotLabel.textContent = 'Ingredient 2';
-            else if (i === 2) slotLabel.textContent = 'Production Rune';
+            slot.appendChild(slotLabel);
+            
+            // Slot content
+            const slotContent = document.createElement('div');
+            slotContent.className = 'factory-slot-content';
+            slotContent.style.cssText = 'flex: 1; display: flex; align-items: center; justify-content: center; min-height: 40px; color: #ff8800; font-size: 10px; text-align: center;';
+            slot.appendChild(slotContent);
+            
+            // Empty button (hidden initially)
+            const emptyBtn = document.createElement('button');
+            emptyBtn.className = 'factory-slot-empty-btn widget-btn widget-btn-small';
+            emptyBtn.setAttribute('data-slot', i.toString());
+            emptyBtn.textContent = 'Empty';
+            emptyBtn.style.cssText = 'display: none; margin-top: 4px; width: 100%; font-size: 9px; padding: 2px 4px;';
+            slot.appendChild(emptyBtn);
+            
+            ingredientContainer.appendChild(slot);
+        }
+        
+        content.appendChild(ingredientContainer);
+        
+        // Rune slots container (3 slots in a row)
+        const runeContainer = document.createElement('div');
+        runeContainer.className = 'factory-rune-slots';
+        runeContainer.style.cssText = 'margin-bottom: 10px;';
+        
+        // Create 3 rune slots
+        for (let i = 2; i < 5; i++) {
+            const slot = document.createElement('div');
+            slot.id = `factory-slot-${i}`;
+            slot.className = 'widget-factory-slot factory-slot-rune';
+            
+            // Slot label
+            const slotLabel = document.createElement('div');
+            slotLabel.className = 'factory-slot-label';
+            slotLabel.style.cssText = 'font-size: 9px; color: #888; margin-bottom: 4px; text-transform: uppercase;';
+            if (i === 2) slotLabel.textContent = 'Production Rune';
             else if (i === 3) slotLabel.textContent = 'Enhancement Rune';
             else if (i === 4) slotLabel.textContent = 'Modifier Rune';
             slot.appendChild(slotLabel);
@@ -99,10 +135,10 @@ export default class FactoryWidget extends Widget {
             emptyBtn.style.cssText = 'display: none; margin-top: 4px; width: 100%; font-size: 9px; padding: 2px 4px;';
             slot.appendChild(emptyBtn);
             
-            slotContainer.appendChild(slot);
+            runeContainer.appendChild(slot);
         }
         
-        content.appendChild(slotContainer);
+        content.appendChild(runeContainer);
         
         // Craft button
         const craftBtn = document.createElement('button');

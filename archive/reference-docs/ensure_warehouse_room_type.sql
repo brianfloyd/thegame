@@ -15,3 +15,11 @@ ON CONFLICT (room_type) DO NOTHING;
 -- Show current room types
 SELECT room_type, color FROM room_type_colors ORDER BY room_type;
 
+
+
+
+
+
+
+
+

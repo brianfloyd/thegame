@@ -1,7 +1,7 @@
 # 999 — Canonical Database Schema Specification
 _The authoritative database contract for Cursor and all future backend/server‑side work._
 
-**Analysis Date:** Based on codebase as of migration 086  
+**Analysis Date:** Based on codebase as of migration 088  
 **Methodology:** Strict code-based analysis per scrub prompt template  
 **All answers derived from:** `migrations/*.sql`, `database.js`, actual database schema queries
 
@@ -23,10 +23,10 @@ _The authoritative database contract for Cursor and all future backend/server‑
 
 4. **JSONB is allowed only for flexible state, NOT for identity, relationships, or core logic.**
    - Evidence: Item relationships use `item_id` INTEGER foreign keys (migrations 076-086)
-   - Evidence: JSONB used for: `state`, `metadata`, `config_json`, `required_stats`, `required_buffs`, `input_items`, `output_items`, `failure_states`, `required_ingredients`, `output_items`, `byproducts`, `keywords_responses`, `puzzle_clues`, `factory_quirks`, `environment`, `logs`
+   - Evidence: JSONB used for: `state`, `metadata`, `config_json`, `required_stats`, `required_buffs`, `input_items`, `output_items`, `failure_states`, `required_ingredients`, `output_items`, `byproducts`, `keywords_responses`, `factory_quirks`, `environment`, `logs`
 
 5. **Every persistent entity must be defined in this spec.**
-   - All 36 tables documented below
+   - All 39 tables documented below
 
 6. **All constraints, defaults, and rules must be followed by Cursor during creation or modification of code.**
    - Foreign key constraints enforced at database level
@@ -383,7 +383,7 @@ _The authoritative database contract for Cursor and all future backend/server‑
 **Evidence:** 
 - `migrations/001_schema.sql:116-122` (original schema)
 - `migrations/076_convert_player_items_to_item_id.sql` (conversion migration)
-- `database.js:470-550` - Functions use `item_id` with JOIN to return `item_name`
+- `database.js:1923-1985` - Functions use `item_id` with JOIN to return `item_name`
 
 ---
 
@@ -427,7 +427,7 @@ _The authoritative database contract for Cursor and all future backend/server‑
 **Evidence:** 
 - `migrations/011_warehouse_system.sql:5-13` (original schema)
 - `migrations/077_convert_warehouse_items_to_item_id.sql` (conversion migration)
-- `database.js:2800-2950` - Functions use `item_id` with JOIN to return `item_name`
+- `database.js:1991-2115` - Functions use `item_id` with JOIN to return `item_name`
 
 ---
 
@@ -527,11 +527,10 @@ _The authoritative database contract for Cursor and all future backend/server‑
 - `engagement_delay` INTEGER NOT NULL DEFAULT 3000 (milliseconds)
 - `initial_message` TEXT (nullable)
 - `initial_message_color` TEXT DEFAULT '#00ffff'
-- `keywords_responses` JSONB DEFAULT '{}' (keyword → response mapping)
+- `keywords_responses` JSONB DEFAULT '{}' (keyword → response mapping for both dialogue and puzzle types)
 - `keyword_color` TEXT DEFAULT '#ff00ff'
 - `incorrect_response` TEXT DEFAULT 'I do not understand what you mean.'
 - `puzzle_mode` TEXT (nullable, word, combination, cipher)
-- `puzzle_clues` JSONB DEFAULT '[]' (array format: [{"keyword": "key", "answer": "value"}])
 - `puzzle_solution` TEXT (nullable)
 - `puzzle_success_message` TEXT (nullable)
 - `puzzle_failure_message` TEXT DEFAULT 'That is not the answer I seek.'
@@ -892,7 +891,66 @@ _The authoritative database contract for Cursor and all future backend/server‑
 
 ---
 
-## 2.12 Metadata Tables
+## 2.12 Broadcast System Tables
+
+### `broadcast_groups`
+**Purpose:** Named groups of players for broadcast communication  
+**Fields:**
+- `id` SERIAL PRIMARY KEY
+- `name` TEXT NOT NULL UNIQUE
+- `created_at` BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+- `created_by_player_id` INTEGER REFERENCES players(id) ON DELETE SET NULL
+
+**Relationships:**
+- One-to-many: `broadcast_groups` → `broadcast_group_members` (via `broadcast_group_members.group_id`)
+- One-to-many: `broadcast_groups` → `broadcast_messages` (via `broadcast_messages.group_id`)
+- Many-to-one: `broadcast_groups` → `players` (via `created_by_player_id`)
+
+**Evidence:** `migrations/088_create_broadcast_system.sql:4-10`
+
+---
+
+### `broadcast_group_members`
+**Purpose:** Player membership in broadcast groups  
+**Fields:**
+- `id` SERIAL PRIMARY KEY
+- `group_id` INTEGER NOT NULL REFERENCES broadcast_groups(id) ON DELETE CASCADE
+- `player_id` INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE
+- `joined_at` BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+
+**Constraints:**
+- UNIQUE(`group_id`, `player_id`) - Player can only be member once per group
+
+**Relationships:**
+- Many-to-one: `broadcast_group_members` → `broadcast_groups` (via `group_id`)
+- Many-to-one: `broadcast_group_members` → `players` (via `player_id`)
+
+**Evidence:** `migrations/088_create_broadcast_system.sql:12-18`
+
+---
+
+### `broadcast_messages`
+**Purpose:** Message history for broadcast groups  
+**Fields:**
+- `id` SERIAL PRIMARY KEY
+- `group_id` INTEGER NOT NULL REFERENCES broadcast_groups(id) ON DELETE CASCADE
+- `player_id` INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE
+- `message` TEXT NOT NULL
+- `created_at` BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+
+**Relationships:**
+- Many-to-one: `broadcast_messages` → `broadcast_groups` (via `group_id`)
+- Many-to-one: `broadcast_messages` → `players` (via `player_id`)
+
+**Indexes:**
+- `idx_broadcast_messages_group_id` - For querying group message history
+- `idx_broadcast_messages_created_at` - For chronological ordering
+
+**Evidence:** `migrations/088_create_broadcast_system.sql:20-26`
+
+---
+
+## 2.13 Metadata Tables
 
 ### `stat_metadata`
 **Purpose:** Stat definitions and descriptions  
@@ -1023,8 +1081,8 @@ _The authoritative database contract for Cursor and all future backend/server‑
 
 **Evidence:** 
 - `database.js:721-794` - All conversion logic
-- `database.js:470-550` - Player items functions
-- `database.js:2800-2950` - Warehouse items functions
+- `database.js:1923-1985` - Player items functions
+- `database.js:1991-2115` - Warehouse items functions
 - `database.js:1186-1322` - Lore keeper functions
 - `database.js:1682-1820` - Factory recipe functions
 
@@ -1037,7 +1095,7 @@ _The authoritative database contract for Cursor and all future backend/server‑
 **Read Operations:**
 - `getPlayerById()`, `getPlayerByName()` - Player data
 - `getRoomById()`, `getRoomByCoords()` - Room data
-- `getPlayerItems()` - Inventory (returns `item_name` from JOIN)
+- `getPlayerItems()` - Inventory (returns `item_name` from JOIN, `database.js:1923`)
 - `getRoomItems()` - Ground items (returns `item_name`)
 - `getNPCsInRoom()` - NPCs in room (returns `puzzle_reward_item` as item name)
 - `getLoreKeepersInRoom()` - Lore keepers (returns `puzzle_reward_item` as item name)
@@ -1243,13 +1301,13 @@ _The authoritative database contract for Cursor and all future backend/server‑
 ## 6.4 Player State Rules
 
 **Rule 1:** `resource_vitalis` MUST NOT exceed `resource_max_vitalis`  
-**Enforcement:** `database.js:470-493` - `updatePlayerVitalis()` caps at max
+**Enforcement:** `database.js:468-474` - `updatePlayerVitalis()` caps at max
 
 **Rule 2:** `resource_vitalis` MUST NOT be negative  
-**Enforcement:** `database.js:470-493` - Validation in update function
+**Enforcement:** `database.js:468-474` - Validation in update function
 
 **Rule 3:** Player inventory encumbrance = sum(item.encumbrance * quantity)  
-**Enforcement:** `database.js:550-570` - `getPlayerCurrentEncumbrance()` calculates from JOIN
+**Enforcement:** `database.js:1976-1985` - `getPlayerCurrentEncumbrance()` calculates from JOIN
 
 **Evidence:** `database.js` validation functions
 
@@ -1269,7 +1327,7 @@ _The authoritative database contract for Cursor and all future backend/server‑
 
 **Transition:** `player_items` INSERT/UPDATE/DELETE  
 **Files:** `handlers/game.js:1400-1500` - take/drop commands  
-**Database:** `database.js:470-550` - `addPlayerItem()`, `removePlayerItem()`
+**Database:** `database.js:1935-1974` - `addPlayerItem()`, `removePlayerItem()`
 
 ---
 

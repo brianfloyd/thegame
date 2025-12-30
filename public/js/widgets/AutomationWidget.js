@@ -1,27 +1,133 @@
 /**
  * AutomationWidget
  * 
- * Controls for:
- * - Auto-navigate to a specific room
- * - Auto-loop playback
- * - Auto-harvest toggle (only active when near harvestable NPCs)
- * - Auto-path interruption when player moves manually
+ * Comprehensive automation control widget with:
+ * - Auto-loop execution
+ * - 9 toggle settings with player ability gating
+ * - Toggle state persistence in widget_config
+ * - Standardized CSS classes
+ * - Future feature stubs (auto-collect, auto-store, auto-deliver, auto-craft)
+ * 
+ * Note: Auto-navigation has been moved to CompassWidget
+ * 
+ * Canon: 10-16-automation-engine.md
  */
 
 import Widget from './Widget.js';
+
+// Toggle configuration with ability/stat gating
+const TOGGLE_CONFIG = {
+    autoLoop: {
+        label: 'Auto-Loop Execution',
+        category: 'movement',
+        gating: null, // Always available
+        requiresAbility: null,
+        requiresStat: null,
+        requiresWarehouse: false,
+        requiresFactory: false,
+        implemented: true
+    },
+    autoHarvest: {
+        label: 'Auto-Harvest (Loops)',
+        category: 'harvest',
+        gating: 'ability_attunement >= 5 OR stat_resonance >= 10',
+        requiresAbility: { attunement: 5 },
+        requiresStat: { resonance: 10 },
+        requiresWarehouse: false,
+        requiresFactory: false,
+        implemented: true
+    },
+    autoAttune: {
+        label: 'Auto-Attune',
+        category: 'harvest',
+        gating: 'ability_attunement >= 10 AND stat_resonance >= 15',
+        requiresAbility: { attunement: 10 },
+        requiresStat: { resonance: 15 },
+        requiresWarehouse: false,
+        requiresFactory: false,
+        implemented: false // Future feature
+    },
+    autoCollect: {
+        label: 'Auto-Collect',
+        category: 'items',
+        gating: 'stat_acumen >= 10 OR ability_commerce >= 5',
+        requiresAbility: { commerce: 5 },
+        requiresStat: { acumen: 10 },
+        requiresWarehouse: false,
+        requiresFactory: false,
+        implemented: false // Canon §6.1 - Future feature
+    },
+    autoStore: {
+        label: 'Auto-Store',
+        category: 'items',
+        gating: 'requiresWarehouse AND stat_acumen >= 15',
+        requiresAbility: null,
+        requiresStat: { acumen: 15 },
+        requiresWarehouse: true,
+        requiresFactory: false,
+        implemented: false // Canon §6.2 - Future feature
+    },
+    autoSell: {
+        label: 'Auto-Sell',
+        category: 'items',
+        gating: 'ability_commerce >= 10 AND stat_acumen >= 20',
+        requiresAbility: { commerce: 10 },
+        requiresStat: { acumen: 20 },
+        requiresWarehouse: false,
+        requiresFactory: false,
+        implemented: false // Future feature
+    },
+    autoDeliver: {
+        label: 'Auto-Deliver',
+        category: 'factory',
+        gating: 'requiresFactory AND stat_ingenuity >= 15 AND ability_crafting >= 10',
+        requiresAbility: { crafting: 10 },
+        requiresStat: { ingenuity: 15 },
+        requiresWarehouse: false,
+        requiresFactory: true,
+        implemented: false // Canon §6.3 - Future feature
+    },
+    autoCraft: {
+        label: 'Auto-Craft',
+        category: 'factory',
+        gating: 'requiresFactory AND stat_ingenuity >= 20 AND ability_crafting >= 15',
+        requiresAbility: { crafting: 15 },
+        requiresStat: { ingenuity: 20 },
+        requiresWarehouse: false,
+        requiresFactory: true,
+        implemented: false // Canon §6.4 - Future feature
+    },
+    autoCraftLoop: {
+        label: 'Auto-Craft Loop',
+        category: 'factory',
+        gating: 'requiresFactory AND stat_ingenuity >= 25 AND ability_crafting >= 20',
+        requiresAbility: { crafting: 20 },
+        requiresStat: { ingenuity: 25 },
+        requiresWarehouse: false,
+        requiresFactory: true,
+        implemented: false // Canon §6.4 - Future feature
+    }
+};
 
 export default class AutomationWidget extends Widget {
     constructor(game, id) {
         super(game, id);
         
-        // State
+        // Path/Loop state
         this.allPlayerPaths = [];
         this.selectedPathId = null;
         this.isPathExecuting = false;
         this.isPathPaused = false;
         this.pausedPathRoomId = null;
         this.pathPreviewData = null;
-        this.autoHarvestEnabled = false;
+        
+        // Toggle states (loaded from widget_config)
+        this.toggleStates = {};
+        
+        // Player stats/abilities (for gating)
+        this.playerStats = {};
+        this.hasWarehouse = false;
+        this.inFactoryRoom = false;
         
         // Execution tracking
         this.executionTracking = {
@@ -33,7 +139,7 @@ export default class AutomationWidget extends Widget {
             isActive: false
         };
         
-        // Room position tracking for auto-path
+        // Room position tracking
         this.currentRoomPosForAutoPath = null;
         this.currentMapIdForAutoPath = null;
     }
@@ -51,200 +157,347 @@ export default class AutomationWidget extends Widget {
         root.setAttribute('data-widget', 'automation');
         root.id = 'automationWidget';
         
-        // Create header
+        // Header
         const header = document.createElement('div');
         header.className = 'widget-header';
         header.textContent = 'Automation';
         root.appendChild(header);
         
-        // Create content container
+        // Content
         const content = document.createElement('div');
         content.className = 'widget-content';
         
-        // Path/Loop selection
-        const pathSelectContainer = document.createElement('div');
-        pathSelectContainer.style.marginBottom = '12px';
+        // Path/Loop selection section - HIDDEN (kept in code for future popup implementation)
+        // const pathSection = this.renderPathSelection();
+        // content.appendChild(pathSection);
         
-        const pathSelectLabel = document.createElement('label');
-        pathSelectLabel.textContent = 'Path/Loop:';
-        pathSelectLabel.style.display = 'block';
-        pathSelectLabel.style.marginBottom = '4px';
-        pathSelectLabel.style.color = '#aaa';
-        pathSelectContainer.appendChild(pathSelectLabel);
+        // Control buttons - HIDDEN (kept in code for future use)
+        // const controlsSection = this.renderControls();
+        // content.appendChild(controlsSection);
         
-        const pathSelect = document.createElement('select');
-        pathSelect.id = 'pathLoopSelect';
-        pathSelect.className = 'ticket-status-select';
-        pathSelect.style.width = '100%';
-        pathSelect.style.marginBottom = '8px';
-        const placeholderOption = document.createElement('option');
-        placeholderOption.value = '';
-        placeholderOption.textContent = 'Select Path/Loop...';
-        pathSelect.appendChild(placeholderOption);
-        pathSelectContainer.appendChild(pathSelect);
+        // Toggle settings section
+        const togglesSection = this.renderToggleSettings();
+        content.appendChild(togglesSection);
         
-        // Delete path button
-        const deletePathBtn = document.createElement('button');
-        deletePathBtn.id = 'deletePathBtn';
-        deletePathBtn.className = 'ticket-action-btn';
-        deletePathBtn.textContent = 'Delete Path';
-        deletePathBtn.style.marginBottom = '12px';
-        deletePathBtn.disabled = true;
-        pathSelectContainer.appendChild(deletePathBtn);
+        // Execution status panel
+        const statusSection = this.renderStatusPanel();
+        content.appendChild(statusSection);
         
-        content.appendChild(pathSelectContainer);
+        root.appendChild(content);
+        return root;
+    }
+    
+    /**
+     * Render path/loop selection section
+     */
+    renderPathSelection() {
+        const section = document.createElement('div');
+        section.className = 'widget-section';
         
-        // Control buttons
-        const controlsContainer = document.createElement('div');
-        controlsContainer.style.display = 'flex';
-        controlsContainer.style.gap = '8px';
-        controlsContainer.style.marginBottom = '12px';
+        const label = document.createElement('label');
+        label.className = 'widget-section-title';
+        label.textContent = 'Path/Loop:';
+        label.style.fontSize = '13px'; // Increased font size
+        section.appendChild(label);
+        
+        const select = document.createElement('select');
+        select.id = 'pathLoopSelect';
+        select.className = 'widget-select';
+        select.style.fontSize = '13px'; // Increased font size
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Select Path/Loop...';
+        select.appendChild(placeholder);
+        section.appendChild(select);
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.id = 'deletePathBtn';
+        deleteBtn.className = 'widget-btn widget-btn-danger';
+        deleteBtn.textContent = 'Delete Path';
+        deleteBtn.style.fontSize = '12px'; // Increased font size
+        deleteBtn.disabled = true;
+        section.appendChild(deleteBtn);
+        
+        return section;
+    }
+    
+    /**
+     * Render control buttons
+     */
+    renderControls() {
+        const container = document.createElement('div');
+        container.className = 'widget-btn-group';
         
         const startBtn = document.createElement('button');
         startBtn.id = 'startPathBtn';
-        startBtn.className = 'ticket-action-btn';
+        startBtn.className = 'widget-btn widget-btn-primary';
         startBtn.textContent = 'Start';
+        startBtn.style.fontSize = '12px'; // Increased font size
         startBtn.disabled = true;
-        controlsContainer.appendChild(startBtn);
+        container.appendChild(startBtn);
         
         const stopBtn = document.createElement('button');
         stopBtn.id = 'stopPathBtn';
-        stopBtn.className = 'ticket-action-btn';
+        stopBtn.className = 'widget-btn widget-btn-danger';
         stopBtn.textContent = 'Stop';
+        stopBtn.style.fontSize = '12px'; // Increased font size
         stopBtn.style.display = 'none';
-        controlsContainer.appendChild(stopBtn);
+        container.appendChild(stopBtn);
         
         const continueBtn = document.createElement('button');
         continueBtn.id = 'continuePathBtn';
-        continueBtn.className = 'ticket-action-btn';
+        continueBtn.className = 'widget-btn widget-btn-primary';
         continueBtn.textContent = 'Continue';
+        continueBtn.style.fontSize = '12px'; // Increased font size
         continueBtn.style.display = 'none';
-        controlsContainer.appendChild(continueBtn);
+        container.appendChild(continueBtn);
         
-        content.appendChild(controlsContainer);
+        return container;
+    }
+    
+    /**
+     * Render toggle settings section
+     */
+    renderToggleSettings() {
+        const container = document.createElement('div');
+        container.className = 'widget-section';
         
-        // Auto-harvest toggle (only shown for loops)
-        const autoHarvestContainer = document.createElement('div');
-        autoHarvestContainer.className = 'auto-harvest-toggle-container';
-        autoHarvestContainer.style.display = 'none';
-        autoHarvestContainer.style.marginBottom = '12px';
-        autoHarvestContainer.style.alignItems = 'center';
-        autoHarvestContainer.style.gap = '8px';
+        const title = document.createElement('div');
+        title.className = 'widget-section-title';
+        title.textContent = 'Toggle Settings';
+        title.style.fontSize = '14px';
+        container.appendChild(title);
         
-        const autoHarvestLabel = document.createElement('label');
-        autoHarvestLabel.textContent = 'Auto-Harvest:';
-        autoHarvestLabel.style.color = '#aaa';
-        autoHarvestContainer.appendChild(autoHarvestLabel);
+        // Create horizontal grid container for ALL toggles (no categories)
+        // Grid designed to fit all toggles in 2 rows
+        const togglesGrid = document.createElement('div');
+        togglesGrid.className = 'toggles-grid';
+        togglesGrid.style.display = 'grid';
+        // Calculate: 10 toggles total, 2 rows = 5 columns
+        togglesGrid.style.gridTemplateColumns = 'repeat(5, 1fr)';
+        togglesGrid.style.gap = '8px';
+        togglesGrid.style.marginTop = '10px';
         
-        const autoHarvestToggle = document.createElement('input');
-        autoHarvestToggle.id = 'autoHarvestToggle';
-        autoHarvestToggle.type = 'checkbox';
-        autoHarvestToggle.checked = false;
-        autoHarvestContainer.appendChild(autoHarvestToggle);
+        // Add all toggles in flat list (no grouping)
+        Object.entries(TOGGLE_CONFIG).forEach(([key, config]) => {
+            const toggleCard = this.renderToggleCard(key, config);
+            togglesGrid.appendChild(toggleCard);
+        });
         
-        content.appendChild(autoHarvestContainer);
+        container.appendChild(togglesGrid);
         
-        // Automation status panel
-        const statusPanel = document.createElement('div');
-        statusPanel.id = 'automationStatus';
-        statusPanel.style.display = 'none';
-        statusPanel.style.padding = '12px';
-        statusPanel.style.backgroundColor = '#1a1a2e';
-        statusPanel.style.border = '1px solid #667eea';
-        statusPanel.style.borderRadius = '4px';
-        statusPanel.style.marginTop = '12px';
+        return container;
+    }
+    
+    /**
+     * Render a single toggle card (framed container)
+     * Compact size, toggle slider above label
+     */
+    renderToggleCard(key, config) {
+        // Create framed card container (smaller, more compact)
+        const card = document.createElement('div');
+        card.className = 'toggle-card';
+        card.setAttribute('data-toggle-key', key);
+        card.style.padding = '6px';
+        card.style.border = '1px solid #333';
+        card.style.borderRadius = '4px';
+        card.style.backgroundColor = '#0a0a0a';
+        card.style.display = 'flex';
+        card.style.flexDirection = 'column';
+        card.style.alignItems = 'center';
+        card.style.gap = '4px';
+        card.style.minHeight = '60px';
+        card.style.cursor = 'pointer';
         
-        const statusTitle = document.createElement('div');
-        statusTitle.textContent = 'Execution Status';
-        statusTitle.style.fontWeight = 'bold';
-        statusTitle.style.marginBottom = '8px';
-        statusTitle.style.color = '#00ffff';
-        statusPanel.appendChild(statusTitle);
+        // Create toggle switch (canonical structure matching editor EXACTLY)
+        // Structure MUST be: <label><input><span class="toggle-slider"></span><span class="toggle-label"></span></label>
+        // The CSS selector .toggle-switch input:checked + .toggle-slider requires slider to be immediate sibling
+        const toggleSwitch = document.createElement('label');
+        toggleSwitch.className = 'toggle-switch';
+        toggleSwitch.setAttribute('data-toggle-key', key);
+        toggleSwitch.style.display = 'flex';
+        toggleSwitch.style.flexDirection = 'column';
+        toggleSwitch.style.alignItems = 'center';
+        toggleSwitch.style.gap = '4px';
+        toggleSwitch.style.width = '100%';
         
-        const statusGrid = document.createElement('div');
-        statusGrid.style.display = 'grid';
-        statusGrid.style.gridTemplateColumns = '1fr 1fr';
-        statusGrid.style.gap = '8px';
+        // Hidden checkbox input (MUST be first child for CSS selector to work)
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `toggle_${key}`;
+        checkbox.setAttribute('data-toggle-key', key);
+        checkbox.checked = false;
+        checkbox.disabled = false;
+        toggleSwitch.appendChild(checkbox);
         
-        // Total rooms visited
-        const totalRoomsLabel = document.createElement('div');
-        totalRoomsLabel.textContent = 'Rooms Visited:';
-        totalRoomsLabel.style.color = '#aaa';
-        statusGrid.appendChild(totalRoomsLabel);
+        // Toggle slider (MUST be immediate sibling after checkbox for CSS selector to work)
+        const slider = document.createElement('span');
+        slider.className = 'toggle-slider';
+        toggleSwitch.appendChild(slider);
         
-        const totalRoomsValue = document.createElement('div');
-        totalRoomsValue.id = 'totalRoomsVisited';
-        totalRoomsValue.textContent = '0';
-        totalRoomsValue.style.color = '#00ffff';
-        statusGrid.appendChild(totalRoomsValue);
+        // Label text (below slider, clearly visible)
+        const label = document.createElement('span');
+        label.className = 'toggle-label';
+        label.textContent = config.label;
+        label.style.textAlign = 'center';
+        label.style.wordWrap = 'break-word';
+        label.style.lineHeight = '1.2';
+        label.style.fontSize = '11px'; // Smaller font
+        toggleSwitch.appendChild(label);
         
-        // Path position
-        const pathPosLabel = document.createElement('div');
-        pathPosLabel.textContent = 'Position:';
-        pathPosLabel.style.color = '#aaa';
-        statusGrid.appendChild(pathPosLabel);
+        card.appendChild(toggleSwitch);
         
-        const pathPosValue = document.createElement('div');
-        pathPosValue.id = 'pathPosition';
-        pathPosValue.textContent = '0/0';
-        pathPosValue.style.color = '#00ffff';
-        statusGrid.appendChild(pathPosValue);
+        // Status indicator (only show if locked, not for "Coming Soon")
+        // Positioned at bottom of card with margin
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'toggle-status';
+        statusSpan.setAttribute('data-status-key', key);
+        statusSpan.style.fontSize = '9px';
+        statusSpan.style.color = '#888';
+        statusSpan.style.textAlign = 'center';
+        statusSpan.style.marginTop = 'auto'; // Push to bottom
+        statusSpan.style.marginBottom = '2px'; // Small gap from bottom
+        statusSpan.style.minHeight = '12px'; // Reserve space but may be empty
+        card.appendChild(statusSpan);
         
-        // Loop counter (only for loops)
-        const loopCounterContainer = document.createElement('div');
-        loopCounterContainer.id = 'loopCounterContainer';
-        loopCounterContainer.style.display = 'none';
-        loopCounterContainer.style.gridColumn = '1 / -1';
-        loopCounterContainer.style.marginTop = '8px';
-        loopCounterContainer.style.paddingTop = '8px';
-        loopCounterContainer.style.borderTop = '1px solid #333';
+        // Tooltip for requirements
+        card.title = this.getToggleTooltip(config);
         
-        const loopCounterLabel = document.createElement('div');
-        loopCounterLabel.textContent = 'Loop Count:';
-        loopCounterLabel.style.color = '#aaa';
-        loopCounterContainer.appendChild(loopCounterLabel);
+        // Make entire card clickable (but don't interfere with toggle switch clicks)
+        card.addEventListener('click', (e) => {
+            // Only handle clicks on card itself or status span, not on toggle switch
+            if (e.target === card || e.target === statusSpan) {
+                e.stopPropagation();
+                const checkbox = card.querySelector('input[type="checkbox"]');
+                if (checkbox && !checkbox.disabled) {
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+        });
         
-        const loopCounterValue = document.createElement('div');
-        loopCounterValue.id = 'loopCounter';
-        loopCounterValue.textContent = '0';
-        loopCounterValue.style.color = '#ff00ff';
-        loopCounterValue.style.fontSize = '1.2em';
-        loopCounterValue.style.fontWeight = 'bold';
-        loopCounterContainer.appendChild(loopCounterValue);
+        return card;
+    }
+    
+    /**
+     * Render status panel
+     */
+    renderStatusPanel() {
+        const panel = document.createElement('div');
+        panel.id = 'automationStatus';
+        panel.className = 'widget-section';
+        panel.style.display = 'none';
         
-        statusGrid.appendChild(loopCounterContainer);
-        statusPanel.appendChild(statusGrid);
+        const title = document.createElement('div');
+        title.className = 'widget-section-title';
+        title.textContent = 'Execution Status';
+        title.style.fontSize = '14px'; // Increased font size
+        panel.appendChild(title);
         
-        content.appendChild(statusPanel);
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = '1fr 1fr';
+        grid.style.gap = '10px';
         
-        root.appendChild(content);
+        // Rooms visited
+        const roomsLabel = document.createElement('div');
+        roomsLabel.className = 'widget-stat-label';
+        roomsLabel.textContent = 'Rooms Visited:';
+        roomsLabel.style.fontSize = '13px'; // Increased font size
+        grid.appendChild(roomsLabel);
         
-        return root;
+        const roomsValue = document.createElement('div');
+        roomsValue.id = 'totalRoomsVisited';
+        roomsValue.className = 'widget-stat-value';
+        roomsValue.textContent = '0';
+        roomsValue.style.fontSize = '13px'; // Increased font size
+        grid.appendChild(roomsValue);
+        
+        // Position
+        const posLabel = document.createElement('div');
+        posLabel.className = 'widget-stat-label';
+        posLabel.textContent = 'Position:';
+        posLabel.style.fontSize = '13px'; // Increased font size
+        grid.appendChild(posLabel);
+        
+        const posValue = document.createElement('div');
+        posValue.id = 'pathPosition';
+        posValue.className = 'widget-stat-value';
+        posValue.textContent = '0/0';
+        posValue.style.fontSize = '13px'; // Increased font size
+        grid.appendChild(posValue);
+        
+        // Loop counter (hidden by default)
+        const loopContainer = document.createElement('div');
+        loopContainer.id = 'loopCounterContainer';
+        loopContainer.style.display = 'none';
+        loopContainer.style.gridColumn = '1 / -1';
+        loopContainer.style.marginTop = '10px';
+        loopContainer.style.paddingTop = '10px';
+        loopContainer.style.borderTop = '1px solid #333';
+        
+        const loopLabel = document.createElement('div');
+        loopLabel.className = 'widget-stat-label';
+        loopLabel.textContent = 'Loop Count:';
+        loopLabel.style.fontSize = '13px'; // Increased font size
+        loopContainer.appendChild(loopLabel);
+        
+        const loopValue = document.createElement('div');
+        loopValue.id = 'loopCounter';
+        loopValue.className = 'widget-stat-value';
+        loopValue.textContent = '0';
+        loopValue.style.fontSize = '1.4em'; // Increased from 1.2em
+        loopValue.style.fontWeight = 'bold';
+        loopValue.style.color = '#ff00ff';
+        loopContainer.appendChild(loopValue);
+        
+        grid.appendChild(loopContainer);
+        panel.appendChild(grid);
+        
+        return panel;
     }
     
     /**
      * Called after widget is attached
      */
     onAttach() {
-        // Set up event listeners
         this.setupEventListeners();
+        this.loadToggleStates();
+        this.loadAllPlayerPaths();
         
-        // Load paths if player is authenticated
-        // Listen for authentication event
+        // Listen for player stats updates
+        this.game.messageBus.on('player:stats', (data) => {
+            if (data.stats) {
+                this.updatePlayerStats(data.stats);
+            }
+        });
+        
+        // Listen for room updates (for warehouse/factory detection)
+        this.game.messageBus.on('room:update', (data) => {
+            if (data.hasWarehouseDeed !== undefined) {
+                this.hasWarehouse = data.hasWarehouseDeed;
+            }
+            if (data.room?.roomType) {
+                this.inFactoryRoom = data.room.roomType === 'factory';
+            }
+            this.updateToggleStates();
+        });
+        
+        // Listen for authentication
         const authHandler = () => {
             setTimeout(() => {
                 this.loadAllPlayerPaths();
+                this.loadToggleStates();
             }, 500);
         };
         this.game.messageBus.on('player:authenticated', authHandler);
-        
-        // Store handler reference for cleanup
         this._authHandler = authHandler;
         
-        // Also try to load immediately if already authenticated
+        // Try to load immediately if already authenticated
         if (this.game.currentPlayerName) {
             setTimeout(() => {
                 this.loadAllPlayerPaths();
+                this.loadToggleStates();
             }, 500);
         }
     }
@@ -258,7 +511,6 @@ export default class AutomationWidget extends Widget {
         const stopBtn = this.rootElement.querySelector('#stopPathBtn');
         const continueBtn = this.rootElement.querySelector('#continuePathBtn');
         const deleteBtn = this.rootElement.querySelector('#deletePathBtn');
-        const autoHarvestToggle = this.rootElement.querySelector('#autoHarvestToggle');
         
         if (pathSelect) {
             pathSelect.addEventListener('change', () => this.onPathSelectChange());
@@ -280,12 +532,37 @@ export default class AutomationWidget extends Widget {
             deleteBtn.addEventListener('click', () => this.deleteSelectedPath());
         }
         
-        if (autoHarvestToggle) {
-            autoHarvestToggle.addEventListener('change', (e) => {
-                this.autoHarvestEnabled = e.target.checked;
-                console.log('[AutomationWidget] Auto-harvest toggle changed:', this.autoHarvestEnabled);
+        // Setup toggle listeners - simplified to avoid conflicts
+        Object.keys(TOGGLE_CONFIG).forEach(key => {
+            const checkbox = this.rootElement.querySelector(`#toggle_${key}`);
+            if (!checkbox) return;
+            
+            // Primary handler: change event (fires when checkbox state actually changes)
+            // This is the ONLY place we handle state changes to avoid conflicts
+            checkbox.addEventListener('change', (e) => {
+                const newState = e.target.checked;
+                console.log(`[AutomationWidget] Checkbox ${key} changed to ${newState}`);
+                
+                // Update state immediately
+                this.toggleStates[key] = newState;
+                
+                // Update UI (status, card border) without calling updateToggleStates which might reset checkbox
+                const statusSpan = this.rootElement.querySelector(`[data-status-key="${key}"]`);
+                const card = this.rootElement.querySelector(`.toggle-card[data-toggle-key="${key}"]`);
+                
+                if (statusSpan) {
+                    statusSpan.textContent = newState ? '[ON]' : '[OFF]';
+                    statusSpan.style.color = newState ? '#00ff00' : '#888';
+                }
+                
+                if (card) {
+                    card.style.borderColor = newState ? '#00ff00' : '#333';
+                }
+                
+                // Handle other logic (server save, etc.)
+                this.handleToggleChange(key, newState);
             });
-        }
+        });
     }
     
     /**
@@ -297,7 +574,6 @@ export default class AutomationWidget extends Widget {
         } else if (msg.type === 'paths:details') {
             this.handlePathDetails(msg);
         } else if (msg.type === 'pathSaved') {
-            // Paths list is automatically refreshed by server sending allPlayerPaths
             if (window.terminal) {
                 window.terminal.addMessage(`Path "${msg.name}" saved successfully!`, 'info');
             }
@@ -313,15 +589,310 @@ export default class AutomationWidget extends Widget {
             this.handlePathExecutionStopped(msg);
         } else if (msg.type === 'paths:executionFailed') {
             this.handlePathExecutionFailed(msg);
-        } else if (msg.type === 'autonav:started') {
-            this.handleAutoNavigationStarted(msg);
-        } else if (msg.type === 'autonav:complete') {
-            this.handleAutoNavigationComplete(msg);
-        } else if (msg.type === 'autonav:failed') {
-            this.handleAutoNavigationFailed(msg);
         } else if (msg.type === 'roomUpdate' || msg.type === 'moved') {
             this.handleRoomMovement(msg);
+        } else if (msg.type === 'playerStats' && msg.stats) {
+            this.updatePlayerStats(msg.stats);
+        } else if (msg.type === 'widgetConfig') {
+            this.loadToggleStatesFromConfig(msg.config);
         }
+    }
+    
+    /**
+     * Load toggle states from widget_config
+     */
+    loadToggleStates() {
+        // Request widget config from server
+        this.game.send({ type: 'getWidgetConfig' });
+    }
+    
+    /**
+     * Load toggle states from config object
+     */
+    loadToggleStatesFromConfig(config) {
+        if (config && config.automation && config.automation.toggles) {
+            this.toggleStates = config.automation.toggles;
+        } else {
+            this.toggleStates = {};
+        }
+        this.updateToggleUI();
+    }
+    
+    /**
+     * Save toggle states to widget_config
+     */
+    saveToggleStates() {
+        const ws = this.game.getWebSocket();
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        
+        // Get current widget config
+        this.game.send({ type: 'getWidgetConfig' });
+        
+        // We'll update it when we receive the response
+        // For now, store locally and update on next getWidgetConfig response
+        this._pendingToggleStates = { ...this.toggleStates };
+    }
+    
+    /**
+     * Update player stats for gating
+     */
+    updatePlayerStats(stats) {
+        this.playerStats = {};
+        
+        // Extract stat and ability values
+        Object.entries(stats).forEach(([key, statObj]) => {
+            if (statObj && typeof statObj === 'object' && statObj.value !== undefined) {
+                // Convert camelCase to snake_case for matching
+                const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+                this.playerStats[`stat_${snakeKey}`] = statObj.value;
+                this.playerStats[`ability_${snakeKey}`] = statObj.value;
+            }
+        });
+        
+        // Also check direct stat/ability keys
+        Object.entries(stats).forEach(([key, value]) => {
+            if (key.startsWith('stat_') || key.startsWith('ability_')) {
+                if (typeof value === 'object' && value.value !== undefined) {
+                    this.playerStats[key] = value.value;
+                } else if (typeof value === 'number') {
+                    this.playerStats[key] = value;
+                }
+            }
+        });
+        
+        this.updateToggleStates();
+    }
+    
+    /**
+     * Check if toggle can be enabled based on player abilities/stats
+     */
+    canEnableToggle(toggleKey) {
+        const config = TOGGLE_CONFIG[toggleKey];
+        if (!config) return false;
+        
+        // Always available
+        if (!config.gating) return true;
+        
+        // Check warehouse requirement
+        if (config.requiresWarehouse && !this.hasWarehouse) return false;
+        
+        // Check factory requirement
+        if (config.requiresFactory && !this.inFactoryRoom) return false;
+        
+        // Check ability requirements (OR logic - any ability meets requirement)
+        if (config.requiresAbility) {
+            let abilityMet = false;
+            for (const [ability, minValue] of Object.entries(config.requiresAbility)) {
+                const abilityKey = `ability_${ability}`;
+                const currentValue = this.playerStats[abilityKey] || 0;
+                if (currentValue >= minValue) {
+                    abilityMet = true;
+                    break;
+                }
+            }
+            if (abilityMet) return true;
+        }
+        
+        // Check stat requirements (OR logic - any stat meets requirement)
+        if (config.requiresStat) {
+            let statMet = false;
+            for (const [stat, minValue] of Object.entries(config.requiresStat)) {
+                const statKey = `stat_${stat}`;
+                const currentValue = this.playerStats[statKey] || 0;
+                if (currentValue >= minValue) {
+                    statMet = true;
+                    break;
+                }
+            }
+            if (statMet) return true;
+        }
+        
+        // If we have requirements but none were met
+        if (config.requiresAbility || config.requiresStat) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Get tooltip text for toggle
+     */
+    getToggleTooltip(config) {
+        if (!config.implemented) {
+            return 'Coming Soon - Feature not yet implemented';
+        }
+        
+        const requirements = [];
+        
+        if (config.requiresAbility) {
+            for (const [ability, minValue] of Object.entries(config.requiresAbility)) {
+                const abilityKey = `ability_${ability}`;
+                const current = this.playerStats[abilityKey] || 0;
+                const status = current >= minValue ? '✓' : '✗';
+                requirements.push(`${status} ${ability}: ${current}/${minValue}`);
+            }
+        }
+        
+        if (config.requiresStat) {
+            for (const [stat, minValue] of Object.entries(config.requiresStat)) {
+                const statKey = `stat_${stat}`;
+                const current = this.playerStats[statKey] || 0;
+                const status = current >= minValue ? '✓' : '✗';
+                requirements.push(`${status} ${stat}: ${current}/${minValue}`);
+            }
+        }
+        
+        if (config.requiresWarehouse) {
+            requirements.push(`${this.hasWarehouse ? '✓' : '✗'} Warehouse Deed`);
+        }
+        
+        if (config.requiresFactory) {
+            requirements.push(`${this.inFactoryRoom ? '✓' : '✗'} Factory Room`);
+        }
+        
+        return requirements.length > 0 ? requirements.join('\n') : 'No requirements';
+    }
+    
+    /**
+     * Update toggle UI based on current state and gating
+     */
+    updateToggleStates() {
+        Object.entries(TOGGLE_CONFIG).forEach(([key, config]) => {
+            const checkbox = this.rootElement.querySelector(`#toggle_${key}`);
+            const statusSpan = this.rootElement.querySelector(`[data-status-key="${key}"]`);
+            const toggleSwitch = this.rootElement.querySelector(`label[data-toggle-key="${key}"]`);
+            const card = this.rootElement.querySelector(`.toggle-card[data-toggle-key="${key}"]`);
+            
+            if (!checkbox || !statusSpan || !toggleSwitch || !card) return;
+            
+            const canEnable = this.canEnableToggle(key);
+            const isEnabled = this.toggleStates[key] === true;
+            
+            // Update checkbox state - sync with toggleStates
+            // IMPORTANT: Only update if state differs to avoid interfering with user clicks
+            if (checkbox.checked !== isEnabled) {
+                checkbox.checked = isEnabled;
+            }
+            checkbox.disabled = false; // Always allow clicking for UI testing
+            
+            // Update status indicator (show state, but allow all toggles to be clickable)
+            if (isEnabled) {
+                statusSpan.textContent = '[ON]';
+                statusSpan.style.color = '#00ff00';
+                statusSpan.style.display = 'block';
+            } else {
+                statusSpan.textContent = '[OFF]';
+                statusSpan.style.color = '#888';
+                statusSpan.style.display = 'block';
+            }
+            
+            // Update toggle switch and card styling (all toggles are clickable)
+            toggleSwitch.style.opacity = '1';
+            toggleSwitch.style.cursor = 'pointer';
+            card.style.opacity = '1';
+            card.style.cursor = 'pointer';
+            card.style.borderColor = isEnabled ? '#00ff00' : '#333';
+            
+            // Optional: Show visual hint for locked/unimplemented (but still allow clicking)
+            if (!canEnable && !isEnabled) {
+                card.style.borderStyle = 'dashed';
+            } else {
+                card.style.borderStyle = 'solid';
+            }
+            
+            // Update tooltip
+            card.title = this.getToggleTooltip(config);
+        });
+    }
+    
+    /**
+     * Update toggle UI (just visual, no gating check)
+     */
+    updateToggleUI() {
+        Object.keys(TOGGLE_CONFIG).forEach(key => {
+            const checkbox = this.rootElement.querySelector(`#toggle_${key}`);
+            if (checkbox) {
+                checkbox.checked = this.toggleStates[key] === true;
+            }
+        });
+        this.updateToggleStates();
+    }
+    
+    /**
+     * Handle toggle change
+     */
+    handleToggleChange(key, checked) {
+        const config = TOGGLE_CONFIG[key];
+        if (!config) return;
+        
+        // Update state immediately
+        this.toggleStates[key] = checked;
+        
+        // Ensure checkbox state matches (don't let updateToggleStates override it)
+        const checkbox = this.rootElement.querySelector(`#toggle_${key}`);
+        if (checkbox) {
+            checkbox.checked = checked;
+        }
+        
+        // Update status indicator and card styling (but don't override checkbox state)
+        const statusSpan = this.rootElement.querySelector(`[data-status-key="${key}"]`);
+        const card = this.rootElement.querySelector(`.toggle-card[data-toggle-key="${key}"]`);
+        
+        if (statusSpan) {
+            if (checked) {
+                statusSpan.textContent = '[ON]';
+                statusSpan.style.color = '#00ff00';
+                statusSpan.style.display = 'block';
+            } else {
+                statusSpan.textContent = '[OFF]';
+                statusSpan.style.color = '#888';
+                statusSpan.style.display = 'block';
+            }
+        }
+        
+        if (card) {
+            card.style.borderColor = checked ? '#00ff00' : '#333';
+        }
+        
+        // Log the change (even if not implemented)
+        console.log(`[AutomationWidget] Toggle ${key} changed to ${checked}${!config.implemented ? ' (not implemented)' : ''}`);
+        
+        // Only save to server and show messages if toggle is implemented and can be enabled
+        if (config.implemented) {
+            // Check if can enable (only show warning, don't prevent toggle)
+            if (checked && !this.canEnableToggle(key)) {
+                if (window.terminal) {
+                    window.terminal.addMessage(`Note: ${config.label} is enabled but requirements not met.`, 'warning');
+                }
+            }
+            
+            // Special handling for auto-harvest (send to server immediately)
+            if (key === 'autoHarvest' && this.isPathExecuting) {
+                // Auto-harvest state is sent with path execution, not separately
+            }
+            
+            // Save to server (only for implemented toggles)
+            this.saveToggleStatesToServer();
+        } else {
+            // For unimplemented toggles, just show a console message
+            console.log(`[AutomationWidget] Toggle ${key} is not yet implemented`);
+        }
+    }
+    
+    /**
+     * Save toggle states to server via widget_config
+     */
+    saveToggleStatesToServer() {
+        // Get current config first, then update
+        this.game.send({ 
+            type: 'updateWidgetConfig',
+            config: {
+                automation: {
+                    toggles: { ...this.toggleStates }
+                }
+            }
+        });
     }
     
     /**
@@ -349,10 +920,8 @@ export default class AutomationWidget extends Widget {
         const dropdown = this.rootElement.querySelector('#pathLoopSelect');
         if (!dropdown) return;
         
-        // Clear existing options except the first placeholder
         dropdown.innerHTML = '<option value="">Select Path/Loop...</option>';
         
-        // Add all paths/loops
         this.allPlayerPaths.forEach(path => {
             const option = document.createElement('option');
             option.value = path.id;
@@ -361,7 +930,6 @@ export default class AutomationWidget extends Widget {
             dropdown.appendChild(option);
         });
         
-        // Update delete button visibility
         this.updateDeletePathButton();
     }
     
@@ -375,32 +943,20 @@ export default class AutomationWidget extends Widget {
         if (!dropdown || !startBtn) return;
         
         this.selectedPathId = dropdown.value ? parseInt(dropdown.value) : null;
-        
-        // Enable/disable start button
         startBtn.disabled = !this.selectedPathId || this.isPathExecuting;
-        
-        // Update delete button visibility
         this.updateDeletePathButton();
         
-        // If path selected, request details for preview
         if (this.selectedPathId && !this.isPathExecuting) {
             this.game.send({ type: 'getPathDetails', pathId: this.selectedPathId });
-        } else {
-            // Hide preview if no path selected
-            const previewDialog = document.getElementById('pathPreviewDialog');
-            if (previewDialog) {
-                previewDialog.style.display = 'none';
-            }
         }
     }
     
     /**
-     * Update delete path button visibility
+     * Update delete path button
      */
     updateDeletePathButton() {
         const deleteBtn = this.rootElement.querySelector('#deletePathBtn');
         if (!deleteBtn) return;
-        
         deleteBtn.disabled = !this.selectedPathId || this.isPathExecuting;
     }
     
@@ -408,36 +964,24 @@ export default class AutomationWidget extends Widget {
      * Delete selected path
      */
     deleteSelectedPath() {
-        if (!this.selectedPathId) {
-            console.warn('[AutomationWidget] No path selected');
-            return;
-        }
+        if (!this.selectedPathId) return;
         
         const selectedPath = this.allPlayerPaths.find(p => p.id === this.selectedPathId);
-        if (!selectedPath) {
-            console.warn('[AutomationWidget] Selected path not found');
-            return;
-        }
+        if (!selectedPath) return;
         
-        const pathName = selectedPath.name;
         const pathType = selectedPath.path_type === 'loop' ? 'Loop' : 'Path';
-        
         if (window.terminal) {
-            window.terminal.addMessage(`${pathType} "${pathName}" deleted.`, 'info');
+            window.terminal.addMessage(`${pathType} "${selectedPath.name}" deleted.`, 'info');
         }
         
-        this.game.send({
-            type: 'deletePath',
-            pathId: this.selectedPathId
-        });
+        this.game.send({ type: 'deletePath', pathId: this.selectedPathId });
     }
     
     /**
-     * Handle path details from server
+     * Handle path details
      */
     handlePathDetails(data) {
         if (data.path && data.steps) {
-            // Store preview data
             this.pathPreviewData = {
                 path: data.path,
                 steps: data.steps,
@@ -451,7 +995,6 @@ export default class AutomationWidget extends Widget {
                 }))
             };
             
-            // If execution is active and we don't have step count yet, update it
             if (this.executionTracking.isActive && this.executionTracking.totalPathSteps === 0) {
                 this.executionTracking.totalPathSteps = data.steps.length;
                 this.updateAutomationStatus();
@@ -463,13 +1006,10 @@ export default class AutomationWidget extends Widget {
      * Handle path deleted
      */
     handlePathDeleted(data) {
-        // Clear selection if deleted path was selected
         if (this.selectedPathId === data.pathId) {
             this.selectedPathId = null;
             const dropdown = this.rootElement.querySelector('#pathLoopSelect');
-            if (dropdown) {
-                dropdown.value = '';
-            }
+            if (dropdown) dropdown.value = '';
             this.updateDeletePathButton();
         }
         
@@ -496,29 +1036,23 @@ export default class AutomationWidget extends Widget {
             return;
         }
         
-        // Clear any pause state when starting fresh
         this.isPathPaused = false;
         this.pausedPathRoomId = null;
         
-        // Hide path preview dialog when starting execution
-        const previewDialog = document.getElementById('pathPreviewDialog');
-        if (previewDialog) {
-            previewDialog.style.display = 'none';
-        }
-        
-        // Get selected path to check if it's a loop
         const selectedPath = this.allPlayerPaths.find(p => p.id === this.selectedPathId);
         const isLoop = selectedPath && selectedPath.path_type === 'loop';
         
-        // Request path details if we don't have preview data yet
         if (selectedPath && (!this.pathPreviewData || !this.pathPreviewData.playerRooms)) {
             this.game.send({ type: 'getPathDetails', pathId: this.selectedPathId });
         }
         
+        // Use auto-harvest toggle state for loops
+        const autoHarvestEnabled = isLoop ? (this.toggleStates.autoHarvest === true) : false;
+        
         this.game.send({ 
             type: 'startPathExecution', 
             pathId: this.selectedPathId,
-            autoHarvestEnabled: isLoop ? this.autoHarvestEnabled : false // Only enable for loops
+            autoHarvestEnabled: autoHarvestEnabled
         });
     }
     
@@ -528,8 +1062,6 @@ export default class AutomationWidget extends Widget {
     stopPathExecution() {
         if (!this.isPathExecuting) return;
         
-        // Get current room ID for pause tracking
-        // Try to get from mapWidget if available
         const mapWidget = this.game?.widgetManager?.widgets?.get('map');
         if (mapWidget && this.currentRoomPosForAutoPath && this.currentMapIdForAutoPath) {
             const currentRoom = mapWidget.mapRooms?.find(r => 
@@ -543,7 +1075,6 @@ export default class AutomationWidget extends Widget {
                 this.isPathPaused = true;
             }
         } else {
-            // Fallback: just mark as paused without room ID
             this.isPathPaused = true;
         }
         
@@ -561,7 +1092,6 @@ export default class AutomationWidget extends Widget {
             return;
         }
         
-        // Check if still in the same room (if we have pause room ID)
         if (this.pausedPathRoomId) {
             const mapWidget = this.game?.widgetManager?.widgets?.get('map');
             if (!mapWidget || !this.currentRoomPosForAutoPath || !this.currentMapIdForAutoPath) {
@@ -581,7 +1111,6 @@ export default class AutomationWidget extends Widget {
             );
             
             if (!currentRoom || currentRoom.id !== this.pausedPathRoomId) {
-                // Player has moved - can't continue
                 if (window.terminal) {
                     window.terminal.addMessage('Cannot continue: You have moved from where you stopped. Please restart the path.', 'error');
                 }
@@ -592,14 +1121,10 @@ export default class AutomationWidget extends Widget {
             }
         }
         
-        // Resume execution
         this.isPathPaused = false;
         this.pausedPathRoomId = null;
         
-        this.game.send({ 
-            type: 'continuePathExecution',
-            pathId: this.selectedPathId
-        });
+        this.game.send({ type: 'continuePathExecution', pathId: this.selectedPathId });
     }
     
     /**
@@ -610,12 +1135,10 @@ export default class AutomationWidget extends Widget {
         this.isPathPaused = false;
         this.pausedPathRoomId = null;
         
-        // Initialize execution tracking
         const selectedPath = this.allPlayerPaths.find(p => p.id === this.selectedPathId);
         if (selectedPath) {
             const isLooping = selectedPath.path_type === 'loop';
             
-            // Get total steps from various sources
             let totalSteps = 0;
             if (data.stepCount) {
                 totalSteps = data.stepCount;
@@ -664,22 +1187,18 @@ export default class AutomationWidget extends Widget {
      * Handle path execution complete
      */
     handlePathExecutionComplete(data) {
-        // For loops, increment loop count and reset position for next iteration
         if (this.executionTracking.isLooping) {
             this.executionTracking.loopCount++;
-            this.executionTracking.totalRoomsVisited = 0; // Reset for new loop iteration
+            this.executionTracking.totalRoomsVisited = 0;
             this.executionTracking.currentPathStep = 0;
-            // Keep tracking active for next loop iteration
             this.updateAutomationStatus();
         } else {
-            // For paths, execution is complete
             this.executionTracking.totalRoomsVisited = this.executionTracking.totalPathSteps;
             this.updateAutomationStatus();
             this.isPathExecuting = false;
             this.executionTracking.isActive = false;
             this.updatePathExecutionUI();
             
-            // Hide status after a delay
             setTimeout(() => {
                 this.hideAutomationStatus();
             }, 2000);
@@ -718,79 +1237,20 @@ export default class AutomationWidget extends Widget {
         }
     }
     
-    /**
-     * Handle auto-navigation started
-     */
-    handleAutoNavigationStarted(data) {
-        // Initialize execution tracking for auto-navigation
-        // Note: autoNavigationPath would need to be passed or retrieved
-        // For now, we'll track based on room movements
-        this.executionTracking = {
-            totalRoomsVisited: 0,
-            currentPathStep: 0,
-            totalPathSteps: 0, // Will be updated as we navigate
-            isLooping: false,
-            loopCount: 0,
-            isActive: true
-        };
-        
-        this.showAutomationStatus();
-        
-        if (data.message && window.terminal) {
-            window.terminal.addMessage(data.message, 'info');
-        }
-    }
-    
-    /**
-     * Handle auto-navigation complete
-     */
-    handleAutoNavigationComplete(data) {
-        this.executionTracking.isActive = false;
-        
-        // Hide status after a delay
-        setTimeout(() => {
-            this.hideAutomationStatus();
-        }, 2000);
-        
-        if (data.message && window.terminal) {
-            window.terminal.addMessage(data.message, 'info');
-        }
-    }
-    
-    /**
-     * Handle auto-navigation failed
-     */
-    handleAutoNavigationFailed(data) {
-        this.executionTracking.isActive = false;
-        this.hideAutomationStatus();
-        
-        if (data.message && window.terminal) {
-            window.terminal.addMessage(data.message, 'error');
-        }
-    }
     
     /**
      * Handle room movement
      */
     handleRoomMovement(data) {
         if (data.room) {
-            // Update room position tracking
             this.currentRoomPosForAutoPath = { x: data.room.x, y: data.room.y };
             this.currentMapIdForAutoPath = data.room.mapId;
             
-            // Update execution tracking if active and path is executing
             if (this.executionTracking.isActive && this.isPathExecuting) {
                 this.executionTracking.totalRoomsVisited++;
                 this.updatePathStepPosition();
             } else if (this.executionTracking.isActive && !this.isPathExecuting) {
-                // Execution was marked active but we're not actually executing - stop tracking
                 this.executionTracking.isActive = false;
-            }
-            
-            // Check for manual movement interruption
-            if (this.isPathExecuting && !this.isPathPaused) {
-                // If player manually moved (not via automation), stop execution
-                // This is handled by the server, but we can also check here
             }
         }
     }
@@ -801,7 +1261,6 @@ export default class AutomationWidget extends Widget {
     updatePathStepPosition() {
         if (!this.executionTracking.isActive) return;
         
-        // Increment current step (approximate - each room movement = 1 step)
         this.executionTracking.currentPathStep = Math.min(
             this.executionTracking.totalRoomsVisited,
             this.executionTracking.totalPathSteps
@@ -818,35 +1277,20 @@ export default class AutomationWidget extends Widget {
         const startBtn = this.rootElement.querySelector('#startPathBtn');
         const stopBtn = this.rootElement.querySelector('#stopPathBtn');
         const continueBtn = this.rootElement.querySelector('#continuePathBtn');
-        const autoHarvestToggle = this.rootElement.querySelector('#autoHarvestToggle');
-        const autoHarvestContainer = this.rootElement.querySelector('.auto-harvest-toggle-container');
         
         if (!dropdown || !startBtn || !stopBtn || !continueBtn) return;
         
-        // Check if selected path is a loop
-        const selectedPath = this.allPlayerPaths.find(p => p.id === this.selectedPathId);
-        const isLoop = selectedPath && selectedPath.path_type === 'loop';
-        
-        // Update toggle visibility and state
-        if (autoHarvestToggle && autoHarvestContainer) {
-            autoHarvestContainer.style.display = isLoop ? 'flex' : 'none';
-            autoHarvestToggle.disabled = this.isPathExecuting || this.isPathPaused || !isLoop;
-        }
-        
         if (this.isPathExecuting && !this.isPathPaused) {
-            // Execution active
             dropdown.disabled = true;
             startBtn.style.display = 'none';
             stopBtn.style.display = 'inline-block';
             continueBtn.style.display = 'none';
         } else if (this.isPathPaused) {
-            // Execution paused
             dropdown.disabled = true;
             startBtn.style.display = 'none';
             stopBtn.style.display = 'none';
             continueBtn.style.display = 'inline-block';
         } else {
-            // Execution inactive
             dropdown.disabled = false;
             startBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
@@ -860,16 +1304,9 @@ export default class AutomationWidget extends Widget {
      */
     showAutomationStatus() {
         const statusEl = this.rootElement.querySelector('#automationStatus');
-        if (!statusEl) {
-            console.error('[AutomationWidget] Status element not found');
-            return;
-        }
+        if (!statusEl) return;
         
         statusEl.style.display = 'block';
-        statusEl.style.visibility = 'visible';
-        statusEl.style.opacity = '1';
-        statusEl.classList.remove('hidden');
-        
         this.updateAutomationStatus();
     }
     
@@ -882,7 +1319,6 @@ export default class AutomationWidget extends Widget {
             statusEl.style.display = 'none';
         }
         
-        // Reset tracking
         this.executionTracking = {
             totalRoomsVisited: 0,
             currentPathStep: 0,
@@ -897,9 +1333,7 @@ export default class AutomationWidget extends Widget {
      * Update automation status display
      */
     updateAutomationStatus() {
-        if (!this.executionTracking.isActive) {
-            return;
-        }
+        if (!this.executionTracking.isActive) return;
         
         const totalRoomsEl = this.rootElement.querySelector('#totalRoomsVisited');
         const pathPositionEl = this.rootElement.querySelector('#pathPosition');
@@ -913,7 +1347,6 @@ export default class AutomationWidget extends Widget {
         if (pathPositionEl) {
             if (this.executionTracking.totalPathSteps > 0) {
                 if (this.executionTracking.isLooping) {
-                    // For loops, show position within current iteration
                     let currentStepInLoop;
                     if (this.executionTracking.totalRoomsVisited === 0) {
                         currentStepInLoop = 0;
@@ -922,7 +1355,6 @@ export default class AutomationWidget extends Widget {
                     }
                     pathPositionEl.textContent = `${currentStepInLoop}/${this.executionTracking.totalPathSteps}`;
                 } else {
-                    // For paths, show absolute position
                     const currentStep = Math.min(this.executionTracking.totalRoomsVisited, this.executionTracking.totalPathSteps);
                     pathPositionEl.textContent = `${currentStep}/${this.executionTracking.totalPathSteps}`;
                 }
@@ -945,11 +1377,9 @@ export default class AutomationWidget extends Widget {
      * Called before widget is detached
      */
     onDetach() {
-        // Cleanup message bus listeners
         if (this._authHandler) {
             this.game.messageBus.off('player:authenticated', this._authHandler);
         }
     }
 }
-
 

@@ -96,3 +96,11 @@ COMMENT ON COLUMN player_items.item_id IS
 -- All code should now use item_id instead of item_name.
 
 
+
+
+
+
+
+
+
+

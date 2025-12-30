@@ -17,6 +17,7 @@ import AutomationWidget from '../widgets/AutomationWidget.js';
 import GodModeWidget from '../widgets/GodModeWidget.js';
 import WarehouseWidget from '../widgets/WarehouseWidget.js';
 import RuneKeeperWidget from '../widgets/RuneKeeperWidget.js';
+import InstructionsWidget from '../widgets/InstructionsWidget.js';
 
 // Widget class mapping
 const WIDGET_CLASSES = {
@@ -30,7 +31,8 @@ const WIDGET_CLASSES = {
     automation: AutomationWidget,
     godmode: GodModeWidget,
     warehouse: WarehouseWidget,
-    runekeeper: RuneKeeperWidget
+    runekeeper: RuneKeeperWidget,
+    instructions: InstructionsWidget
 };
 
 export default class WidgetManager {
@@ -110,6 +112,10 @@ export default class WidgetManager {
             this.handleMessage({ type: 'telepathSent', ...data });
         });
         
+        this.game.messageBus.on('connectedPlayersList', (data) => {
+            this.handleMessage({ type: 'connectedPlayersList', ...data });
+        });
+        
         // Route inventory updates to widgets (for NPC widget resource tracking)
         this.game.messageBus.on('inventory:update', (data) => {
             this.handleMessage({ type: 'inventory:update', ...data });
@@ -126,6 +132,13 @@ export default class WidgetManager {
         
         // Route other game messages to widgets
         const messageTypes = [
+            'automation:programs',
+            'automation:steps',
+            'automation:programUpdated',
+            'automation:executionState',
+            'automation:stepComplete',
+            'automation:programStopped',
+            'automation:loopIteration',
             'factoryWidgetState',
             'factoryCraftStarted',
             'factoryCraftComplete',
@@ -148,6 +161,9 @@ export default class WidgetManager {
             'autonav:started',
             'autonav:complete',
             'autonav:failed',
+            'autopath:maps',
+            'autopath:rooms',
+            'autopath:calculated',
             'pathSaved',
             'pathDeleted'
         ];

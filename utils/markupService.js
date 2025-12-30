@@ -83,19 +83,21 @@ function generateMarkupCSS(effects, color) {
         css += `color: ${color};`;
     }
     
-    if (effects.glow) {
+    // CRITICAL: Only add text-shadow (glow) if effects.glow is explicitly true
+    // This prevents accidental glow from being applied
+    if (effects && effects.glow === true) {
         css += `text-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor, 0 0 20px currentColor;`;
     }
     
-    if (effects.bold) {
+    if (effects && effects.bold === true) {
         css += `font-weight: bold;`;
     }
     
-    if (effects.flash) {
+    if (effects && effects.flash === true) {
         css += `animation: markup-flash 1s ease-in-out infinite;`;
     }
     
-    if (effects.pulse) {
+    if (effects && effects.pulse === true) {
         css += `display: inline-block; transform-origin: center; vertical-align: baseline; animation: markup-pulse 2s ease 3;`;
     }
     
@@ -170,9 +172,18 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
         const escapedClosing = escapeRegex(closing);
         
         // Create regex pattern - match content between opening and closing
+        // CRITICAL: Exclude matches that are inside existing markup placeholders
         const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
         
         result = result.replace(pattern, (match, content) => {
+            // CRITICAL: Skip if this match contains a markup placeholder
+            // This prevents nested markup from being processed multiple times
+            // When a convention matches content that's already been processed by another convention,
+            // that content will have been replaced with a placeholder
+            if (match.includes('__MARKUP_')) {
+                return match; // Already processed by another convention, skip
+            }
+            
             // Escape the content to prevent XSS
             const escapedContent = escapeHtml(content);
             
@@ -201,9 +212,17 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
     result = escapeHtml(result);
     
     // Replace placeholders with actual spans (they're already safe HTML)
-    placeholders.forEach((span, index) => {
-        result = result.replace(`__MARKUP_${index}__`, span);
-    });
+    // CRITICAL: Use global replace to handle multiple occurrences of the same placeholder
+    // Process in reverse order to avoid index conflicts if placeholders contain other placeholder strings
+    for (let index = placeholders.length - 1; index >= 0; index--) {
+        const placeholder = `__MARKUP_${index}__`;
+        const span = placeholders[index];
+        if (span) {
+            // Use global regex to replace all occurrences, escaping special regex chars in placeholder
+            const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            result = result.replace(new RegExp(escapedPlaceholder, 'g'), span);
+        }
+    }
     
     // Now process typewriter blocks - parse their content and wrap in typewriter span
     typewriterBlocks.forEach((block, index) => {

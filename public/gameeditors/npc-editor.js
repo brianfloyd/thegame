@@ -124,7 +124,6 @@ window.npcEditor = function() {
             keyword_color: '#ff00ff',
             incorrect_response: 'I do not understand what you mean.',
             puzzle_mode: null,
-            puzzle_clues: {},
             puzzle_solution: '',
             puzzle_success_message: '',
             puzzle_failure_message: 'That is not the answer I seek.',
@@ -133,6 +132,17 @@ window.npcEditor = function() {
             puzzle_award_after_delay: false,
             puzzle_award_delay_seconds: null,
             puzzle_award_delay_response: null
+        },
+        
+        // Merchant form data
+        merchantData: {
+            engagement_enabled: true,
+            engagement_delay: 3000,
+            initial_message: '',
+            initial_message_color: '#00ffff',
+            keywords_responses: {},
+            keyword_color: '#ff00ff',
+            incorrect_response: 'I do not understand what you mean.'
         },
         
         // Constants for template
@@ -191,15 +201,17 @@ window.npcEditor = function() {
                         })));
                     }
                     
-                    // Extract unique NPC types from the database
-                    const uniqueTypes = new Set();
+                    // Start with all valid NPC types from constants
+                    const uniqueTypes = new Set(NPC_TYPES);
+                    
+                    // Also include any types found in the database (for backward compatibility)
                     this.npcs.forEach(npc => {
                         if (npc.npc_type) {
                             uniqueTypes.add(npc.npc_type);
                         }
                     });
                     this.npcTypes = Array.from(uniqueTypes).sort();
-                    console.log('[NPCEditor] Loaded NPC types from database:', this.npcTypes);
+                    console.log('[NPCEditor] Loaded NPC types (constants + database):', this.npcTypes);
                     
                     // If a NPC is already selected, ensure its type is in the list
                     if (this.selectedNpc && this.selectedNpc.npc_type && !this.npcTypes.includes(this.selectedNpc.npc_type)) {
@@ -356,6 +368,11 @@ window.npcEditor = function() {
                 this.loadLoreKeeperHistory(npc.id);
             }
             
+            // Reset to merchant tab if merchant NPC
+            if (npc.npc_type === 'merchant') {
+                this.activeTab = 'merchant';
+            }
+            
             this.populateForm(npc);
         },
         
@@ -470,51 +487,6 @@ window.npcEditor = function() {
                         keyword_color: lk.keyword_color || '#ff00ff',
                         incorrect_response: lk.incorrect_response || 'I do not understand what you mean.',
                     puzzle_mode: lk.puzzle_mode || null,
-                    puzzle_clues: (() => {
-                        // Handle puzzle_clues as array of objects: [{"keyword": "key", "answer": "value"}]
-                        // But convert to object format for display: {"key": "value"}
-                        if (!lk.puzzle_clues) return {};
-                        // puzzle_clues is now JSONB, so it's already an array/object
-                        // Keep backward compatibility check during migration
-                        if (typeof lk.puzzle_clues === 'string') {
-                            try {
-                                const parsed = JSON.parse(lk.puzzle_clues);
-                                // If it's an array, convert to object for display
-                                if (Array.isArray(parsed)) {
-                                    const obj = {};
-                                    parsed.forEach(item => {
-                                        if (item && typeof item === 'object' && item.keyword && item.answer) {
-                                            obj[item.keyword] = item.answer;
-                                        }
-                                    });
-                                    return obj;
-                                }
-                                // If it's an object (legacy format), return as-is for display
-                                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-                                    return parsed;
-                                }
-                                return {};
-                            } catch (e) {
-                                console.warn('[NPCEditor] Failed to parse puzzle_clues:', e);
-                                return {};
-                            }
-                        }
-                        // If it's already an array, convert to object for display
-                        if (Array.isArray(lk.puzzle_clues)) {
-                            const obj = {};
-                            lk.puzzle_clues.forEach(item => {
-                                if (item && typeof item === 'object' && item.keyword && item.answer) {
-                                    obj[item.keyword] = item.answer;
-                                }
-                            });
-                            return obj;
-                        }
-                        // If it's already an object, return it
-                        if (typeof lk.puzzle_clues === 'object' && lk.puzzle_clues !== null) {
-                            return lk.puzzle_clues;
-                        }
-                        return {};
-                    })(),
                         puzzle_solution: lk.puzzle_solution || '',
                         puzzle_success_message: lk.puzzle_success_message || '',
                         puzzle_failure_message: lk.puzzle_failure_message || 'That is not the answer I seek.',
@@ -570,6 +542,47 @@ window.npcEditor = function() {
                     puzzle_award_after_delay: false,
                     puzzle_award_delay_seconds: null,
                     puzzle_award_delay_response: null
+                };
+            }
+            
+            // Populate merchant data if this is a merchant
+            if (npc.npc_type === 'merchant') {
+                console.log('[NPCEditor] Populating merchant data for:', npc.name, 'merchant object:', npc.merchant);
+                if (npc.merchant) {
+                    const m = npc.merchant;
+                    this.merchantData = {
+                        engagement_enabled: m.engagement_enabled !== false,
+                        engagement_delay: m.engagement_delay || 3000,
+                        initial_message: m.initial_message || '',
+                        initial_message_color: m.initial_message_color || '#00ffff',
+                        keywords_responses: typeof m.keywords_responses === 'string' 
+                            ? (m.keywords_responses ? JSON.parse(m.keywords_responses) : {})
+                            : (m.keywords_responses || {}),
+                        keyword_color: m.keyword_color || '#ff00ff',
+                        incorrect_response: m.incorrect_response || 'I do not understand what you mean.'
+                    };
+                } else {
+                    // Initialize with defaults if no data exists
+                    this.merchantData = {
+                        engagement_enabled: true,
+                        engagement_delay: 3000,
+                        initial_message: '',
+                        initial_message_color: '#00ffff',
+                        keywords_responses: {},
+                        keyword_color: '#ff00ff',
+                        incorrect_response: 'I do not understand what you mean.'
+                    };
+                }
+            } else {
+                // Reset merchant data for non-merchant NPCs
+                this.merchantData = {
+                    engagement_enabled: true,
+                    engagement_delay: 3000,
+                    initial_message: '',
+                    initial_message_color: '#00ffff',
+                    keywords_responses: {},
+                    keyword_color: '#ff00ff',
+                    incorrect_response: 'I do not understand what you mean.'
                 };
             }
             
@@ -685,23 +698,6 @@ window.npcEditor = function() {
                     keyword_color: this.lorekeeperData.keyword_color || '#ff00ff',
                     incorrect_response: this.lorekeeperData.incorrect_response || 'I do not understand what you mean.',
                     puzzle_mode: this.lorekeeperData.puzzle_mode || null,
-                    puzzle_clues: (() => {
-                        // Convert from display format (object) to storage format (array of objects)
-                        const clues = this.lorekeeperData.puzzle_clues;
-                        if (!clues || typeof clues !== 'object' || Array.isArray(clues)) {
-                            return null;
-                        }
-                        // Check if object has any keys
-                        if (Object.keys(clues).length === 0) {
-                            return null;
-                        }
-                        // Convert object to array format: [{"keyword": "key", "answer": "value"}]
-                        const clueArray = Object.entries(clues).map(([keyword, answer]) => ({
-                            keyword: keyword,
-                            answer: answer
-                        }));
-                        return JSON.stringify(clueArray);
-                    })(),
                     puzzle_solution: this.lorekeeperData.puzzle_solution || null,
                     puzzle_success_message: this.lorekeeperData.puzzle_success_message || null,
                     puzzle_failure_message: this.lorekeeperData.puzzle_failure_message || 'That is not the answer I seek.',
@@ -710,6 +706,21 @@ window.npcEditor = function() {
                     puzzle_award_after_delay: this.lorekeeperData.puzzle_award_after_delay || false,
                     puzzle_award_delay_seconds: this.lorekeeperData.puzzle_award_delay_seconds || null,
                     puzzle_award_delay_response: this.lorekeeperData.puzzle_award_delay_response || null
+                };
+            }
+            
+            // Add merchant data if this is a merchant
+            if (this.formData.npc_type === 'merchant') {
+                npcData.merchant = {
+                    engagement_enabled: this.merchantData.engagement_enabled,
+                    engagement_delay: parseInt(this.merchantData.engagement_delay) || 3000,
+                    initial_message: this.merchantData.initial_message || null,
+                    initial_message_color: this.merchantData.initial_message_color || '#00ffff',
+                    keywords_responses: Object.keys(this.merchantData.keywords_responses || {}).length > 0
+                        ? this.merchantData.keywords_responses
+                        : {},
+                    keyword_color: this.merchantData.keyword_color || '#ff00ff',
+                    incorrect_response: this.merchantData.incorrect_response || 'I do not understand what you mean.'
                 };
             }
             
@@ -854,6 +865,20 @@ window.npcEditor = function() {
             } catch (e) {
                 // Invalid JSON, keep current value but show warning
                 console.warn(`[NPCEditor] Invalid JSON for ${fieldName}:`, e);
+            }
+        },
+        
+        handleMerchantJsonInput(fieldName, value) {
+            try {
+                const parsed = JSON.parse(value);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    this.merchantData[fieldName] = parsed;
+                } else {
+                    this.merchantData[fieldName] = {};
+                }
+            } catch (e) {
+                // Invalid JSON, keep current value but show warning
+                console.warn(`[NPCEditor] Invalid JSON for merchant ${fieldName}:`, e);
             }
         },
         

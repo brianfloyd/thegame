@@ -519,11 +519,11 @@
     content: "";
     position: absolute;
     height: var(--toggle-knob-size);
-    width: var(--toggle-knob-size);
+    width: 5px;
     left: var(--toggle-knob-offset);
     bottom: var(--toggle-knob-offset);
     background-color: var(--editor-border-dim);
-    border-radius: 50%;
+    border-radius: 2px;
     transition: all 0.3s;
 }
 
@@ -533,7 +533,7 @@
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
-    transform: translateX(calc(var(--toggle-width) - var(--toggle-knob-size) - var(--toggle-knob-offset) * 2 - 4px));
+    transform: translateX(calc(var(--toggle-width) - 5px - var(--toggle-knob-offset) * 2 - 4px));
     background-color: var(--editor-primary);
     box-shadow: 0 0 8px var(--editor-primary-glow);
 }
@@ -558,6 +558,14 @@
     --toggle-height: 18px;
     --toggle-knob-size: 12px;
     --toggle-knob-offset: 2px;
+}
+
+.toggle-switch--small .toggle-slider::before {
+    width: 4px; /* Slightly narrower for small variant */
+}
+
+.toggle-switch--small input:checked + .toggle-slider::before {
+    transform: translateX(calc(var(--toggle-width) - 4px - var(--toggle-knob-offset) * 2 - 4px));
 }
 
 .toggle-switch--small .toggle-label {

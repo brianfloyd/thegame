@@ -247,12 +247,6 @@ export default class Game {
      * Handle messages from server and route to MessageBus
      */
     handleMessage(data) {
-        // Log unhandled message types for debugging
-        if (!data || !data.type) {
-            console.warn('[Game] Received message without type:', data);
-            return;
-        }
-        
         switch (data.type) {
             case 'roomUpdate':
                 this.currentRoomId = data.room?.id || null;
@@ -289,34 +283,6 @@ export default class Game {
                 // Direct factory widget state update
                 this.messageBus.emit('factoryWidgetState', {
                     state: data.state
-                });
-                break;
-            
-            case 'factoryCraftStarted':
-                this.messageBus.emit('factoryCraftStarted', {
-                    recipeName: data.recipeName,
-                    craftTimeMs: data.craftTimeMs,
-                    successRate: data.successRate,
-                    critChance: data.critChance
-                });
-                break;
-            
-            case 'factoryCraftComplete':
-                this.messageBus.emit('factoryCraftComplete', {
-                    success: data.success,
-                    critical: data.critical,
-                    recipeName: data.recipeName,
-                    outputs: data.outputs,
-                    byproducts: data.byproducts,
-                    message: data.message,
-                    returnedIngredients: data.returnedIngredients,
-                    wornTriggered: data.wornTriggered
-                });
-                break;
-            
-            case 'factoryCraftFizzle':
-                this.messageBus.emit('factoryCraftFizzle', {
-                    message: data.message
                 });
                 break;
                 
@@ -451,17 +417,7 @@ export default class Game {
             case 'inventoryList':
                 this.messageBus.emit('inventory:update', {
                     items: data.items,
-                    hasWarehouseDeed: data.hasWarehouseDeed,
-                    silent: data.silent || false // Pass through silent flag
-                });
-                break;
-                
-            case 'npcWidget:resourceGain':
-                // Direct message from NPC cycle engine for precise resource tracking
-                this.messageBus.emit('npcWidget:resourceGain', {
-                    resourceType: data.resourceType,
-                    amount: data.amount,
-                    total: data.total
+                    hasWarehouseDeed: data.hasWarehouseDeed
                 });
                 break;
                 
@@ -560,9 +516,8 @@ export default class Game {
                 break;
                 
             case 'jumpRooms':
-                console.log('[Game] Received jumpRooms message, rooms count:', data.rooms ? data.rooms.length : 'undefined');
                 this.messageBus.emit('jump:rooms', {
-                    rooms: data.rooms || []
+                    rooms: data.rooms
                 });
                 break;
                 
@@ -654,8 +609,7 @@ export default class Game {
                 
             case 'pathExecutionStarted':
                 this.messageBus.emit('paths:executionStarted', {
-                    message: data.message,
-                    stepCount: data.stepCount
+                    message: data.message
                 });
                 break;
                 

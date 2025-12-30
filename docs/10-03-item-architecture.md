@@ -60,6 +60,8 @@ If no match, the editor rejects changes.
 
 **Note:** There is \\*no CHECK constraint\\* enforcing allowed types at the DB layer.
 
+**Display Labels:** Item type emoji and labels are defined in `public/js/models/item.js` (`ITEM_TYPE_LABELS`, `RUNE_TYPE_LABELS`). See `10-18-emoji-reference.md` for canonical emoji standards.
+
 ---
 
 # **3. Type-Based Behavior in Game Logic**

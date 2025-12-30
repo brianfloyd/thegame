@@ -36,10 +36,14 @@ window.mapEditor = function() {
         maps: [],
         currentMap: null,
         rooms: [],
+        playerCurrentLocation: null, // { mapId, roomId, room: { id, x, y } }
         
         // Related data
         allNpcs: [],
         allItems: [],
+        roomNPCs: [], // NPCs in the currently selected room
+        availableNPCs: [], // All active NPCs available for adding to room
+        newRoomNPCId: '', // Selected NPC ID for adding to room (empty string or string ID)
         
         // Selection
         selectedRoom: null,
@@ -58,6 +62,7 @@ window.mapEditor = function() {
         zoom: 1.0,
         panX: 0,
         panY: 0,
+        resizeObserver: null,
         
         // Loading state
         loading: false,
@@ -109,11 +114,10 @@ window.mapEditor = function() {
         // ============================================
         
         init() {
-            console.log('[MapEditor] Initializing...');
-            
             EditorBase.init({
                 onReady: (socket) => {
-                    console.log('[MapEditor] EditorBase ready, loading maps...');
+                    // Request player's current location first
+                    EditorBase.send({ type: 'getPlayerCurrentLocation' });
                     this.loadMaps();
                 },
                 onMessage: (data) => {
@@ -124,13 +128,22 @@ window.mapEditor = function() {
                 }
             });
             
-            // Initialize canvas after DOM is ready - use setTimeout to ensure layout is complete
+            // Initialize canvas after DOM is ready - use multiple strategies to ensure layout is complete
             this.$nextTick(() => {
-                // Small delay to ensure layout is complete
-                setTimeout(() => {
-                    this.initCanvas();
-                    console.log('[MapEditor] Canvas initialized');
-                }, 100);
+                // Use requestAnimationFrame to ensure layout has been calculated
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        // Double RAF ensures layout is painted
+                        this.initCanvas();
+                        
+                        // Additional delayed resize as fallback for complex layouts
+                        setTimeout(() => {
+                            if (this.canvas) {
+                                this.resizeCanvas();
+                            }
+                        }, 250);
+                    });
+                });
             });
             
             // Restore room type colors from localStorage
@@ -138,6 +151,10 @@ window.mapEditor = function() {
             
             window.addEventListener('beforeunload', () => {
                 EditorBase.setNavigatingAway(true);
+                // Cleanup ResizeObserver
+                if (this.resizeObserver) {
+                    this.resizeObserver.disconnect();
+                }
             });
             
             // Set up keyboard shortcuts
@@ -147,14 +164,32 @@ window.mapEditor = function() {
         initCanvas() {
             this.canvas = document.getElementById('mapCanvas');
             if (this.canvas) {
-                console.log('[MapEditor] Found canvas element');
                 this.ctx = this.canvas.getContext('2d');
                 
                 // Resize canvas to fill container
                 this.resizeCanvas();
                 
-                // Handle window resize
-                window.addEventListener('resize', () => this.resizeCanvas());
+                // Handle window resize with debouncing
+                let resizeTimeout;
+                const handleResize = () => {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        this.resizeCanvas();
+                    }, 100);
+                };
+                window.addEventListener('resize', handleResize);
+                
+                // Use ResizeObserver to watch container size changes
+                const container = this.canvas.parentElement;
+                if (container && window.ResizeObserver) {
+                    this.resizeObserver = new ResizeObserver(() => {
+                        // Use requestAnimationFrame to ensure layout is complete
+                        requestAnimationFrame(() => {
+                            this.resizeCanvas();
+                        });
+                    });
+                    this.resizeObserver.observe(container);
+                }
                 
                 // Canvas event listeners
                 this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
@@ -172,15 +207,29 @@ window.mapEditor = function() {
             if (!this.canvas) return;
             const container = this.canvas.parentElement;
             if (container) {
-                // Get actual container dimensions
+                // Get actual container dimensions using multiple methods for reliability
                 const rect = container.getBoundingClientRect();
-                const width = rect.width || container.clientWidth || 800;
-                const height = rect.height || container.clientHeight || 600;
+                // Use rect dimensions if valid, otherwise fall back to computed styles
+                let width = rect.width;
+                let height = rect.height;
                 
-                this.canvas.width = width;
-                this.canvas.height = height;
-                console.log(`[MapEditor] Canvas resized to ${width}x${height}`);
-                this.render();
+                // If rect dimensions are 0 or invalid, try computed styles
+                if (width <= 0 || height <= 0) {
+                    const computedStyle = window.getComputedStyle(container);
+                    width = parseFloat(computedStyle.width) || container.clientWidth || 800;
+                    height = parseFloat(computedStyle.height) || container.clientHeight || 600;
+                }
+                
+                // Ensure minimum dimensions
+                width = Math.max(width, 100);
+                height = Math.max(height, 100);
+                
+                // Only update if dimensions actually changed to avoid unnecessary renders
+                if (this.canvas.width !== width || this.canvas.height !== height) {
+                    this.canvas.width = width;
+                    this.canvas.height = height;
+                    this.render();
+                }
             }
         },
 
@@ -189,9 +238,20 @@ window.mapEditor = function() {
         // ============================================
         
         handleMessage(data) {
-            console.log('[MapEditor] Message:', data.type, data);
-            
             switch (data.type) {
+                case 'playerCurrentLocation':
+                    // Store player's current location
+                    this.playerCurrentLocation = {
+                        mapId: data.mapId,
+                        roomId: data.roomId,
+                        room: data.room
+                    };
+                    // If maps are already loaded, select the player's map
+                    if (this.maps.length > 0 && this.playerCurrentLocation.mapId) {
+                        this.selectMap(this.playerCurrentLocation.mapId);
+                    }
+                    break;
+                    
                 case 'allMaps':
                     // Maps come as { id, name } - simple format
                     this.maps = (data.maps || []).map(m => ({
@@ -199,10 +259,19 @@ window.mapEditor = function() {
                         name: m.name || `Map ${m.id}`
                     }));
                     this.loading = false;
-                    console.log('[MapEditor] Loaded maps:', this.maps.length);
-                    // Auto-select first map if none selected
+                    // Auto-select player's current map if available, otherwise first map
                     if (!this.currentMap && this.maps.length > 0) {
-                        this.selectMap(this.maps[0].id);
+                        if (this.playerCurrentLocation && this.playerCurrentLocation.mapId) {
+                            // Check if player's map exists in the maps list
+                            const playerMap = this.maps.find(m => m.id === this.playerCurrentLocation.mapId);
+                            if (playerMap) {
+                                this.selectMap(this.playerCurrentLocation.mapId);
+                            } else {
+                                this.selectMap(this.maps[0].id);
+                            }
+                        } else {
+                            this.selectMap(this.maps[0].id);
+                        }
                     }
                     break;
                     
@@ -235,16 +304,20 @@ window.mapEditor = function() {
                     if (data.roomTypeColors) {
                         this.roomTypeColors = { ...ROOM_TYPE_COLORS, ...data.roomTypeColors };
                     }
-                    // Center on player's current room if available
-                    if (data.currentRoom) {
-                        const currentRoom = this.rooms.find(r => r.id === data.currentRoom.id);
+                    // Center on player's current room if available (from data.currentRoom or playerCurrentLocation)
+                    let roomToSelect = data.currentRoom;
+                    if (!roomToSelect && this.playerCurrentLocation && this.playerCurrentLocation.room &&
+                        this.currentMap && this.currentMap.id === this.playerCurrentLocation.mapId) {
+                        roomToSelect = this.playerCurrentLocation.room;
+                    }
+                    if (roomToSelect) {
+                        const currentRoom = this.rooms.find(r => r.id === roomToSelect.id);
                         if (currentRoom) {
                             this.centerOnRoom(currentRoom);
                             this.selectRoom(currentRoom);
                         }
                     }
                     this.loading = false;
-                    console.log('[MapEditor] Loaded rooms:', this.rooms.length);
                     this.render();
                     break;
                     
@@ -274,6 +347,15 @@ window.mapEditor = function() {
                     if (data.roomTypeColors) {
                         this.roomTypeColors = { ...ROOM_TYPE_COLORS, ...data.roomTypeColors };
                     }
+                    // Center on player's current room if this is their map
+                    if (this.playerCurrentLocation && this.playerCurrentLocation.room &&
+                        this.currentMap && this.currentMap.id === this.playerCurrentLocation.mapId) {
+                        const currentRoom = this.rooms.find(r => r.id === this.playerCurrentLocation.room.id);
+                        if (currentRoom) {
+                            this.centerOnRoom(currentRoom);
+                            this.selectRoom(currentRoom);
+                        }
+                    }
                     this.loading = false;
                     this.render();
                     break;
@@ -284,6 +366,49 @@ window.mapEditor = function() {
                     
                 case 'itemList':
                     this.allItems = data.items || [];
+                    break;
+                    
+                case 'roomNPCsForEditor':
+                    if (data.roomId && this.selectedRoom && this.selectedRoom.id === data.roomId) {
+                        // Preserve the currently selected NPC ID BEFORE any updates
+                        const currentSelection = this.newRoomNPCId ? String(this.newRoomNPCId) : '';
+                        
+                        this.roomNPCs = data.roomNPCs || [];
+                        // Update available NPCs - keep IDs as numbers (they'll be converted to strings in the dropdown)
+                        this.availableNPCs = data.allNPCs || [];
+                        
+                        // Only clear selection if it no longer exists in the new list
+                        // Otherwise, preserve it so Alpine can maintain the dropdown binding
+                        if (currentSelection && currentSelection !== '') {
+                            const stillAvailable = this.availableNPCs.find(npc => String(npc.id) === currentSelection);
+                            if (!stillAvailable) {
+                                // Selection no longer available, clear it
+                                this.newRoomNPCId = '';
+                            }
+                            // If still available, DON'T modify newRoomNPCId - let Alpine maintain the binding
+                        }
+                    }
+                    this.loading = false;
+                    break;
+                    
+                case 'npcPlacementAdded':
+                    // Reload NPCs for the room after adding
+                    if (this.selectedRoom && !this.selectedRoom.isNew) {
+                        this.loadRoomNPCs(this.selectedRoom.id);
+                    }
+                    this.showNotification('NPC added to room', 'success');
+                    // Clear selection after successful add (will be cleared when NPCs reload)
+                    this.newRoomNPCId = '';
+                    this.loading = false;
+                    break;
+                    
+                case 'npcPlacementRemoved':
+                    // Reload NPCs for the room after removing
+                    if (this.selectedRoom && !this.selectedRoom.isNew) {
+                        this.loadRoomNPCs(this.selectedRoom.id);
+                    }
+                    this.showNotification('NPC removed from room', 'success');
+                    this.loading = false;
                     break;
                     
                 case 'roomCreated':
@@ -374,7 +499,21 @@ window.mapEditor = function() {
             this.selectedRooms = [room];
             this.isCreatingRoom = false;
             this.populateRoomForm(room);
+            // Load NPCs for the selected room if it's not a new room
+            if (room && !room.isNew) {
+                this.loadRoomNPCs(room.id);
+            } else {
+                this.roomNPCs = [];
+            }
             this.render();
+        },
+        
+        loadRoomNPCs(roomId) {
+            if (!roomId) return;
+            // Preserve the current NPC selection when reloading
+            const currentSelection = this.newRoomNPCId;
+            EditorBase.send({ type: 'getRoomNPCsForEditor', roomId: roomId });
+            // Note: selection will be restored in roomNPCsForEditor handler if still valid
         },
         
         selectRoomAt(x, y) {
@@ -419,6 +558,8 @@ window.mapEditor = function() {
                 connected_room_y: '',
                 connection_direction: ''
             };
+            this.roomNPCs = [];
+            this.newRoomNPCId = '';
         },
 
         // ============================================
@@ -485,6 +626,61 @@ window.mapEditor = function() {
                 type: 'createMap',
                 name: this.newMapForm.name.trim(),
                 description: this.newMapForm.description.trim()
+            });
+        },
+        
+        // ============================================
+        // NPC MANAGEMENT
+        // ============================================
+        
+        addNPCToRoom() {
+            // Validate inputs
+            if (!this.selectedRoom || this.selectedRoom.isNew) {
+                this.showNotification('Please select a room first', 'error');
+                return;
+            }
+            
+            // Check if NPC is selected
+            const selectedId = this.newRoomNPCId;
+            if (!selectedId || selectedId === '' || selectedId === null) {
+                this.showNotification('Please select an NPC to add', 'error');
+                return;
+            }
+            
+            if (this.loading) {
+                return; // Prevent double-clicks
+            }
+            
+            const npcId = parseInt(String(selectedId));
+            if (isNaN(npcId)) {
+                this.showNotification('Invalid NPC selection', 'error');
+                return;
+            }
+            
+            this.loading = true;
+            EditorBase.send({
+                type: 'addNpcToRoom',
+                npcId: npcId,
+                roomId: this.selectedRoom.id,
+                slot: 0
+            });
+            // Don't clear newRoomNPCId here - wait for successful response
+        },
+        
+        removeNPCFromRoom(placementId, npcId) {
+            if (!placementId || !this.selectedRoom || this.selectedRoom.isNew) {
+                return;
+            }
+            
+            if (!confirm('Remove this NPC from the room?')) {
+                return;
+            }
+            
+            this.loading = true;
+            EditorBase.send({
+                type: 'removeNpcFromRoom',
+                placementId: placementId,
+                npcId: npcId
             });
         },
 
@@ -916,6 +1112,13 @@ window.mapEditor = function() {
                 room.name.toLowerCase().includes(search) ||
                 (room.description && room.description.toLowerCase().includes(search))
             );
+        },
+        
+        // Computed property for button disabled state
+        isAddNPCButtonDisabled() {
+            const hasNPC = this.newRoomNPCId && this.newRoomNPCId !== '';
+            const hasRoom = this.selectedRoom && !this.selectedRoom.isNew;
+            return !hasNPC || !hasRoom || this.loading;
         }
     };
 };

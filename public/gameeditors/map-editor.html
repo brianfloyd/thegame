@@ -18,6 +18,7 @@
                 <div class="editor-nav-buttons">
                     <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
                     <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/merchant')">Merchant</button>
                     <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
                     <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
                     <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
@@ -198,6 +199,52 @@
                                 </div>
                             </div>
                         </div>
+
+                        <div class="form-section" x-show="!selectedRoom?.isNew">
+                            <div class="section-header">Room NPCs</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <div class="editor-list" style="max-height: 200px; overflow-y: auto;">
+                                        <template x-if="roomNPCs.length === 0">
+                                            <div class="empty-list">No NPCs in this room</div>
+                                        </template>
+                                        <template x-for="npc in roomNPCs" :key="npc.placementId">
+                                            <div class="editor-list-item">
+                                                <div class="editor-list-header">
+                                                    <span class="editor-badge" :style="'background-color: ' + (npc.color || '#00ff00')" x-text="npc.name"></span>
+                                                </div>
+                                                <div class="editor-list-title" x-text="npc.description || 'No description'"></div>
+                                                <div class="action-buttons-right">
+                                                    <button class="editor-btn editor-btn-danger" 
+                                                            @click="removeNPCFromRoom(npc.placementId, npc.npcId)" 
+                                                            :disabled="loading">Remove</button>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Add NPC to Room</label>
+                                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                        <select class="editor-select" 
+                                                x-model="newRoomNPCId"
+                                                style="flex: 1; min-width: 200px;">
+                                            <option value="">Select an NPC...</option>
+                                            <template x-for="npc in availableNPCs" :key="'npc-' + String(npc.id)">
+                                                <option :value="String(npc.id)" x-text="npc.name + (npc.npc_type ? ' (' + npc.npc_type + ')' : '')"></option>
+                                            </template>
+                                        </select>
+                                        <button class="editor-btn editor-btn-success" 
+                                                @click="addNPCToRoom()" 
+                                                x-bind:disabled="isAddNPCButtonDisabled()"
+                                                type="button">Add</button>
+                                    </div>
+                                    <div class="form-help-text" style="margin-top: 4px; font-size: 0.85em; color: #888;">
+                                        Multiple NPCs of the same or different types can be added to a room
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </template>
             </div>
@@ -259,7 +306,6 @@
     <!-- Load editor module first, then Alpine.js -->
     <script type="module">
         await import('/map-editor.js');
-        console.log('[MapEditor] Module loaded, mapEditor available:', typeof window.mapEditor);
         
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';

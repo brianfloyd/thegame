@@ -4,6 +4,9 @@
 **Scope:** Detailed specifications for each individual editor  
 **Last Updated:** Based on codebase analysis
 
+**Related Canon:**
+- `10-18-emoji-reference.md` - Canonical emoji usage standards for editor display labels
+
 ---
 
 ## Table of Contents
@@ -275,12 +278,12 @@ formData: {
 ```
 
 **Item Types:**
-- `sundries` (default)
-- `rune`
-- `deed`
-- `ingredient`
-- `material`
-- (others from database)
+- `sundries` (default) - ✅ Supported in frontend and backend
+- `ingredient` - ✅ Supported in frontend and backend
+- `rune` - ✅ Supported in frontend and backend
+- `deed` - ✅ Supported in frontend and backend
+
+**Note:** Backend validation was updated to match frontend model (all 4 types now supported). Previously backend only allowed 3 types, excluding 'sundries'.
 
 **Filters:**
 ```javascript
@@ -304,7 +307,7 @@ filters: {
 - `getAllItems` - Load all items
 - `createItem` - Create new item
 - `updateItem` - Update existing item
-- `deleteItem` - Delete item
+- `deleteItem` - Delete item (⚠️ Handler missing - frontend calls but no backend handler)
 
 **WebSocket Messages (Server → Client):**
 - `itemList` - Item list response
@@ -312,6 +315,12 @@ filters: {
 - `itemUpdated` - Update success
 - `itemDeleted` - Deletion success
 - `error` - Error response
+
+**Note:** Backend handlers exist for merchant operations but are not exposed via Item Editor UI:
+- `addItemToMerchant` - Add item to merchant room (handler exists in `handlers/itemEditor.js`, no UI)
+- `getMerchantItems` - Get merchant items for an item (handler exists, no UI)
+- `updateMerchantItem` - Update merchant item config (handler exists, no UI)
+- `removeItemFromMerchant` - Remove item from merchant (handler exists, no UI)
 
 **CRUD Operations:**
 - `loadItems()` - Loads all items
@@ -429,9 +438,14 @@ filters: {
 - No bulk operations
 - No item templates
 - No validation of item type constraints
+- **No delete handler** - Frontend calls `deleteItem` but handler is missing in `handlers/itemEditor.js`
+- **No UI to add items to merchants** - Backend handler `addItemToMerchant` exists but no UI in Item Editor or Map Editor
+- **No merchant inventory management UI** - Cannot configure merchant items (price, buyable, sellable) from any editor
 
 **References:**
-- No implementation found
+- `public/gameeditors/item-editor.js:307-313` (deleteItem calls handler that doesn't exist)
+- `handlers/itemEditor.js:179-220` (addItemToMerchant handler exists but unused)
+- `handlers/mapEditor.js:1032-1076` (addItemToMerchantRoom handler exists but no UI calls it)
 
 ---
 
@@ -724,11 +738,10 @@ lorekeeperData: {
     engagement_delay: 3000,
     initial_message: '',
     initial_message_color: '#00ffff',
-    keywords_responses: {},       // JSON object
+    keywords_responses: {},       // JSON object (used for both dialogue and puzzle types)
     keyword_color: '#ff00ff',
     incorrect_response: 'I do not understand what you mean.',
     puzzle_mode: null,            // 'word', 'combination', 'cipher'
-    puzzle_clues: {},             // JSON object (display) or array (storage)
     puzzle_solution: '',
     puzzle_success_message: '',
     puzzle_failure_message: 'That is not the answer I seek.',
@@ -740,12 +753,28 @@ lorekeeperData: {
 }
 ```
 
+**Merchant Data (if npc_type === 'merchant'):**
+```javascript
+merchantData: {
+    engagement_enabled: true,
+    engagement_delay: 3000,
+    initial_message: '',
+    initial_message_color: '#00ffff',
+    keywords_responses: {},       // JSON object for keyword:response dialogue
+    keyword_color: '#ff00ff',
+    incorrect_response: 'I do not understand what you mean.'
+}
+```
+
+**Note:** Merchant NPCs are dialogue-only NPCs. They are not harvestable and do not have timing or output configurations. Merchant inventory is managed separately in the Merchant Editor and is room-based, not NPC-based.
+
 **Tabs:**
 - `'basic'` - Basic information and display
-- `'timing'` - Timing configuration and status messages
-- `'output'` - Output items and harvest prerequisites
+- `'timing'` - Timing configuration and status messages (hidden for lorekeeper and merchant types)
+- `'output'` - Output items and harvest prerequisites (hidden for lorekeeper and merchant types)
 - `'lorekeeper'` - Lorekeeper-specific configuration (only for lorekeeper type)
-- `'history'` - Lorekeeper history (greetings, item awards)
+- `'merchant'` - Merchant-specific configuration (only for merchant type)
+- `'history'` - Lorekeeper history (greetings, item awards, only for lorekeeper type)
 
 **Filters:**
 ```javascript
@@ -804,6 +833,11 @@ filters: {
 - `loadLoreKeeperHistory(npcId)` - Loads history
 - `clearLoreKeeperHistory(clearGreetings, clearItemAwards)` - Clears history
 
+**Merchant Operations:**
+- Merchant NPCs use the same keyword:response dialogue system as lorekeepers
+- Merchant inventory is managed in the Merchant Editor (room-based, not NPC-based)
+- Merchant NPCs are not harvestable and do not have timing or output configurations
+
 **References:**
 - `public/gameeditors/npc-editor.js:289-293` (loadNpcs)
 - `public/gameeditors/npc-editor.js:612-731` (CRUD)
@@ -824,7 +858,7 @@ filters: {
 - Timing values range validation
 - Output item quantity/chance validation
 - Lorekeeper puzzle solution validation
-- JSON field validation (keywords_responses, puzzle_clues)
+- JSON field validation (keywords_responses)
 
 **References:**
 - `public/gameeditors/npc-editor.js:619-626` (name/description validation)
@@ -837,9 +871,11 @@ filters: {
 - `output_items` stored as object `{"Item Name": quantity}` in database, displayed as array
 - `harvest_prerequisite_items` stored as JSON array in database
 - Lorekeeper data only sent when `npc_type === 'lorekeeper'`
-- Timing tab hidden for lorekeeper type
-- Output tab hidden for lorekeeper type
+- Merchant data only sent when `npc_type === 'merchant'`
+- Timing tab hidden for lorekeeper and merchant types (merchants are not harvestable)
+- Output tab hidden for lorekeeper and merchant types (merchants are not harvestable)
 - Lorekeeper tab only shown for lorekeeper type
+- Merchant tab only shown for merchant type
 - History tab only shown for lorekeeper type
 
 **Not Enforced:**
@@ -865,6 +901,11 @@ filters: {
 - When selecting lorekeeper NPC → `populateForm()` → `lorekeeperData` populated from `npc.lorekeeper` object
 - When selecting non-lorekeeper NPC → `lorekeeperData` reset to defaults
 
+**Merchant Data:**
+- When selecting merchant NPC → `populateForm()` → `merchantData` populated from `npc.merchant` object
+- When selecting non-merchant NPC → `merchantData` reset to defaults
+- Merchant NPCs automatically switch to 'merchant' tab when selected
+
 **References:**
 - `public/gameeditors/npc-editor.js:335-360` (selectNpc)
 - `public/gameeditors/npc-editor.js:362-579` (populateForm)
@@ -889,7 +930,13 @@ filters: {
 **Lorekeeper System:**
 - Manages lorekeeper-specific data (dialogue, puzzles)
 - Tracks player greetings and item awards
-- Handles puzzle clue format conversion (array ↔ object)
+- Uses keywords_responses for both dialogue responses and puzzle clues
+
+**Merchant System:**
+- Manages merchant-specific dialogue (greetings, keyword:response system)
+- Merchant NPCs provide narrative shopkeeper presence in merchant rooms
+- Merchant inventory is managed separately in Merchant Editor (room-based)
+- Merchant NPCs are not harvestable and do not participate in harvest cycles
 
 **References:**
 - `public/gameeditors/npc-editor.js:7-18` (imports)
@@ -915,20 +962,22 @@ filters: {
 ### 4.9 Serialization Paths
 
 **Form to Server:**
-- `output_items`: Converted from array to object format `{"Item Name": quantity}`
-- `harvest_prerequisite_items`: Converted to JSON string
+- `output_items`: Converted from array to object format `{"Item Name": quantity}` (not used for merchant type)
+- `harvest_prerequisite_items`: Converted to JSON string (not used for merchant type)
 - `lorekeeper`: Sent as object with all lorekeeper fields (only if `npc_type === 'lorekeeper'`)
-- `puzzle_clues`: Converted from object format to array format `[{"keyword": "key", "answer": "value"}]`
+- `merchant`: Sent as object with all merchant fields (only if `npc_type === 'merchant'`)
+- `keywords_responses`: Sent as JSON string (used for both dialogue responses and puzzle clues)
 
 **Server to Form:**
-- `output_items`: Normalized from object to array by `mapRowToNpc`
-- `harvest_prerequisite_items`: Parsed from JSON string to array
-- `lorekeeper`: Loaded as object from database
-- `puzzle_clues`: Converted from array to object for display
+- `output_items`: Normalized from object to array by `mapRowToNpc` (not used for merchant type)
+- `harvest_prerequisite_items`: Parsed from JSON string to array (not used for merchant type)
+- `lorekeeper`: Loaded as object from database (only for lorekeeper type)
+- `merchant`: Loaded as object from database (only for merchant type)
+- `keywords_responses`: Loaded as JSONB object from database (used for both dialogue and puzzle types)
 
 **References:**
 - `public/gameeditors/npc-editor.js:628-640` (output_items conversion)
-- `public/gameeditors/npc-editor.js:688-704` (puzzle_clues conversion)
+- `public/gameeditors/npc-editor.js:680-683` (keywords_responses conversion)
 - `public/gameeditors/npc-editor.js:362-579` (form population)
 
 ---

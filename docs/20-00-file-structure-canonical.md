@@ -144,7 +144,7 @@ The root directory (`thegame/`) must contain **only essential files**:
 **Documentation Numbering:**
 - **00-XX:** Index and templates
 - **01-XX:** Scrub and analysis templates
-- **10-XX:** Gameplay mechanics and rules
+- **10-XX:** Gameplay mechanics and rules (including emoji standards: `10-18-emoji-reference.md`)
 - **20-XX:** System architecture and technical specs
 - **30-XX:** System integrations and external systems
 - **50-XX:** Environment, configuration, and deployment
@@ -426,4 +426,9 @@ If files are found in incorrect locations:
 ---
 
 **END OF CANONICAL SPECIFICATION**
+
+
+
+
+
 

@@ -9,6 +9,7 @@ const gameHandlers = require('./game');
 const mapEditorHandlers = require('./mapEditor');
 const npcEditorHandlers = require('./npcEditor');
 const itemEditorHandlers = require('./itemEditor');
+const merchantEditorHandlers = require('./merchantEditor');
 const playerEditorHandlers = require('./playerEditor');
 const craftingEditorHandlers = require('./craftingEditor');
 const markupEditorHandlers = require('./markupEditor');
@@ -33,6 +34,7 @@ const handlerMap = {
   talk: gameHandlers.talk,
   ask: gameHandlers.ask,
   telepath: gameHandlers.telepath,
+  broadcast: gameHandlers.broadcast,
   solve: gameHandlers.solve,
   clue: gameHandlers.clue,
   greet: gameHandlers.greet,
@@ -47,10 +49,20 @@ const handlerMap = {
   sell: gameHandlers.sell,
   wealth: gameHandlers.wealth,
   who: gameHandlers.who,
+  getConnectedPlayersList: gameHandlers.getConnectedPlayersList,
   pulseEcho: gameHandlers.pulseEcho,
   zork: gameHandlers.zork,
   saveTerminalMessage: gameHandlers.saveTerminalMessage,
   getCommsHistory: gameHandlers.getCommsHistory,
+  getBroadcastGroups: gameHandlers.getBroadcastGroups,
+  getBroadcastHistory: gameHandlers.getBroadcastHistory,
+  createBroadcastGroup: gameHandlers.createBroadcastGroup,
+  addToBroadcastGroup: gameHandlers.addToBroadcastGroup,
+  removeFromBroadcastGroup: gameHandlers.removeFromBroadcastGroup,
+  listBroadcastGroups: gameHandlers.listBroadcastGroups,
+  getAllPlayersForBroadcast: gameHandlers.getAllPlayersForBroadcast,
+  getBroadcastGroupMembers: gameHandlers.getBroadcastGroupMembers,
+  deleteBroadcastGroup: gameHandlers.deleteBroadcastGroup,
   assignAttributePoint: gameHandlers.assignAttributePoint,
   getAutoPathMaps: gameHandlers.getAutoPathMaps,
   getAutoPathRooms: gameHandlers.getAutoPathRooms,
@@ -71,6 +83,17 @@ const handlerMap = {
   stopPathExecution: gameHandlers.stopPathExecution,
   continuePathExecution: gameHandlers.continuePathExecution,
   getMapData: gameHandlers.getMapData,
+  getAutomationPrograms: gameHandlers.getAutomationPrograms,
+  createAutomationProgram: gameHandlers.createAutomationProgram,
+  updateAutomationProgram: gameHandlers.updateAutomationProgram,
+  deleteAutomationProgram: gameHandlers.deleteAutomationProgram,
+  getAutomationSteps: gameHandlers.getAutomationSteps,
+  createAutomationStep: gameHandlers.createAutomationStep,
+  updateAutomationStep: gameHandlers.updateAutomationStep,
+  deleteAutomationStep: gameHandlers.deleteAutomationStep,
+  startAutomationProgram: gameHandlers.startAutomationProgram,
+  stopAutomationProgram: gameHandlers.stopAutomationProgram,
+  pauseAutomationProgram: gameHandlers.pauseAutomationProgram,
   
   // Debug observer handlers
   observeBug: gameHandlers.observeBug,
@@ -88,6 +111,7 @@ const handlerMap = {
   deleteRoom: mapEditorHandlers.deleteRoom,
   updateRoom: mapEditorHandlers.updateRoom,
   getAllMaps: mapEditorHandlers.getAllMaps,
+  getPlayerCurrentLocation: mapEditorHandlers.getPlayerCurrentLocation,
   connectMaps: mapEditorHandlers.connectMaps,
   disconnectMap: mapEditorHandlers.disconnectMap,
   getAllRoomTypeColors: mapEditorHandlers.getAllRoomTypeColors,
@@ -100,6 +124,7 @@ const handlerMap = {
   addItemToRoom: mapEditorHandlers.addItemToRoom,
   removeItemFromRoom: mapEditorHandlers.removeItemFromRoom,
   clearAllItemsFromRoom: mapEditorHandlers.clearAllItemsFromRoom,
+  getRoomNPCsForEditor: mapEditorHandlers.getRoomNPCsForEditor,
   getMerchantInventory: mapEditorHandlers.getMerchantInventory,
   addItemToMerchantRoom: mapEditorHandlers.addItemToMerchantRoom,
   updateMerchantItemConfig: mapEditorHandlers.updateMerchantItemConfig,
@@ -130,6 +155,20 @@ const handlerMap = {
   removeItemFromMerchant: itemEditorHandlers.removeItemFromMerchant,
   createItem: itemEditorHandlers.createItem,
   updateItem: itemEditorHandlers.updateItem,
+  
+  // Merchant editor handlers
+  getMerchantRooms: merchantEditorHandlers.handleGetMerchantRooms,
+  getMerchantRoomDetails: merchantEditorHandlers.handleGetMerchantRoomDetails,
+  createMerchantRoom: merchantEditorHandlers.handleCreateMerchantRoom,
+  convertRoomToMerchant: merchantEditorHandlers.handleConvertRoomToMerchant,
+  getMerchantInventory: merchantEditorHandlers.handleGetMerchantInventory,
+  addItemToMerchantInventory: merchantEditorHandlers.handleAddItemToMerchantInventory,
+  updateMerchantItemConfig: merchantEditorHandlers.handleUpdateMerchantItemConfig,
+  removeItemFromMerchantInventory: merchantEditorHandlers.handleRemoveItemFromMerchantInventory,
+  adjustMerchantItemQuantity: merchantEditorHandlers.handleAdjustMerchantItemQuantity,
+  getMerchantFormulaOverride: merchantEditorHandlers.handleGetMerchantFormulaOverride,
+  setMerchantFormulaOverride: merchantEditorHandlers.handleSetMerchantFormulaOverride,
+  getAllRooms: merchantEditorHandlers.handleGetAllRooms,
   
   // Player editor handlers
   getAllPlayers: playerEditorHandlers.getAllPlayers,

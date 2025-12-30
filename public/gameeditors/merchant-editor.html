@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Merchant Editor - The Game</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/editor-core.css">
+    <link rel="stylesheet" href="/gameeditors/editor-shared.css">
+</head>
+<body>
+    <div id="merchantEditor" class="editor-container" x-data="merchantEditor()" x-init="init()">
+        
+        <!-- Header -->
+        <div class="editor-header">
+            <div class="editor-header-left">
+                <h2>Merchant Editor</h2>
+                <div class="editor-nav-buttons">
+                    <button class="editor-nav-btn" @click="navigateTo('/map')">Map</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/npc')">NPC</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/items')">Item</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/player')">Player</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/crafting')">Crafting</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/tickets')">Tickets</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/markup')">Markup</button>
+                    <button class="editor-nav-btn" @click="navigateTo('/formulas')">Formulas</button>
+                </div>
+            </div>
+            <div class="editor-header-right">
+                <button class="editor-btn editor-btn-success" @click="saveRoom()" :disabled="(!selectedRoom && !isCreating) || loading">Save</button>
+                <button class="close-editor-btn" @click="navigateTo('/game.html')">Close</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="editor-toolbar">
+            <div class="toolbar-filters">
+                <input type="text" class="editor-input search-input" placeholder="Search rooms..." x-model="filters.search" @input="applyFilter()">
+            </div>
+            <div class="toolbar-actions">
+                <button class="editor-btn" @click="loadMerchantRooms()" :disabled="loading">
+                    <span x-show="!loading">↻ Refresh</span>
+                    <span x-show="loading">Loading...</span>
+                </button>
+                <button class="editor-btn editor-btn-primary" @click="showCreateRoomDialog()">+ New Merchant Room</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="editor-content">
+            
+            <!-- Left: Merchant Rooms List -->
+            <div class="editor-list-pane">
+                <div class="list-header">
+                    <span class="list-count" x-text="'Merchant Rooms: ' + filteredRooms.length"></span>
+                </div>
+                <div class="editor-list">
+                    <template x-for="room in filteredRooms" :key="room.id">
+                        <div class="editor-list-item" 
+                             :class="{ 'selected': selectedRoom && selectedRoom.id === room.id }"
+                             @click="selectRoom(room)">
+                            <div class="editor-list-header">
+                                <span class="editor-id" x-text="'#' + room.id"></span>
+                                <span class="editor-badge blue" x-text="room.item_count + ' items'"></span>
+                            </div>
+                            <div class="editor-list-title" x-text="room.name"></div>
+                            <div class="editor-list-subtitle" x-text="room.map_name + ' (' + room.x + ', ' + room.y + ')'"></div>
+                        </div>
+                    </template>
+                    <div class="empty-list" x-show="filteredRooms.length === 0">
+                        <span x-show="loading">Loading merchant rooms...</span>
+                        <span x-show="!loading">No merchant rooms found. Create one to get started.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Room Configuration -->
+            <div class="editor-detail-pane">
+                <template x-if="!selectedRoom && !isCreating">
+                    <div class="empty-detail">
+                        <p>Select a merchant room or click "+ New Merchant Room" to create one.</p>
+                    </div>
+                </template>
+
+                <template x-if="selectedRoom || isCreating">
+                    <div class="editor-form">
+                        <!-- Actions -->
+                        <div class="form-actions">
+                            <div class="action-buttons-right">
+                                <button class="editor-btn" @click="selectedRoom = null; isCreating = false; resetForm()">Cancel</button>
+                                <button class="editor-btn editor-btn-success" @click="saveRoom()" :disabled="loading">
+                                    <span x-text="isCreating ? 'Create' : 'Save'"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Basic Info Section -->
+                        <div class="form-section">
+                            <div class="section-header">Room Information</div>
+                            <div class="form-grid">
+                                <div class="form-field span-2">
+                                    <label>Room Name</label>
+                                    <input type="text" class="editor-input" :value="selectedRoom?.name || 'N/A'" readonly>
+                                </div>
+                                <div class="form-field">
+                                    <label>Map</label>
+                                    <input type="text" class="editor-input" :value="selectedRoom?.map_name || 'N/A'" readonly>
+                                </div>
+                                <div class="form-field">
+                                    <label>Coordinates</label>
+                                    <input type="text" class="editor-input" :value="selectedRoom ? '(' + selectedRoom.x + ', ' + selectedRoom.y + ')' : 'N/A'" readonly>
+                                </div>
+                                <div class="form-field span-3">
+                                    <label>Description</label>
+                                    <textarea class="editor-textarea" :value="selectedRoom?.description || 'N/A'" rows="2" readonly></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Inventory Management Section -->
+                        <div class="form-section">
+                            <div class="section-header">Inventory Management</div>
+                            
+                            <!-- Add Item -->
+                            <div class="form-grid" style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--editor-border);">
+                                <div class="form-field span-2">
+                                    <label>Add Item to Inventory</label>
+                                    <select class="editor-select" x-model="newItemId">
+                                        <option value="">Select an item...</option>
+                                        <template x-for="item in allItems" :key="item.id">
+                                            <option :value="item.id" x-text="item.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>&nbsp;</label>
+                                    <button class="editor-btn" @click="addItemToInventory()" :disabled="!newItemId || loading">Add Item</button>
+                                </div>
+                            </div>
+
+                            <!-- Inventory List -->
+                            <div class="inventory-list">
+                                <template x-for="item in roomInventory" :key="item.id">
+                                    <div class="inventory-item">
+                                        <div class="inventory-item-header">
+                                            <span class="inventory-item-name" x-text="item.item_name"></span>
+                                            <button class="editor-btn editor-btn-danger btn-small" @click="removeItemFromInventory(item.id)" :disabled="loading">Remove</button>
+                                        </div>
+                                        
+                                        <div class="form-grid" style="margin-top: 0.5rem;">
+                                            <div class="form-field">
+                                                <label>Price</label>
+                                                <input type="number" class="editor-input" x-model="item.price" min="0" @change="updateMerchantItem(item.id, { price: parseInt(item.price) })">
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Buyable</label>
+                                                <select class="editor-select" x-model="item.buyable" @change="updateMerchantItem(item.id, { buyable: item.buyable })">
+                                                    <option :value="true">Yes</option>
+                                                    <option :value="false">No</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Sellable</label>
+                                                <select class="editor-select" x-model="item.sellable" @change="updateMerchantItem(item.id, { sellable: item.sellable })">
+                                                    <option :value="true">Yes</option>
+                                                    <option :value="false">No</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Unlimited Stock</label>
+                                                <select class="editor-select" x-model="item.unlimited" @change="updateMerchantItem(item.id, { unlimited: item.unlimited })">
+                                                    <option :value="true">Yes</option>
+                                                    <option :value="false">No</option>
+                                                </select>
+                                            </div>
+                                            <template x-if="!item.unlimited">
+                                                <div class="form-field">
+                                                    <label>Max Quantity</label>
+                                                    <input type="number" class="editor-input" x-model="item.max_qty" min="1" @change="updateMerchantItem(item.id, { max_qty: parseInt(item.max_qty) })">
+                                                </div>
+                                            </template>
+                                            <template x-if="!item.unlimited">
+                                                <div class="form-field">
+                                                    <label>Min Quantity</label>
+                                                    <input type="number" class="editor-input" x-model="item.min_qty" min="0" @change="updateMerchantItem(item.id, { min_qty: parseInt(item.min_qty) || null })">
+                                                </div>
+                                            </template>
+                                            <template x-if="!item.unlimited">
+                                                <div class="form-field">
+                                                    <label>Current Quantity</label>
+                                                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                                        <button class="editor-btn btn-small" @click="adjustItemQuantity(item.id, -1)" :disabled="loading">-</button>
+                                                        <input type="number" class="editor-input" :value="item.current_qty" readonly style="flex: 1; text-align: center;">
+                                                        <button class="editor-btn btn-small" @click="adjustItemQuantity(item.id, 1)" :disabled="loading">+</button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <div class="form-field">
+                                                <label>Regen Hours (null = no regen)</label>
+                                                <input type="number" class="editor-input" x-model="item.regen_hours" min="0" step="0.1" placeholder="e.g. 24" @change="updateMerchantItem(item.id, { regen_hours: item.regen_hours ? parseFloat(item.regen_hours) : null })">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                                <div class="empty-list" x-show="roomInventory.length === 0" style="margin-top: 1rem;">
+                                    No items in inventory. Add an item above to get started.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Pricing Formula Override Section -->
+                        <div class="form-section">
+                            <div class="section-header">Pricing Formula Override</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <label>
+                                        <input type="checkbox" x-model="formulaOverrideEnabled" @change="toggleFormulaOverride()">
+                                        Enable Room-Specific Formula Override
+                                    </label>
+                                </div>
+                                <template x-if="formulaOverrideEnabled">
+                                    <div class="form-field span-3" style="grid-column: 1 / -1;">
+                                        <div class="form-grid">
+                                            <div class="form-field">
+                                                <label>Base Multiplier</label>
+                                                <input type="number" class="editor-input" x-model="formulaOverride.baseMultiplier" step="0.01" min="0">
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Acumen Multiplier</label>
+                                                <input type="number" class="editor-input" x-model="formulaOverride.acumenMultiplier" step="0.001" min="0" placeholder="0.01 = 1% per point">
+                                            </div>
+                                            <div class="form-field">
+                                                <label>Max Discount</label>
+                                                <input type="number" class="editor-input" x-model="formulaOverride.maxDiscount" step="0.01" min="0" max="1" placeholder="0.5 = 50%">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Merchant NPCs Section -->
+                        <div class="form-section">
+                            <div class="section-header">Merchant NPCs (Optional - Dialogue Only)</div>
+                            <div class="form-grid">
+                                <div class="form-field span-3">
+                                    <p style="color: var(--editor-text-dim); font-size: 0.9rem; margin: 0;">
+                                        Merchant NPCs provide dialogue and greeting functionality. Inventory is managed above and is room-based, not NPC-based.
+                                        To configure merchant NPC dialogue, use the NPC Editor and set NPC type to "Merchant".
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Create Room Dialog -->
+        <div class="modal-overlay" x-show="showCreateDialog" @click.self="showCreateDialog = false" style="display: none;" x-cloak>
+            <div class="modal" @click.stop>
+                <div class="modal-header">
+                    <h3>Create New Merchant Room</h3>
+                    <button class="modal-close" @click="showCreateDialog = false">×</button>
+                </div>
+                <div class="modal-content">
+                    <div class="form-grid">
+                        <div class="form-field span-2">
+                            <label>Create New Room</label>
+                            <select class="editor-select" x-model="createRoomMode">
+                                <option value="new">Create New Room</option>
+                                <option value="convert">Convert Existing Room</option>
+                            </select>
+                        </div>
+                        <template x-if="createRoomMode === 'new'">
+                            <div class="form-field span-2">
+                                <label>Map</label>
+                                <select class="editor-select" x-model="newRoomData.mapId">
+                                    <option value="">Select a map...</option>
+                                    <template x-for="map in allMaps" :key="map.id">
+                                        <option :value="map.id" x-text="map.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </template>
+                        <template x-if="createRoomMode === 'new'">
+                            <div class="form-field">
+                                <label>X Coordinate</label>
+                                <input type="number" class="editor-input" x-model="newRoomData.x">
+                            </div>
+                        </template>
+                        <template x-if="createRoomMode === 'new'">
+                            <div class="form-field">
+                                <label>Y Coordinate</label>
+                                <input type="number" class="editor-input" x-model="newRoomData.y">
+                            </div>
+                        </template>
+                        <template x-if="createRoomMode === 'new'">
+                            <div class="form-field span-2">
+                                <label>Room Name</label>
+                                <input type="text" class="editor-input" x-model="newRoomData.name" placeholder="Merchant room name">
+                            </div>
+                        </template>
+                        <template x-if="createRoomMode === 'new'">
+                            <div class="form-field span-2">
+                                <label>Description</label>
+                                <textarea class="editor-textarea" x-model="newRoomData.description" rows="2" placeholder="Room description"></textarea>
+                            </div>
+                        </template>
+                        <template x-if="createRoomMode === 'convert'">
+                            <div class="form-field span-2">
+                                <label>Select Room to Convert</label>
+                                <select class="editor-select" x-model="convertRoomId">
+                                    <option value="">Select a room...</option>
+                                    <template x-for="room in allRooms" :key="room.id">
+                                        <option :value="room.id" x-text="room.name + ' (' + room.map_name + ' - ' + room.x + ', ' + room.y + ')'"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="editor-btn" @click="showCreateDialog = false">Cancel</button>
+                    <button class="editor-btn editor-btn-success" @click="createMerchantRoom()" :disabled="loading">Create</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div class="editor-notification" x-show="notification.show" x-text="notification.message"
+             :class="{ 'notification-error': notification.type === 'error', 'notification-success': notification.type === 'success' }">
+        </div>
+    </div>
+
+    <!-- Load editor module first, then Alpine.js -->
+    <script type="module">
+        await import('/gameeditors/merchant-editor.js');
+        console.log('[MerchantEditor] Module loaded, merchantEditor available:', typeof window.merchantEditor);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js';
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
+
+
+
+

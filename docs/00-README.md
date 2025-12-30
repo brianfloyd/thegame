@@ -30,9 +30,10 @@ Every Cursor response MUST internally classify its actions using **exactly one**
 
 Cursor must follow this sequence exactly:
 
-1. **Consult existing canon** (via this README)
+1. **Consult existing canon** (via **`00-01-INDEX.MD`** for document catalog, or this README for governance)
    - **ONLY reference documents in `docs/` root (numbered: 00-XX, 10-XX, 20-XX, 30-XX, 50-XX)**
    - **NEVER reference documents in `/docs/Chuck docs/` as canon**
+   - Use **`00-01-INDEX.MD`** to find relevant canonical documents by domain or topic
 2. If canon exists → apply or propose changes
 3. If canon is missing or unclear:
    - Use **01-00-scrub-prompt-template.md**
@@ -96,9 +97,10 @@ When Cursor is operating in **PLAN mode** or **ASK mode**, the **very first step
 
 Cursor must then:
 
-1. Explicitly list **which canonical documents are relevant** to the request
-2. State **whether existing canon fully covers the request, partially covers it, or does not cover it at all**
-3. Only after this check may Cursor:
+1. Consult **`00-01-INDEX.MD`** to identify relevant canonical documents
+2. Explicitly list **which canonical documents are relevant** to the request
+3. State **whether existing canon fully covers the request, partially covers it, or does not cover it at all**
+4. Only after this check may Cursor:
 
    * Apply canon (🟢)
    * Propose canon changes (🟡)

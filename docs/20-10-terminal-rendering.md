@@ -115,11 +115,18 @@ Player names support markup (colored, glowing, etc.):
 playerSpan.innerHTML = parseMarkup(playerName, '#00ffff')
 ```
 
-### 4.3 Rendering NPC Status
-NPCs often display a dynamic status line:
+### 4.3 Rendering NPC Names and Status
+NPC names support markup (colored, glowing, etc.) and must use `parseMarkup()`:
+```
+npcName.innerHTML = parseMarkup(npc.name, '#00ffff')
+```
+
+NPC status messages also support markup:
 ```
 npcStatus.innerHTML = parseMarkup(statusMessage, '#00ffff')
 ```
+
+**Critical:** NPC names must **never** use hardcoded color styles. All NPC name display must respect game markup standards through `parseMarkup()`.
 
 ### 4.4 Saving Room Content to Terminal History
 Every description, exit list, and item list stores the **raw** text in terminal history.
@@ -156,6 +163,16 @@ msgDiv.innerHTML = `
 ```
 
 Terminal logs the raw message plus the fully rendered HTML.
+
+### 6.4 NPC Dialogue Rendering (Lorekeeper/Merchant)
+NPC dialogue messages (from `greet` and `talk` commands) render NPC names with markup:
+```
+parsedNpcName = parseMarkup(npcName, '#00ffff')
+parsedMessage = parseLoreKeeperGlow(message, keywordColor)
+messageDiv.innerHTML = `<span class="lorekeeper-name">${parsedNpcName}</span> says "..."`
+```
+
+**Critical:** NPC names in dialogue must use `parseMarkup()` and must **never** use hardcoded color styles. The `npcColor` parameter from the server is ignored in favor of markup parsing.
 
 ### 6.2 Resonate Rendering
 Follows the same pattern as talk messages, but with world-wide styling.
@@ -252,7 +269,9 @@ Terminal uses markup in every major text-rendering surface.
 |-----------|--------------|--------|
 | Room descriptions | ✔ | Fully parsed
 | Player listing | ✔ | Names support markup
+| NPC names | ✔ | **Must use parseMarkup(), no hardcoded colors**
 | NPC status | ✔ | Dynamic descriptions
+| NPC dialogue | ✔ | Names and messages support markup
 | Exits | ✔ | Markup-supported
 | Items list | ✔ | Visual enhancement allowed
 | System messages | ✔ | Always parsed

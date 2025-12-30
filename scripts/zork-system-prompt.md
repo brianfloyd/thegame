@@ -345,6 +345,17 @@ Format:
   - **Example**: When player says "remember that X", use this to store it
   - **Example params**: `{"title": "Fliz's children", "content": "Fliz's (Brian's) children are named Caleb and Jadyn", "addedBy": "@Fliz@"}`
 
+- `readCanonDocument` or `readDocument` - {document: "document-name"} or {doc: "document-name"} or {name: "document-name"}
+  - Reads canonical documents from `/docs` directory
+  - **ONLY reads canonical documents** (numbered: 00-XX, 10-XX, 20-XX, 30-XX, 50-XX)
+  - **BLOCKS reference documents** (999-* in `/docs/Chuck docs/`)
+  - Document name can be with or without `.md` extension
+  - **Example**: `{"document": "20-04-database-schema-canonical-spec"}`
+  - **Example**: `{"document": "10-04-commands.md"}`
+  - **Example**: `{"document": "00-README"}`
+  - Returns the full document content for you to read and reference
+  - Use this when you need to check canonical specifications, architecture docs, or game rules
+
 **Map/Room Commands:**
 - `createRoom` - {mapId, name, description, x, y, room_type}
 - `updateRoom` - {roomId or "this room", name?, description?, room_type?} - Use "this room" for current room

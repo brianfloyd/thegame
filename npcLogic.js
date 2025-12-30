@@ -41,6 +41,13 @@ function runNPCCycle(npc, roomNpc) {
       // Lore Keepers are narrative NPCs - they don't produce items or cycle
       // They only respond to player interactions (talk, greet, solve, clue)
       return { state: currentState, producedItems: [] };
+    case 'harvestable':
+      // Legacy NPC type - map to rhythm handler (harvestable NPCs behave like rhythm NPCs)
+      return handleRhythm(npc, currentState);
+    case 'merchant':
+      // Merchant NPCs are dialogue-only - they don't produce items or cycle
+      // They only respond to player interactions (list, buy, sell)
+      return { state: currentState, producedItems: [] };
     default:
       console.log(`Unknown NPC type: ${npc.npcType}`);
       // Default: just increment cycles, produce nothing

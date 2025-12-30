@@ -52,6 +52,19 @@ async function getMapEditorData(ctx, data) {
   // Get all items for dropdown population
   const allItems = await db.getAllItems();
   
+  // Get player's current room if they're in this map
+  let currentRoom = null;
+  if (player.current_room_id) {
+    const playerRoom = await db.getRoomById(player.current_room_id);
+    if (playerRoom && playerRoom.map_id === mapId) {
+      currentRoom = {
+        id: playerRoom.id,
+        x: playerRoom.x,
+        y: playerRoom.y
+      };
+    }
+  }
+  
   ws.send(JSON.stringify({
     type: 'mapEditorData',
     rooms: rooms.map(r => ({
@@ -71,7 +84,8 @@ async function getMapEditorData(ctx, data) {
     roomTypes: roomTypeList,
     allItems: allItems,
     mapId: map.id,
-    mapName: map.name
+    mapName: map.name,
+    currentRoom: currentRoom
   }));
 }
 
@@ -314,6 +328,57 @@ async function getAllMaps(ctx, data) {
     type: 'allMaps',
     maps: maps.map(m => ({ id: m.id, name: m.name }))
   }));
+}
+
+/**
+ * Get player's current location (map and room)
+ */
+async function getPlayerCurrentLocation(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  try {
+    // Get player's current room
+    const room = await db.getRoomById(player.current_room_id);
+    if (!room) {
+      ws.send(JSON.stringify({
+        type: 'playerCurrentLocation',
+        mapId: null,
+        roomId: null
+      }));
+      return;
+    }
+
+    // Get the map
+    const map = await db.getMapById(room.map_id);
+    if (!map) {
+      ws.send(JSON.stringify({
+        type: 'playerCurrentLocation',
+        mapId: null,
+        roomId: null
+      }));
+      return;
+    }
+
+    ws.send(JSON.stringify({
+      type: 'playerCurrentLocation',
+      mapId: map.id,
+      roomId: room.id,
+      room: {
+        id: room.id,
+        x: room.x,
+        y: room.y
+      }
+    }));
+  } catch (error) {
+    console.error('Error getting player current location:', error);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get player location: ' + error.message }));
+  }
 }
 
 /**
@@ -796,6 +861,52 @@ async function getRoomItemsForEditor(ctx, data) {
 }
 
 /**
+ * Get room NPCs for map editor
+ */
+async function getRoomNPCsForEditor(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  const { roomId } = data;
+  if (!roomId) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Room ID required' }));
+    return;
+  }
+
+  // Get NPCs in the room
+  const roomNPCs = await db.getNPCsInRoom(roomId);
+  
+  // Get all active NPCs for the dropdown (filter to active only)
+  const allNPCs = await db.getAllScriptableNPCs();
+  const activeNPCs = allNPCs.filter(npc => npc.active === true);
+  
+  ws.send(JSON.stringify({
+    type: 'roomNPCsForEditor',
+    roomId,
+    roomNPCs: roomNPCs.map(npc => ({
+      id: npc.id,
+      placementId: npc.id, // room_npc id
+      npcId: npc.npcId,
+      name: npc.name,
+      description: npc.description,
+      color: npc.color,
+      slot: npc.slot
+    })),
+    allNPCs: activeNPCs.map(npc => ({
+      id: npc.id, // Keep as number - will be converted to string in frontend for dropdown
+      name: npc.name,
+      description: npc.description,
+      npc_type: npc.npc_type
+    }))
+  }));
+}
+
+/**
  * Add item to room
  */
 async function addItemToRoom(ctx, data) {
@@ -1046,6 +1157,7 @@ module.exports = {
   deleteRoom,
   updateRoom,
   getAllMaps,
+  getPlayerCurrentLocation,
   connectMaps,
   disconnectMap,
   getAllRoomTypeColors,
@@ -1058,6 +1170,7 @@ module.exports = {
   addItemToRoom,
   removeItemFromRoom,
   clearAllItemsFromRoom,
+  getRoomNPCsForEditor,
   getMerchantInventory,
   addItemToMerchantRoom,
   updateMerchantItemConfig,

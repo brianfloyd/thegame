@@ -40,10 +40,11 @@ async function getAllItemTypes(ctx, data) {
     return;
   }
 
-  // Ensure the 3 valid item types exist in database
+  // Ensure the 4 valid item types exist in database
   try {
     await db.query(
       `INSERT INTO item_types (item_type, description) VALUES
+       ('sundries', 'General items and miscellaneous goods'),
        ('ingredient', 'Raw materials and ingredients used in crafting and alchemy'),
        ('rune', 'Magical runes and enchanted items'),
        ('deed', 'Property deeds and ownership documents')
@@ -104,8 +105,8 @@ async function updateItem(ctx, data) {
     return;
   }
 
-  // Validate item type - must be one of the 3 allowed types
-  const allowedTypes = ['ingredient', 'rune', 'deed'];
+  // Validate item type - must be one of the 4 allowed types
+  const allowedTypes = ['sundries', 'ingredient', 'rune', 'deed'];
   if (item.item_type && !allowedTypes.includes(item.item_type)) {
     ws.send(JSON.stringify({ type: 'error', message: `Invalid item type: ${item.item_type}. Valid types: ${allowedTypes.join(', ')}` }));
     return;

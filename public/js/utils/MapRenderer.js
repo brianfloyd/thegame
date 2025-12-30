@@ -10,7 +10,7 @@ export default class MapRenderer {
         this.canvas = config.canvas;
         this.ctx = config.ctx;
         this.cellSize = config.cellSize || 10;
-        this.gridSize = config.gridSize || null; // null = dynamic, number = fixed grid
+        this.gridSize = config.gridSize || null; // null = dynamic, number = fixed square grid, or {cols, rows} for rectangular
         this.zoom = config.zoom || 1.0;
         this.panX = config.panX || 0;
         this.panY = config.panY || 0;
@@ -51,29 +51,55 @@ export default class MapRenderer {
     calculateBounds(rooms, centerRoom = null) {
         if (this.gridSize !== null) {
             // Fixed grid mode (like main map widget)
-            const halfSize = Math.floor(this.gridSize / 2);
+            // Support both square grid (number) and rectangular grid ({cols, rows})
+            let gridCols, gridRows;
+            if (typeof this.gridSize === 'object' && this.gridSize.cols && this.gridSize.rows) {
+                // Rectangular grid
+                gridCols = this.gridSize.cols;
+                gridRows = this.gridSize.rows;
+            } else {
+                // Square grid (backward compatibility)
+                gridCols = this.gridSize;
+                gridRows = this.gridSize;
+            }
+            
+            const halfCols = Math.floor(gridCols / 2);
+            const halfRows = Math.floor(gridRows / 2);
+            
             if (centerRoom) {
                 // Calculate cell size to maximize use of available canvas space
-                // Use the smaller dimension to ensure the grid fits, but don't limit by this.cellSize
-                const cellSizeX = this.canvas.width / this.gridSize;
-                const cellSizeY = this.canvas.height / this.gridSize;
-                const baseCellSize = Math.min(cellSizeX, cellSizeY);
+                // Use full width and height for rectangular grid
+                const cellSizeX = this.canvas.width / gridCols;
+                const cellSizeY = this.canvas.height / gridRows;
+                // For rectangular grids, use width-based cell size to fill full width
+                // For square grids, use min to maintain square cells
+                const baseCellSize = (gridCols !== gridRows) ? cellSizeX : Math.min(cellSizeX, cellSizeY);
                 
                 // Apply zoom, but respect min/max constraints
                 let scaledCellSize = baseCellSize * this.zoom;
                 if (this.minCellSize) scaledCellSize = Math.max(scaledCellSize, this.minCellSize);
                 if (this.maxCellSize) scaledCellSize = Math.min(scaledCellSize, this.maxCellSize);
                 
+                // When zoomed out (zoom < 1.0), expand bounds to show more rooms
+                // When zoomed in (zoom > 1.0), keep bounds the same (shows fewer but larger rooms)
+                // Calculate zoom factor: if zoom is 0.5, we can show 2x more rooms in each direction
+                const zoomFactor = this.zoom < 1.0 ? (1.0 / this.zoom) : 1.0;
+                const expandedHalfCols = Math.floor(halfCols * zoomFactor);
+                const expandedHalfRows = Math.floor(halfRows * zoomFactor);
+                
                 // Adjust for pan
-                const adjustedMinX = centerRoom.x - halfSize + this.panX;
-                const adjustedMaxX = centerRoom.x + halfSize + this.panX;
-                const adjustedMinY = centerRoom.y - halfSize + this.panY;
-                const adjustedMaxY = centerRoom.y + halfSize + this.panY;
+                const adjustedMinX = centerRoom.x - expandedHalfCols + this.panX;
+                const adjustedMaxX = centerRoom.x + expandedHalfCols + this.panX;
+                const adjustedMinY = centerRoom.y - expandedHalfRows + this.panY;
+                const adjustedMaxY = centerRoom.y + expandedHalfRows + this.panY;
                 
-                const scaledGridWidth = this.gridSize * scaledCellSize;
-                const scaledGridHeight = this.gridSize * scaledCellSize;
+                // Calculate grid dimensions using expanded bounds, not original grid size
+                const expandedGridCols = expandedHalfCols * 2 + 1;
+                const expandedGridRows = expandedHalfRows * 2 + 1;
+                const scaledGridWidth = expandedGridCols * scaledCellSize;
+                const scaledGridHeight = expandedGridRows * scaledCellSize;
                 
-                // Calculate offsets to center the grid, ensuring bottom row is visible
+                // Calculate offsets to center the grid
                 // Use Math.floor to avoid fractional pixels that could cause truncation
                 const offsetX = Math.floor((this.canvas.width - scaledGridWidth) / 2);
                 const offsetY = Math.floor((this.canvas.height - scaledGridHeight) / 2);
@@ -154,10 +180,31 @@ export default class MapRenderer {
      * Get room at screen position
      */
     getRoomAtPosition(screenX, screenY, rooms) {
-        const coords = this.screenToMap(screenX, screenY);
-        if (!coords) return null;
+        if (!this.renderedBounds || !rooms || rooms.length === 0) return null;
         
-        return rooms.find(r => r.x === coords.x && r.y === coords.y) || null;
+        const { minX, maxY, cellSize, offsetX, offsetY } = this.renderedBounds;
+        
+        // First, try to find room by checking visual bounds (more reliable than coordinate conversion)
+        // This handles rounding errors and edge cases better
+        for (const r of rooms) {
+            const roomScreenX = offsetX + (r.x - minX) * cellSize;
+            const roomScreenY = offsetY + (maxY - r.y) * cellSize;
+            
+            // Check if click is within the room's visual bounds (with tolerance for edge clicks)
+            const tolerance = Math.max(2, cellSize * 0.15); // At least 2px tolerance, or 15% of cell size
+            if (screenX >= roomScreenX - tolerance && 
+                screenX <= roomScreenX + cellSize + tolerance &&
+                screenY >= roomScreenY - tolerance && 
+                screenY <= roomScreenY + cellSize + tolerance) {
+                return r;
+            }
+        }
+        
+        // Fallback: Try exact coordinate matching (less reliable due to rounding)
+        const mapX = Math.floor((screenX - offsetX) / cellSize) + minX;
+        const mapY = maxY - Math.floor((screenY - offsetY) / cellSize);
+        
+        return rooms.find(r => r.x === mapX && r.y === mapY) || null;
     }
     
     /**

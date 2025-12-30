@@ -9,7 +9,6 @@ import Terminal from './widgets/Terminal.js';
 import Inventory from './widgets/Inventory.js';
 import WidgetManager from './core/WidgetManager.js';
 import { WIDGETS } from './widgets/widget_registry.js';
-import MapRenderer from './utils/MapRenderer.js';
 
 // Initialize game
 const game = new Game();
@@ -250,7 +249,8 @@ function normalizeCommand(input) {
         'solve': 'solve', 'sol': 'solve',
         'clue': 'clue', 'cl': 'clue',
         'ask': 'ask',
-        'jump': 'jump', '/jump': 'jump'
+        'jump': 'jump', '/jump': 'jump',
+        'zork': 'zork', '/zork': 'zork'
     };
     
     const commandType = commandMap[cmd];
@@ -313,12 +313,35 @@ function normalizeCommand(input) {
     }
     
     if (commandType === 'take') {
-        const itemName = args.join(' ');
+        if (args.length === 0) {
+            terminal.addMessage('Take what?', 'error');
+            return null;
+        }
+        // Parse quantity (can be "all" or a number at the start)
+        // Patterns: "all pulse", "4 pulse", "4 pulse resin", "pulse resin"
+        let quantity = 1;
+        let itemName = args.join(' ');
+        
+        // Check if first arg is "all" or a number
+        if (args.length > 1) {
+            const firstArg = args[0].toLowerCase();
+            if (firstArg === 'all') {
+                quantity = 'all';
+                itemName = args.slice(1).join(' ');
+            } else {
+                const parsedNum = parseInt(firstArg, 10);
+                if (!isNaN(parsedNum) && parsedNum > 0) {
+                    quantity = parsedNum;
+                    itemName = args.slice(1).join(' ');
+                }
+            }
+        }
+        
         if (!itemName) {
             terminal.addMessage('Take what?', 'error');
             return null;
         }
-        return { type: 'take', itemName: itemName };
+        return { type: 'take', itemName: itemName, quantity: quantity };
     }
     
     if (commandType === 'drop') {
@@ -442,6 +465,16 @@ function normalizeCommand(input) {
             return null; // Don't send to server
         }
         return { type: 'ask', target: args[0], question: args.slice(1).join(' ') };
+    }
+    
+    if (commandType === 'zork') {
+        // Zork command - toggle ZORK AI mode
+        // Check god mode first
+        if (!godMode) {
+            terminal.addMessage('This command requires god mode.', 'error');
+            return null;
+        }
+        return { type: 'zork' };
     }
     
     if (commandType === 'jump') {
@@ -843,7 +876,7 @@ function openJumpWidget() {
         // Add resize observer to handle container size changes
         if (!jumpWidgetResizeObserver) {
             jumpWidgetResizeObserver = new ResizeObserver(() => {
-                if (jumpWidgetCanvas && container && jumpWidgetRooms.length > 0) {
+                if (jumpWidgetCanvas && container) {
                     jumpWidgetCanvas.width = container.clientWidth;
                     jumpWidgetCanvas.height = container.clientHeight;
                     if (jumpWidgetRenderer) {
@@ -920,19 +953,7 @@ function openJumpWidget() {
     setupJumpWidgetKeyboard();
     
     // Request map list from server
-    console.log('[JumpWidget] Requesting maps from server...');
-    if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
-        game.send({ type: 'getJumpMaps' });
-    } else {
-        console.error('[JumpWidget] WebSocket not connected, cannot request maps');
-        // Try again after a short delay
-        setTimeout(() => {
-            if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
-                console.log('[JumpWidget] Retrying map request...');
-                game.send({ type: 'getJumpMaps' });
-            }
-        }, 500);
-    }
+    game.send({ type: 'getJumpMaps' });
     
     // Setup event listeners
     const closeBtn = document.getElementById('closeJumpWidget');
@@ -1035,46 +1056,21 @@ function closeJumpWidget() {
 
 // Handle jump maps from server
 game.messageBus.on('jump:maps', (data) => {
-    console.log('[JumpWidget] Received maps from server:', data);
-    if (data && data.maps) {
-        populateJumpMaps(data.maps);
-    } else {
-        console.error('[JumpWidget] Invalid maps data received:', data);
-    }
+    populateJumpMaps(data.maps);
 });
 
 function populateJumpMaps(maps) {
-    console.log('[JumpWidget] populateJumpMaps called with:', maps);
-    jumpWidgetMaps = maps || [];
+    jumpWidgetMaps = maps;
     const selector = document.getElementById('jumpMapSelector');
-    if (!selector) {
-        console.error('[JumpWidget] jumpMapSelector element not found!');
-        return;
-    }
+    if (!selector) return;
     
     selector.innerHTML = '<option value="">Select a map...</option>';
-    if (jumpWidgetMaps.length === 0) {
-        console.warn('[JumpWidget] No maps received from server');
-        return;
-    }
-    
-    jumpWidgetMaps.forEach(map => {
+    maps.forEach(map => {
         const option = document.createElement('option');
         option.value = map.id;
-        option.textContent = map.name || `Map ${map.id}`;
+        option.textContent = map.name;
         selector.appendChild(option);
     });
-    
-    console.log(`[JumpWidget] Populated ${jumpWidgetMaps.length} maps in selector`);
-    
-    // Auto-select current map if available
-    if (currentMapId) {
-        console.log(`[JumpWidget] Auto-selecting current map: ${currentMapId}`);
-        selector.value = currentMapId.toString();
-        // Trigger the change event to load rooms
-        const changeEvent = new Event('change', { bubbles: true });
-        selector.dispatchEvent(changeEvent);
-    }
 }
 
 function onJumpMapSelected(e) {
@@ -1087,7 +1083,6 @@ function onJumpMapSelected(e) {
     }
     
     jumpWidgetSelectedMap = mapId;
-    console.log(`[JumpWidget] Map selected: ${mapId}, requesting rooms...`);
     
     // Reset zoom and pan when selecting new map
     if (jumpWidgetRenderer) {
@@ -1096,58 +1091,16 @@ function onJumpMapSelected(e) {
     }
     
     // Request rooms for this map
-    if (game && game.ws && game.ws.readyState === WebSocket.OPEN) {
-        console.log(`[JumpWidget] Sending getJumpRooms request with mapId: ${mapId} (type: ${typeof mapId})`);
-        game.send({ type: 'getJumpRooms', mapId: mapId });
-    } else {
-        console.error('[JumpWidget] WebSocket not connected, cannot request rooms');
-    }
+    game.send({ type: 'getJumpRooms', mapId });
 }
 
 // Handle jump rooms from server
 game.messageBus.on('jump:rooms', (data) => {
-    console.log('[JumpWidget] Received rooms from server (full data):', JSON.stringify(data, null, 2));
-    // Handle both direct array and object with rooms property
-    let rooms = null;
-    if (Array.isArray(data)) {
-        rooms = data;
-    } else if (data && Array.isArray(data.rooms)) {
-        rooms = data.rooms;
-    } else if (data && data.rooms) {
-        // Sometimes it might be wrapped differently
-        rooms = data.rooms;
-    }
-    
-    if (rooms !== null) {
-        console.log(`[JumpWidget] Extracted ${rooms.length} rooms from data`);
-        populateJumpRooms(rooms);
-    } else {
-        console.error('[JumpWidget] Invalid rooms data received - not an array:', data);
-    }
+    populateJumpRooms(data.rooms);
 });
 
 function populateJumpRooms(rooms) {
-    console.log(`[JumpWidget] populateJumpRooms called with ${rooms ? rooms.length : 0} rooms`);
-    jumpWidgetRooms = rooms || [];
-    
-    if (jumpWidgetRooms.length === 0) {
-        console.warn('[JumpWidget] No rooms received for selected map');
-        clearJumpCanvas();
-        return;
-    }
-    
-    // Ensure rooms have required properties for MapRenderer
-    jumpWidgetRooms = jumpWidgetRooms.map(room => ({
-        id: room.id,
-        name: room.name || `Room ${room.id}`,
-        x: room.x || 0,
-        y: room.y || 0,
-        mapId: room.map_id || room.mapId || jumpWidgetSelectedMap,
-        roomType: room.room_type || room.roomType || 'normal',
-        connected_map_id: room.connected_map_id || null
-    }));
-    
-    console.log(`[JumpWidget] Processed ${jumpWidgetRooms.length} rooms, rendering map...`);
+    jumpWidgetRooms = rooms;
     renderJumpMap();
 }
 
@@ -1158,14 +1111,7 @@ function clearJumpCanvas() {
 }
 
 function renderJumpMap() {
-    if (!jumpWidgetRenderer || !jumpWidgetCanvas || !jumpWidgetCtx) {
-        console.warn('[JumpWidget] Renderer, canvas, or context not available');
-        clearJumpCanvas();
-        return;
-    }
-    
-    if (jumpWidgetRooms.length === 0) {
-        console.warn('[JumpWidget] No rooms to render');
+    if (!jumpWidgetRenderer || !jumpWidgetCanvas || !jumpWidgetCtx || jumpWidgetRooms.length === 0) {
         clearJumpCanvas();
         return;
     }
@@ -1185,23 +1131,8 @@ function renderJumpMap() {
         }
     }
     
-    // Find current room if we're viewing the current map
-    let centerRoom = null;
-    if (currentRoomPos && currentMapId && jumpWidgetSelectedMap === currentMapId) {
-        centerRoom = jumpWidgetRooms.find(r => 
-            r.x === currentRoomPos.x && 
-            r.y === currentRoomPos.y &&
-            (r.mapId === currentMapId || r.map_id === currentMapId)
-        );
-        if (centerRoom) {
-            console.log('[JumpWidget] Found current room for centering:', centerRoom);
-        }
-    }
-    
-    console.log(`[JumpWidget] Rendering ${jumpWidgetRooms.length} rooms with centerRoom:`, centerRoom);
-    
     // Render using MapRenderer (it handles zoom/pan internally)
-    jumpWidgetRenderer.render(jumpWidgetRooms, centerRoom, '#050505');
+    jumpWidgetRenderer.render(jumpWidgetRooms, null, '#050505');
 }
 
 function getJumpRoomAtPosition(canvasX, canvasY) {

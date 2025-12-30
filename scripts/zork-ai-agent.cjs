@@ -554,6 +554,15 @@ function handleRoomUpdate(message) {
       console.log(`[ZORK] Received room update (Room ${currentRoomId}) - we're in the world, clearing reconnecting flag`);
       isReconnecting = false;
     }
+    
+    // Check if Fliz is in this room - if not, follow him immediately
+    // This ensures ZORK always stays with Fliz
+    const playersInRoom = message.players || [];
+    const flizInRoom = playersInRoom.some(p => p === CONFIG.FLIZ_NAME || p.includes('Fliz'));
+    if (!flizInRoom) {
+      // Fliz is not in this room - check and follow immediately
+      checkAndFollowFliz();
+    }
   }
 }
 
@@ -886,7 +895,7 @@ async function processAndRespond(speaker, message, method) {
           const result = await executeAction(action, speaker);
           
           // For markup, game message, connection management, ticket reading, and SQL query actions, result contains the data (don't need verification)
-          const readOnlyActions = ['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword', 'disconnectZork', 'reconnectZork', 'getZorkConnectionStatus', 'getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'sql'];
+          const readOnlyActions = ['getMarkupConventions', 'createMarkupConvention', 'updateMarkupConvention', 'deleteMarkupConvention', 'updateBuiltInMarkupEdit', 'getGameMessage', 'getAllGameMessages', 'updateGameMessage', 'getNPCKeywords', 'updateNPCKeyword', 'deleteNPCKeyword', 'disconnectZork', 'reconnectZork', 'getZorkConnectionStatus', 'getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'sql', 'readCanonDocument', 'readDocument'];
           
           if (readOnlyActions.includes(action.type)) {
             console.log(`[ZORK] Action ${action.type} completed successfully`);
@@ -924,7 +933,7 @@ async function processAndRespond(speaker, message, method) {
       
       // Check if we have read actions with results that need to be presented to the user
       const readActionsWithResults = actions.filter(a => 
-        ['getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'getMarkupConventions', 'getZorkConnectionStatus', 'sql'].includes(a.type) && 
+        ['getTickets', 'listTickets', 'getTicket', 'getTicketSummary', 'getMarkupConventions', 'getZorkConnectionStatus', 'sql', 'readCanonDocument', 'readDocument'].includes(a.type) && 
         a.result && 
         !a.verificationFailed
       );
@@ -1024,6 +1033,14 @@ async function processAndRespond(speaker, message, method) {
               if (result.rowCount !== undefined) {
                 formattedResults += `Rows affected: ${result.rowCount}\n`;
               }
+            }
+          } else if (action.type === 'readCanonDocument' || action.type === 'readDocument') {
+            // Format canon document content
+            if (result.success && result.content) {
+              formattedResults += `\n\n**Canon Document: ${result.document}**\n\n`;
+              formattedResults += result.content;
+            } else {
+              formattedResults += `\n\n**Error reading document:** ${result.error || 'Unknown error'}\n`;
             }
           }
         }
@@ -1716,7 +1733,7 @@ async function getItemDetails(itemName) {
 async function getLoreKeeperPuzzleInfo(npcName) {
   try {
     const puzzleInfo = await verifier.queryOne(
-      `SELECT lk.npc_id, sn.name as npc_name, lk.puzzle_mode, lk.puzzle_clues, 
+      `SELECT lk.npc_id, sn.name as npc_name, lk.puzzle_mode, 
               lk.puzzle_solution, lk.puzzle_success_message, lk.puzzle_failure_message,
               lk.puzzle_reward_item, lk.keywords_responses
        FROM lore_keepers lk
@@ -1733,9 +1750,10 @@ async function getLoreKeeperPuzzleInfo(npcName) {
     // Keep backward compatibility check during migration
     let keywordsResponses = null;
     if (puzzleInfo.keywords_responses) {
-      keywordsResponses = typeof puzzleInfo.keywords_responses === 'string'
-        ? JSON.parse(puzzleInfo.keywords_responses)
-        : puzzleInfo.keywords_responses;
+      try {
+        keywordsResponses = typeof puzzleInfo.keywords_responses === 'string'
+          ? JSON.parse(puzzleInfo.keywords_responses)
+          : puzzleInfo.keywords_responses;
       } catch (parseError) {
         // If not JSON, treat as plain text
         keywordsResponses = puzzleInfo.keywords_responses;
@@ -1745,7 +1763,6 @@ async function getLoreKeeperPuzzleInfo(npcName) {
     return {
       npcName: puzzleInfo.npc_name,
       puzzleMode: puzzleInfo.puzzle_mode,
-      puzzleClues: puzzleInfo.puzzle_clues,
       puzzleSolution: puzzleInfo.puzzle_solution,
       puzzleSuccessMessage: puzzleInfo.puzzle_success_message,
       puzzleFailureMessage: puzzleInfo.puzzle_failure_message,
@@ -1818,10 +1835,11 @@ async function getItemAcquisitionInfo(itemName) {
     if (npcOutputs && npcOutputs.length > 0) {
       for (const npc of npcOutputs) {
         // output_items is now JSONB, so it's already an object
-        const outputItems = typeof npc.output_items === 'string' 
-          ? JSON.parse(npc.output_items) 
-          : (npc.output_items || {});
-          
+        try {
+          const outputItems = typeof npc.output_items === 'string' 
+            ? JSON.parse(npc.output_items) 
+            : (npc.output_items || {});
+            
           if (outputItems && typeof outputItems === 'object') {
             for (const [outputItem, quantity] of Object.entries(outputItems)) {
               if (outputItem.toLowerCase().includes(itemName.toLowerCase())) {
@@ -2424,6 +2442,56 @@ async function executeAction(action, speakerName = null) {
       return { success: true, status };
     }
     
+    // Read canon document action
+    if (type === 'readCanonDocument' || type === 'readDocument') {
+      const docName = params.document || params.doc || params.name;
+      if (!docName) {
+        return { success: false, error: 'Document name is required' };
+      }
+      
+      // Only allow reading canonical documents (numbered docs in /docs root)
+      // Block 999-* reference documents in /docs/Chuck docs/
+      const isCanonical = /^(00|10|20|30|50)-\d+/.test(docName);
+      if (!isCanonical && !docName.endsWith('.md')) {
+        // Try to find the document with .md extension
+        const docPath = path.join(__dirname, '..', 'docs', `${docName}.md`);
+        if (fs.existsSync(docPath)) {
+          const content = fs.readFileSync(docPath, 'utf-8');
+          return { success: true, document: docName, content };
+        }
+      }
+      
+      // Construct path to canonical document
+      const docPath = path.join(__dirname, '..', 'docs', docName.endsWith('.md') ? docName : `${docName}.md`);
+      
+      // Security: Ensure the path is within the docs directory
+      const docsDir = path.join(__dirname, '..', 'docs');
+      const resolvedPath = path.resolve(docPath);
+      const resolvedDocsDir = path.resolve(docsDir);
+      
+      if (!resolvedPath.startsWith(resolvedDocsDir)) {
+        return { success: false, error: 'Invalid document path' };
+      }
+      
+      // Block reading 999-* reference documents
+      if (docName.includes('999-') || docName.includes('Chuck docs')) {
+        return { success: false, error: 'Cannot read reference documents (999-*). Only canonical documents are accessible.' };
+      }
+      
+      if (!fs.existsSync(docPath)) {
+        return { success: false, error: `Document not found: ${docName}` };
+      }
+      
+      try {
+        const content = fs.readFileSync(docPath, 'utf-8');
+        console.log(`[ZORK] Read canon document: ${docName} (${content.length} characters)`);
+        return { success: true, document: docName, content };
+      } catch (error) {
+        console.error(`[ZORK] Error reading document ${docName}:`, error.message);
+        return { success: false, error: `Failed to read document: ${error.message}` };
+      }
+    }
+    
     // Resolve player names to IDs for player-related commands
     const playerCommands = ['removePlayerInventoryItem', 'addPlayerInventoryItem', 'updatePlayer', 'getPlayerInventory'];
     let resolvedPlayerId = null;
@@ -2583,7 +2651,7 @@ async function executeAction(action, speakerName = null) {
     }
     
     // Handle connection management commands (return early, don't send via WebSocket)
-    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus') {
+    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus' || type === 'readCanonDocument' || type === 'readDocument') {
       // These actions are handled above and return early
       // They don't need WebSocket communication
       return;
@@ -3219,7 +3287,7 @@ async function executeAction(action, speakerName = null) {
     }
     
     // Handle connection management commands (return early, don't send via WebSocket)
-    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus') {
+    if (type === 'disconnectZork' || type === 'reconnectZork' || type === 'getZorkConnectionStatus' || type === 'readCanonDocument' || type === 'readDocument') {
       // These actions are handled above and return early
       // They don't need WebSocket communication
       return;
@@ -3329,23 +3397,25 @@ async function checkAndFollowFliz() {
       [CONFIG.FLIZ_NAME]
     );
     
-    if (!fliz || !fliz.current_room_id) return;
-    
-    if (fliz.current_room_id !== currentRoomId) {
-      console.log(`[ZORK] Following Fliz to room ${fliz.current_room_id}`);
-      
-      // Update database
-      await verifier.query(
-        'UPDATE players SET current_room_id = $1 WHERE name = $2',
-        [fliz.current_room_id, CONFIG.ZORK_NAME]
-      );
-      
-      currentRoomId = fliz.current_room_id;
-      
-      // Refresh room view
-      if (client?.connected) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        client.send({ type: 'look' });
+    // Always follow Fliz if he exists and has a room
+    // This ensures ZORK is always in the same room as Fliz when Fliz is present
+    if (fliz && fliz.current_room_id) {
+      if (fliz.current_room_id !== currentRoomId) {
+        console.log(`[ZORK] Following Fliz to room ${fliz.current_room_id} (ZORK was in room ${currentRoomId})`);
+        
+        // Update database first
+        await verifier.query(
+          'UPDATE players SET current_room_id = $1 WHERE name = $2',
+          [fliz.current_room_id, CONFIG.ZORK_NAME]
+        );
+        
+        currentRoomId = fliz.current_room_id;
+        
+        // Refresh room view to sync with server
+        if (client?.connected) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          client.send({ type: 'look' });
+        }
       }
     }
   } catch (error) {
