@@ -34,7 +34,11 @@ const HARVEST_SAFE_COMMANDS = [
   'saveterminalmessage', // client auto-sends this when displaying messages, should not interrupt harvest
   'getallplayerpaths', // client auto-sends this for UI updates, should not interrupt harvest
   'getplayerstats', // client auto-sends this for stats widget updates, should not interrupt harvest
-  'heartbeat' // client auto-sends this for connection keepalive, should not interrupt harvest
+  'heartbeat', // client auto-sends this for connection keepalive, should not interrupt harvest
+  'getwidgetconfig', // client auto-sends this for widget state, should not interrupt harvest
+  'updatewidgetconfig', // client sends this when toggling settings, should not interrupt harvest
+  'getpathdetails', // client auto-sends this for path preview, should not interrupt harvest
+  'getplayerwidgetconfig' // alternate name for widget config, should not interrupt harvest
 ];
 
 /**
@@ -52,6 +56,15 @@ async function sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, mess
     return false;
   }
   
+  // Pre-process markup on server side for proper rendering
+  const { formatMessageForTerminal } = require('../utils/markupService');
+  const html = formatMessageForTerminal(message, messageType, '#00ffff');
+  
+  // Debug: log markup processing
+  if (message.includes('..')) {
+    console.log(`[sendToHarvestingPlayer] Markup debug - raw: "${message.substring(0, 80)}..." html: "${html.substring(0, 100)}..."`);
+  }
+  
   // Try to find player by playerId - check both exact match and type-coerced match
   for (const [connId, playerData] of connectedPlayers.entries()) {
     // Use == for type coercion (in case one is string and other is number)
@@ -60,6 +73,7 @@ async function sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, mess
       playerData.ws.send(JSON.stringify({
         type: 'terminal:message',
         message: message,
+        html: html,
         messageType: messageType
       }));
       return true;
@@ -76,6 +90,7 @@ async function sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, mess
             playerData.ws.send(JSON.stringify({
               type: 'terminal:message',
               message: message,
+              html: html,
               messageType: messageType
             }));
             return true;
@@ -107,21 +122,36 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
   const npcDef = await db.getScriptableNPCById(roomNpc.npc_id);
   const baseCooldownTime = npcDef ? (npcDef.cooldown_time || 120000) : 120000;
   
+  // Handle JSONB state (already an object) or JSON string
   let state = {};
   try {
-    state = roomNpc.state ? JSON.parse(roomNpc.state) : {};
+    if (typeof roomNpc.state === 'string') {
+      state = JSON.parse(roomNpc.state);
+    } else if (roomNpc.state && typeof roomNpc.state === 'object') {
+      // JSONB column - already an object, make a copy
+      state = JSON.parse(JSON.stringify(roomNpc.state));
+    } else {
+      state = {};
+    }
   } catch (e) {
+    console.error(`[endHarvestSession] Error parsing state for room_npc ${roomNpcId}:`, e);
     state = {};
   }
   
   // Only end harvest if it's actually active (prevent accidental ending)
   if (!state.harvest_active) {
+    console.log(`[endHarvestSession] Harvest not active for room_npc ${roomNpcId}, skipping`);
     return state;
   }
   
+  // CRITICAL: For absolute failsafe, skip the grace period check
+  // This allows the failsafe to end harvests that have been stuck for a long time
+  const isAbsoluteFailsafe = reason === 'absolute_failsafe' || reason === 'absolute_max_duration';
+  
   // CRITICAL: Check if harvest just started (less than 2 seconds ago)
   // This prevents race conditions where endHarvestSession is called immediately after harvest starts
-  if (state.harvest_start_time && typeof state.harvest_start_time === 'number') {
+  // BUT skip this check for absolute failsafe calls
+  if (!isAbsoluteFailsafe && state.harvest_start_time && typeof state.harvest_start_time === 'number') {
     const harvestAge = Date.now() - state.harvest_start_time;
     if (harvestAge < 2000) { // 2 second grace period
       // Silently block - don't log to prevent spam
@@ -129,7 +159,7 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
     }
   }
   
-  console.log(`[endHarvestSession] Ending harvest for room_npc ${roomNpcId}, startCooldown=${startCooldown}`);
+  console.log(`[endHarvestSession] Ending harvest for room_npc ${roomNpcId}, reason=${reason}`);
   
   // Calculate effective cooldown time based on fortitude (if enabled)
   let effectiveCooldownTime = baseCooldownTime;
@@ -169,20 +199,27 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
  */
 async function findPlayerHarvestSession(db, playerId) {
   // Find any room_npc where this player has an active harvest
+  // Include both 'rhythm' and 'harvestable' NPC types
   const result = await db.query(`
     SELECT rn.*, sn.name as npc_name, sn.npc_type 
     FROM room_npcs rn 
     JOIN scriptable_npcs sn ON rn.npc_id = sn.id 
-    WHERE rn.active = TRUE AND sn.npc_type = 'rhythm'
+    WHERE rn.active = TRUE AND (sn.npc_type = 'rhythm' OR sn.npc_type = 'harvestable')
   `);
-  const rhythmNpcs = result.rows;
+  const harvestableNpcs = result.rows;
   
-  for (const npc of rhythmNpcs) {
+  for (const npc of harvestableNpcs) {
+    // Handle JSONB state (already an object) or JSON string
     let state = {};
-    try {
-      state = npc.state ? JSON.parse(npc.state) : {};
-    } catch (e) {
-      state = {};
+    if (typeof npc.state === 'string') {
+      try {
+        state = JSON.parse(npc.state);
+      } catch (e) {
+        state = {};
+      }
+    } else if (npc.state && typeof npc.state === 'object') {
+      // JSONB column - already an object, make a copy
+      state = JSON.parse(JSON.stringify(npc.state));
     }
     if (state.harvest_active && state.harvesting_player_id === playerId) {
       return { roomNpcId: npc.id, npcName: npc.npc_name, state };
@@ -438,6 +475,36 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
     return;
   }
   
+  // Periodic cleanup: End harvests for disconnected players (every 5 seconds)
+  // This prevents stuck harvests from continuing after player disconnect
+  setInterval(async () => {
+    try {
+      const allNPCs = await db.getAllActiveNPCs();
+      const currentConnectedPlayers = getConnectedPlayersReference();
+      if (!currentConnectedPlayers) return;
+      
+      for (const npc of allNPCs) {
+        if (npc.npcType === 'rhythm' && npc.state && npc.state.harvest_active && npc.state.harvesting_player_id) {
+          const playerId = npc.state.harvesting_player_id;
+          // Check if player is connected
+          let playerConnected = false;
+          for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+            if (playerData.playerId == playerId) {
+              playerConnected = true;
+              break;
+            }
+          }
+          
+          if (!playerConnected) {
+            console.log(`[NPC Cycle Cleanup] Ending stuck harvest for disconnected player ${playerId} on room_npc ${npc.id}`);
+            await endHarvestSession(db, npc.id, true, 'player_disconnected');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[NPC Cycle Cleanup] Error cleaning up stuck harvests:', err);
+    }
+  }, 5000); // Run every 5 seconds
   
   setInterval(async () => {
     try {
@@ -476,13 +543,14 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
         
         // IMPORTANT: For rhythm NPCs with active harvest, skip cycle processing
         // to avoid overwriting harvest state. Only check expiration, don't run cycles.
-        const hasActiveHarvest = roomNpc.npcType === 'rhythm' && 
+        // NOTE: Don't require harvestableTime > 0 here - we'll validate it in the expiration check
+        // This ensures we can still end stuck harvests even if harvestableTime is missing
+        // Check for active harvest on rhythm NPCs OR harvestable NPCs (which map to rhythm behavior)
+        const hasActiveHarvest = (roomNpc.npcType === 'rhythm' || roomNpc.npcType === 'harvestable') && 
                                  roomNpc.state && 
                                  roomNpc.state.harvest_active === true &&
                                  roomNpc.state.harvest_start_time &&
-                                 typeof roomNpc.state.harvest_start_time === 'number' &&
-                                 roomNpc.harvestableTime &&
-                                 roomNpc.harvestableTime > 0;
+                                 typeof roomNpc.state.harvest_start_time === 'number';
         
         // Debug: Log if harvestableTime is missing or invalid
         if (roomNpc.npcType === 'rhythm' && roomNpc.state && roomNpc.state.harvest_active === true && (!roomNpc.harvestableTime || roomNpc.harvestableTime <= 0)) {
@@ -536,12 +604,22 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               
               // CRITICAL: Check if the harvesting player is connected to THIS server process
               // In multi-process setups (like dev:both), only the process with the player should handle the harvest
+              // ALSO: If player is not connected, end the harvest session immediately
               let playerConnectedToThisProcess = false;
+              let playerConnectionId = null;
               for (const [connId, playerData] of currentConnectedPlayers.entries()) {
                 if (playerData.playerId == harvestingPlayerId) {
                   playerConnectedToThisProcess = true;
+                  playerConnectionId = connId;
                   break;
                 }
+              }
+              
+              // If player is not connected, end the harvest session immediately
+              if (!playerConnectedToThisProcess) {
+                console.log(`[NPC Cycle] WARNING: Harvest active for disconnected player ${harvestingPlayerId} on room_npc ${roomNpc.id}, ending harvest session`);
+                await endHarvestSession(db, roomNpc.id, true, 'player_disconnected');
+                continue;
               }
               
               if (!playerConnectedToThisProcess) {
@@ -615,10 +693,23 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               } else {
                 // Hit - produce items
                 // During active harvest, produce items without modifying harvest state
+                // NOTE: After migration 080, outputItems uses item IDs as keys, so we need to convert them to names
                 const producedItems = [];
                 if (roomNpc.outputItems && typeof roomNpc.outputItems === 'object') {
-                  for (const [itemName, qty] of Object.entries(roomNpc.outputItems)) {
+                  for (const [itemKey, qty] of Object.entries(roomNpc.outputItems)) {
                     if (qty > 0) {
+                      // Convert item ID to item name if needed (outputItems now uses IDs as keys)
+                      let itemName = itemKey;
+                      // Check if itemKey is a numeric string (item ID)
+                      if (!isNaN(parseInt(itemKey)) && isFinite(itemKey)) {
+                        const itemDef = await db.getItemById(parseInt(itemKey));
+                        if (itemDef) {
+                          itemName = itemDef.name;
+                        } else {
+                          console.warn(`[Harvest] Item ID ${itemKey} not found, using as-is`);
+                          itemName = itemKey;
+                        }
+                      }
                       producedItems.push({ itemName, quantity: qty });
                     }
                   }
@@ -686,6 +777,29 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                           const itemSent2 = await sendToHarvestingPlayer(currentConnectedPlayers, harvestingPlayerId, itemMessage, 'info', db);
                           if (!itemSent2) {
                             console.log(`[NPC Cycle] WARNING: Failed to send harvest_item_produced (player) message to player ${harvestingPlayerId}`);
+                          }
+                          
+                          // Check for auto-store trigger
+                          try {
+                            // Find the player's connection
+                            for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                              if (playerData.playerId === harvestingPlayerId) {
+                                const { checkAndExecuteAutoStore } = require('../handlers/game');
+                                const autoStoreCtx = {
+                                  db: db,
+                                  connectedPlayers: currentConnectedPlayers,
+                                  factoryWidgetState: new Map(),
+                                  warehouseWidgetState: new Map()
+                                };
+                                const autoStoreTriggered = await checkAndExecuteAutoStore(autoStoreCtx, connId, harvestingPlayerId, item.itemName);
+                                if (autoStoreTriggered) {
+                                  console.log(`[NPC Cycle] Auto-store triggered for ${item.itemName}`);
+                                }
+                                break;
+                              }
+                            }
+                          } catch (autoStoreErr) {
+                            console.error(`[NPC Cycle] Error checking auto-store:`, autoStoreErr);
                           }
                         } else {
                           // Player is too encumbered, drop to ground instead
@@ -847,32 +961,79 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
           }
         }
         
-        // Check if harvest session has expired (for rhythm NPCs)
+        // 🚨 CRITICAL SAFETY: Check for ANY active harvest that's been running too long, regardless of NPC type
+        // This is a failsafe to catch stuck harvests even if hasActiveHarvest check fails
+        if (roomNpc.state && roomNpc.state.harvest_active === true && roomNpc.state.harvest_start_time && typeof roomNpc.state.harvest_start_time === 'number') {
+          const harvestElapsed = now - roomNpc.state.harvest_start_time;
+          // If harvest has been running for more than 30 seconds, force end it (absolute safety net)
+          if (harvestElapsed > 30 * 1000) {
+            console.error(`[NPC Cycle] CRITICAL: Found stuck harvest on room_npc ${roomNpc.id} running for ${Math.round(harvestElapsed/1000)}s. Force ending immediately.`);
+            try {
+              await endHarvestSession(db, roomNpc.id, true, 'absolute_failsafe');
+              
+              // CRITICAL: Reload NPC state from database to ensure it's actually ended
+              const freshNPCs = await db.getAllActiveNPCs();
+              const freshNPC = freshNPCs.find(n => n.id === roomNpc.id);
+              if (freshNPC) {
+                Object.assign(roomNpc, freshNPC);
+              }
+            } catch (endErr) {
+              console.error(`[NPC Cycle] ERROR in endHarvestSession for room_npc ${roomNpc.id}:`, endErr);
+            }
+            continue;
+          }
+        }
+        
+        // Check if harvest session has expired (for rhythm NPCs OR harvestable NPCs)
         // IMPORTANT: Only check expiration if harvest is actually active
         // and harvest_start_time is valid (not null/undefined)
         // This check happens AFTER item production so items can be produced even when harvest just started
+        // CRITICAL: This check MUST run every cycle to prevent stuck harvests
         if (hasActiveHarvest) {
-          const harvestElapsed = now - roomNpc.state.harvest_start_time;
-          
-          // Use effective harvestable time if available (fortitude bonus), otherwise base
-          const effectiveHarvestableTime = roomNpc.state.effective_harvestable_time || roomNpc.harvestableTime;
-          
-          // CRITICAL: Add minimum harvest duration check to prevent immediate expiration
-          // If harvest just started (less than 1 second ago), don't check expiration yet
-          // This prevents race conditions where the cycle engine runs immediately after harvest starts
-          const MIN_HARVEST_DURATION = 1000; // 1 second minimum
-          if (harvestElapsed < MIN_HARVEST_DURATION) {
-            // Harvest just started, don't check expiration yet
-            return; // Skip expiration check for now
-          }
-          
-          if (harvestElapsed >= effectiveHarvestableTime) {
+          try {
+            const harvestElapsed = now - roomNpc.state.harvest_start_time;
             
-            // Only end harvest if the full effective harvestableTime has elapsed
-            // Use strict >= check (no buffer) to ensure full duration
+            // Use effective harvestable time if available (fortitude bonus), otherwise base
+            const effectiveHarvestableTime = roomNpc.state.effective_harvestable_time || roomNpc.harvestableTime;
+            
+            // CRITICAL: Add minimum harvest duration check to prevent immediate expiration
+            // If harvest just started (less than 1 second ago), don't check expiration yet
+            // This prevents race conditions where the cycle engine runs immediately after harvest starts
+            const MIN_HARVEST_DURATION = 1000; // 1 second minimum
+            if (harvestElapsed < MIN_HARVEST_DURATION) {
+              // Harvest just started, don't check expiration yet - continue to next NPC
+              continue; // Skip expiration check for this NPC, process next NPC
+            }
+            
+            // 🚨 ABSOLUTE SAFETY NET: If harvest has been running for more than 30 seconds, force end it
+            // This doesn't depend on effectiveHarvestableTime at all - catches ALL stuck harvests
+            const ABSOLUTE_MAX_HARVEST_DURATION = 30 * 1000; // 30 seconds - no harvest should ever take this long
+            if (harvestElapsed > ABSOLUTE_MAX_HARVEST_DURATION) {
+              console.error(`[NPC Cycle] CRITICAL: Harvest exceeded maximum duration on room_npc ${roomNpc.id}. Force ending.`);
+              await endHarvestSession(db, roomNpc.id, true, 'absolute_max_duration');
+              continue;
+            }
+            
+            // CRITICAL: Validate harvestableTime is set and valid
+            if (!effectiveHarvestableTime || effectiveHarvestableTime <= 0 || !isFinite(effectiveHarvestableTime)) {
+              console.error(`[NPC Cycle] ERROR: Invalid harvestableTime for room_npc ${roomNpc.id}: ${effectiveHarvestableTime}. Ending harvest immediately.`);
+              await endHarvestSession(db, roomNpc.id, true, 'invalid_harvestable_time');
+              continue; // Skip to next NPC
+            }
+            
+            // CRITICAL SAFETY: If harvest has been running longer than expected time + 10 seconds, force end it
+            // This catches cases where the expiration check isn't working for some reason
+            // Check this BEFORE the normal expiration check to catch stuck harvests immediately
+            if (harvestElapsed > effectiveHarvestableTime + 10000) {
+              console.error(`[NPC Cycle] CRITICAL: Harvest exceeded expected duration on room_npc ${roomNpc.id}. Force ending.`);
+              await endHarvestSession(db, roomNpc.id, true, 'duration_exceeded');
+              continue;
+            }
+            
+            // Check if harvest has expired (normal expiration check)
             if (harvestElapsed >= effectiveHarvestableTime) {
               // Harvest time expired - end the session
-              console.log(`[NPC Cycle] Harvest expired for room_npc ${roomNpc.id}: elapsed=${harvestElapsed}ms, harvestableTime=${effectiveHarvestableTime}ms`);
+              console.log(`[NPC Cycle] Harvest expired for room_npc ${roomNpc.id}`);
               
               // IMPORTANT: Get all info BEFORE ending harvest session
               // (endHarvestSession clears these values and does async DB operations)
@@ -891,15 +1052,35 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
               try {
                 await endHarvestSession(db, roomNpc.id, true, 'time_expired');
               } catch (endErr) {
-                console.error(`[NPC Cycle] Error ending harvest session:`, endErr);
+                console.error(`[NPC Cycle] ERROR ending harvest session for room_npc ${roomNpc.id}:`, endErr);
                 // Message was already sent, so continue
               }
               
-              // Reload NPC state after ending session
-              const updatedNPCs = await db.getAllActiveNPCs();
-              const updatedNPC = updatedNPCs.find(n => n.id === roomNpc.id);
-              if (updatedNPC) {
-                Object.assign(roomNpc, updatedNPC);
+              // Send room update to harvesting player so NPC widget transitions to cooldown state
+              for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+                if (playerData.playerId === harvestingPlayerId && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                  try {
+                    const room = await db.getRoomById(roomId);
+                    if (room) {
+                      await sendRoomUpdate(connId, room);
+                    }
+                  } catch (updateErr) {
+                    console.error(`[NPC Cycle] Error sending room update after harvest end:`, updateErr);
+                  }
+                  break;
+                }
+              }
+              
+              // Reload NPC state after ending session to verify it was ended
+              let updatedNPC = null;
+              try {
+                const updatedNPCs = await db.getAllActiveNPCs();
+                updatedNPC = updatedNPCs.find(n => n.id === roomNpc.id);
+                if (updatedNPC) {
+                  Object.assign(roomNpc, updatedNPC);
+                }
+              } catch (reloadErr) {
+                console.error(`[NPC Cycle] Error reloading NPC state after ending harvest:`, reloadErr);
               }
               
               // Trigger loop resume for auto-harvest (if applicable)
@@ -908,6 +1089,17 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                 // Find player's connection
                 for (const [connId, playerData] of currentConnectedPlayers.entries()) {
                   if (playerData.playerId === harvestingPlayerId) {
+                    // Debug logging for path execution state
+                    console.log(`[NPC Cycle] Harvest ended for player ${harvestingPlayerId}, checking path execution state:`, {
+                      hasPathExecution: !!playerData.pathExecution,
+                      isActive: playerData.pathExecution?.isActive,
+                      autoHarvestEnabled: playerData.pathExecution?.autoHarvestEnabled,
+                      hasAutoHarvestState: !!playerData.pathExecution?.autoHarvestState,
+                      isHarvesting: playerData.pathExecution?.autoHarvestState?.isHarvesting,
+                      currentNpcId: playerData.pathExecution?.autoHarvestState?.currentNpcId,
+                      expectedNpcId: roomNpc.id
+                    });
+                    
                     // Check if player has active loop with auto-harvest
                     if (playerData.pathExecution && 
                         playerData.pathExecution.isActive &&
@@ -941,7 +1133,6 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                             connectedPlayers: currentConnectedPlayers,
                             factoryWidgetState: new Map(), // Will be updated when move is called
                             warehouseWidgetState: new Map(), // Will be updated when move is called
-                            sessionId: playerData.sessionId || null
                           };
                           await resumeLoopAfterHarvest(resumeCtx, connId, roomNpc.id);
                         } catch (resumeErr) {
@@ -949,8 +1140,71 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
                         }
                       }
                     }
+                    // Also handle standalone auto-harvest (not in path execution)
+                    else if (playerData.standaloneHarvestState && 
+                             playerData.standaloneHarvestState.isHarvesting &&
+                             playerData.standaloneHarvestState.currentNpcId === roomNpc.id) {
+                      // Standalone auto-harvest completed - clear state and check for more NPCs
+                      playerData.standaloneHarvestState.isHarvesting = false;
+                      playerData.standaloneHarvestState.currentNpcId = null;
+                      
+                      // Check for more harvestable NPCs in the room
+                      try {
+                        const { checkAndAutoHarvest } = require('../handlers/game');
+                        const resumeCtx = {
+                          db: db,
+                          connectedPlayers: currentConnectedPlayers,
+                          factoryWidgetState: new Map(),
+                          warehouseWidgetState: new Map()
+                        };
+                        // Small delay to ensure harvest state is cleared
+                        setTimeout(async () => {
+                          await checkAndAutoHarvest(resumeCtx, connId, roomId, harvestingPlayerId);
+                        }, 200);
+                      } catch (checkErr) {
+                        console.error(`[NPC Cycle] Error checking for more auto-harvest NPCs:`, checkErr);
+                      }
+                    }
                     break;
                   }
+                }
+              }
+              
+            }
+          } catch (expirationErr) {
+            console.error(`[NPC Cycle] ERROR in expiration check for room_npc ${roomNpc.id}:`, expirationErr);
+            // Try to end harvest on error to prevent infinite loops
+            try {
+              await endHarvestSession(db, roomNpc.id, true, 'expiration_check_error');
+            } catch (endErr) {
+              console.error(`[NPC Cycle] Failed to end harvest after expiration check error:`, endErr);
+            }
+          }
+        }
+        
+        // Check for cooldown expiration - send room update when cooldown ends
+        // This ensures the NPC widget hides immediately when cooldown finishes
+        if (!hasActiveHarvest && roomNpc.state && roomNpc.state.cooldown_until) {
+          const cooldownUntil = roomNpc.state.cooldown_until;
+          const now = Date.now();
+          
+          // Cooldown just expired (within the last cycle interval)
+          // We check if cooldown ended within the last 2 seconds to catch the transition
+          if (now >= cooldownUntil && now - cooldownUntil < 2000) {
+            // Clear cooldown_until from state
+            roomNpc.state.cooldown_until = null;
+            await db.updateNPCState(roomNpc.id, roomNpc.state, roomNpc.lastCycleRun);
+            
+            // Send room update to all players in this room so their NPC widgets update
+            for (const [connId, playerData] of currentConnectedPlayers.entries()) {
+              if (playerData.roomId === roomNpc.roomId && playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
+                try {
+                  const room = await db.getRoomById(roomNpc.roomId);
+                  if (room) {
+                    await sendRoomUpdate(connId, room);
+                  }
+                } catch (updateErr) {
+                  console.error(`[NPC Cycle] Error sending room update on cooldown end:`, updateErr);
                 }
               }
             }
@@ -964,8 +1218,16 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
             // This ensures we have the latest harvest state
             const freshRoomNpcResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpc.id]);
             if (freshRoomNpcResult.rows[0]) {
+              // Handle JSONB state (already an object) or JSON string
+              const freshStateRow = freshRoomNpcResult.rows[0];
+              let freshState = {};
               try {
-                const freshState = freshRoomNpcResult.rows[0].state ? JSON.parse(freshRoomNpcResult.rows[0].state) : {};
+                if (typeof freshStateRow.state === 'string') {
+                  freshState = JSON.parse(freshStateRow.state);
+                } else if (freshStateRow.state && typeof freshStateRow.state === 'object') {
+                  // JSONB column - already an object, make a copy
+                  freshState = JSON.parse(JSON.stringify(freshStateRow.state));
+                }
                 // Update roomNpc.state with fresh state to ensure we're working with latest data
                 roomNpc.state = freshState;
               } catch (e) {
@@ -1008,9 +1270,21 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
             }
             
             // If NPC produced items, add them to the room
+            // NOTE: After migration 080, outputItems uses item IDs as keys, so we need to convert them to names
             if (result.producedItems && result.producedItems.length > 0) {
               for (const item of result.producedItems) {
-                await db.addRoomItem(roomNpc.roomId, item.itemName, item.quantity);
+                // Convert item ID to item name if needed (outputItems now uses IDs as keys)
+                let itemName = item.itemName;
+                // Check if itemName is a numeric string (item ID)
+                if (!isNaN(parseInt(itemName)) && isFinite(itemName)) {
+                  const itemDef = await db.getItemById(parseInt(itemName));
+                  if (itemDef) {
+                    itemName = itemDef.name;
+                  } else {
+                    console.warn(`[NPC Cycle] Item ID ${itemName} not found, using as-is`);
+                  }
+                }
+                await db.addRoomItem(roomNpc.roomId, itemName, item.quantity);
               }
               
               // Send room update to all players in the room so they see the new items

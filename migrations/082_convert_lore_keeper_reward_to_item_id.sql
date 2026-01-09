@@ -42,3 +42,6 @@ COMMENT ON COLUMN lore_keepers.puzzle_reward_item_id IS
 
 
 
+
+
+

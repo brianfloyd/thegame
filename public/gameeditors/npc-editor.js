@@ -831,54 +831,94 @@ window.npcEditor = function() {
         // ============================================
         
         handleJsonInput(fieldName, value) {
-            try {
-                const parsed = JSON.parse(value);
-                this.formData[fieldName] = parsed;
-            } catch (e) {
-                // Invalid JSON, keep current value
+            // If value is already an object (JSONB), use it directly
+            if (typeof value === 'object' && value !== null) {
+                this.formData[fieldName] = value;
+                return;
+            }
+            // If it's a string, try to parse it
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    this.formData[fieldName] = parsed;
+                } catch (e) {
+                    // Invalid JSON, keep current value
+                }
             }
         },
         
         handleLorekeeperJsonInput(fieldName, value) {
-            try {
-                const parsed = JSON.parse(value);
-                // For puzzle_clues, convert from array format to object format for display
+            // If value is already an object (JSONB), use it directly
+            if (typeof value === 'object' && value !== null) {
+                // For puzzle_clues, ensure it's in object format for display
                 if (fieldName === 'puzzle_clues') {
-                    if (Array.isArray(parsed)) {
+                    if (Array.isArray(value)) {
                         // Convert array format to object format for display
                         const obj = {};
-                        parsed.forEach(item => {
+                        value.forEach(item => {
                             if (item && typeof item === 'object' && item.keyword && item.answer) {
                                 obj[item.keyword] = item.answer;
                             }
                         });
                         this.lorekeeperData[fieldName] = obj;
-                    } else if (typeof parsed === 'object' && parsed !== null) {
-                        // Already in object format (display format)
-                        this.lorekeeperData[fieldName] = parsed;
                     } else {
-                        this.lorekeeperData[fieldName] = {};
+                        this.lorekeeperData[fieldName] = value;
                     }
                 } else {
-                    this.lorekeeperData[fieldName] = parsed;
+                    this.lorekeeperData[fieldName] = value;
                 }
-            } catch (e) {
-                // Invalid JSON, keep current value but show warning
-                console.warn(`[NPCEditor] Invalid JSON for ${fieldName}:`, e);
+                return;
+            }
+            // If it's a string, try to parse it
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    // For puzzle_clues, convert from array format to object format for display
+                    if (fieldName === 'puzzle_clues') {
+                        if (Array.isArray(parsed)) {
+                            // Convert array format to object format for display
+                            const obj = {};
+                            parsed.forEach(item => {
+                                if (item && typeof item === 'object' && item.keyword && item.answer) {
+                                    obj[item.keyword] = item.answer;
+                                }
+                            });
+                            this.lorekeeperData[fieldName] = obj;
+                        } else if (typeof parsed === 'object' && parsed !== null) {
+                            // Already in object format (display format)
+                            this.lorekeeperData[fieldName] = parsed;
+                        } else {
+                            this.lorekeeperData[fieldName] = {};
+                        }
+                    } else {
+                        this.lorekeeperData[fieldName] = parsed;
+                    }
+                } catch (e) {
+                    // Invalid JSON, keep current value but show warning
+                    console.warn(`[NPCEditor] Invalid JSON for ${fieldName}:`, e);
+                }
             }
         },
         
         handleMerchantJsonInput(fieldName, value) {
-            try {
-                const parsed = JSON.parse(value);
-                if (typeof parsed === 'object' && parsed !== null) {
-                    this.merchantData[fieldName] = parsed;
-                } else {
-                    this.merchantData[fieldName] = {};
+            // If value is already an object (JSONB), use it directly
+            if (typeof value === 'object' && value !== null) {
+                this.merchantData[fieldName] = value;
+                return;
+            }
+            // If it's a string, try to parse it
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    if (typeof parsed === 'object' && parsed !== null) {
+                        this.merchantData[fieldName] = parsed;
+                    } else {
+                        this.merchantData[fieldName] = {};
+                    }
+                } catch (e) {
+                    // Invalid JSON, keep current value but show warning
+                    console.warn(`[NPCEditor] Invalid JSON for merchant ${fieldName}:`, e);
                 }
-            } catch (e) {
-                // Invalid JSON, keep current value but show warning
-                console.warn(`[NPCEditor] Invalid JSON for merchant ${fieldName}:`, e);
             }
         },
         

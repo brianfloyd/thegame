@@ -845,7 +845,7 @@ async function processAutomationProgram(program, db, connectedPlayers) {
       return;
     }
     
-    // Get execution state
+    // Get execution state - handle JSONB (already an object) or JSON string
     let executionState = program.execution_state || {};
     if (typeof executionState === 'string') {
       try {
@@ -853,6 +853,9 @@ async function processAutomationProgram(program, db, connectedPlayers) {
       } catch (e) {
         executionState = {};
       }
+    } else if (executionState && typeof executionState === 'object') {
+      // JSONB column - already an object, make a copy
+      executionState = JSON.parse(JSON.stringify(executionState));
     }
     
     // Check if program is paused or stopped
@@ -926,12 +929,16 @@ async function processAutomationProgram(program, db, connectedPlayers) {
     // Stop program on error
     try {
       let executionState = program.execution_state || {};
+      // Handle JSONB (already an object) or JSON string
       if (typeof executionState === 'string') {
         try {
           executionState = JSON.parse(executionState);
         } catch (e) {
           executionState = {};
         }
+      } else if (executionState && typeof executionState === 'object') {
+        // JSONB column - already an object, make a copy
+        executionState = JSON.parse(JSON.stringify(executionState));
       }
       executionState.executionState = 'stopped';
       executionState.pauseReason = 'error';

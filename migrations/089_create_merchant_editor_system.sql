@@ -56,3 +56,6 @@ ALTER TABLE merchant_items ADD COLUMN IF NOT EXISTS min_qty INTEGER;
 
 
 
+
+
+

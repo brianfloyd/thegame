@@ -1095,11 +1095,19 @@ async function updateMerchantItemConfig(ctx, data) {
 
   try {
     // Validate config is valid JSON
+    // Handle JSONB (already an object) or JSON string
     let parsedConfig;
     if (typeof config === 'string') {
-      parsedConfig = JSON.parse(config);
+      try {
+        parsedConfig = JSON.parse(config);
+      } catch (e) {
+        parsedConfig = {};
+      }
+    } else if (config && typeof config === 'object') {
+      // JSONB column - already an object, make a copy
+      parsedConfig = JSON.parse(JSON.stringify(config));
     } else {
-      parsedConfig = config;
+      parsedConfig = config || {};
     }
     
     // Update the merchant item with the new config

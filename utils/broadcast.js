@@ -459,8 +459,16 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
   const exitsString = exits.length > 0 ? exits.join(', ') : '';
   
   // Format room items
+  // getRoomItems returns objects with item_name property (not name)
   const itemsString = roomItems.length > 0 
-    ? roomItems.map(item => (item.name || item.item_name) + (item.quantity > 1 ? ` (${item.quantity})` : '')).join(', ')
+    ? roomItems.map(item => {
+        const itemName = item.item_name || item.name;
+        if (!itemName) {
+          console.warn('[sendRoomUpdate] Room item missing name:', item);
+          return 'Unknown Item';
+        }
+        return itemName + (item.quantity > 1 ? ` (${item.quantity})` : '');
+      }).join(', ')
     : 'Nothing';
   
   // Get formatted messages from cache (raw text with markup)
@@ -483,8 +491,11 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     '[items array]': itemsString
   });
   
-  // Process markup for room description (server-side)
+  // Process markup for room description and messages (server-side)
   const processedDescription = room.description ? parseMarkupServer(room.description, '#00ffff') : '';
+  const processedAlsoHere = alsoHereMessage ? parseMarkupServer(alsoHereMessage, '#00ffff') : '';
+  const processedObviousExits = obviousExitsMessage ? parseMarkupServer(obviousExitsMessage, '#00ffff') : '';
+  const processedOnGround = onGroundMessage ? parseMarkupServer(onGroundMessage, '#00ffff') : '';
 
   playerData.ws.send(JSON.stringify({
     type: 'roomUpdate',
@@ -506,11 +517,14 @@ async function sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWid
     factoryWidgetState: factoryState,
     warehouseWidgetState: warehouseState,
     hasWarehouseDeed: hasWarehouseDeed,
-    // Send formatted messages (raw text with markup - client will process)
+    // Send formatted messages (pre-processed HTML with markup applied server-side)
     messages: {
-      alsoHere: alsoHereMessage,
-      obviousExits: obviousExitsMessage,
-      onGround: onGroundMessage
+      alsoHere: alsoHereMessage, // Raw text (for backward compatibility)
+      alsoHereHtml: processedAlsoHere, // Pre-processed HTML with markup
+      obviousExits: obviousExitsMessage, // Raw text (for backward compatibility)
+      obviousExitsHtml: processedObviousExits, // Pre-processed HTML with markup
+      onGround: onGroundMessage, // Raw text (for backward compatibility)
+      onGroundHtml: processedOnGround // Pre-processed HTML with markup
     }
   }));
   

@@ -43,6 +43,8 @@ if (commandInput) {
         if (e.key === 'Enter') {
             const command = commandInput.value.trim();
             if (command) {
+                // Echo command to terminal with `` markup (purple/bold styling)
+                terminal.addMessage(`> \`\`${command}\`\``, 'info');
                 executeCommand(command);
                 commandInput.value = '';
             } else {
@@ -1711,7 +1713,8 @@ game.messageBus.on('player:authenticated', () => {
 // Handle all player paths from server
 game.messageBus.on('paths:all', (data) => {
     allPlayerPaths = data.paths || [];
-    populatePathDropdown();
+    // Dropdown is now handled by AutomationWidget, don't populate here
+    // populatePathDropdown();
 });
 
 // Handle path saved event - paths are already refreshed via allPlayerPaths
@@ -2311,11 +2314,11 @@ function initAutomationWidget() {
         });
     }
     
-    // Path/Loop execution controls
-    const pathLoopSelect = document.getElementById('pathLoopSelect');
-    if (pathLoopSelect) {
-        pathLoopSelect.addEventListener('change', onPathSelectChange);
-    }
+    // Path/Loop execution controls - now handled by AutomationWidget
+    // const pathLoopSelect = document.getElementById('pathLoopSelect');
+    // if (pathLoopSelect) {
+    //     pathLoopSelect.addEventListener('change', onPathSelectChange);
+    // }
     
     // Setup delete path button
     const deletePathBtn = document.getElementById('deletePathBtn');

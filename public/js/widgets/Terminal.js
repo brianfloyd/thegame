@@ -411,7 +411,8 @@ export default class Terminal extends Component {
                     
                     const npcName = document.createElement('span');
                     npcName.className = 'npc-name';
-                    npcName.textContent = npc.name;
+                    // CRITICAL: Use parseMarkup to support markup conventions like .. for pulsing
+                    npcName.innerHTML = parseMarkup(npc.name, npc.color || npc.display_color || '#00ffff');
                     npcItem.appendChild(npcName);
                     
                     const statusMessage = this.getNPCStatusMessage(npc);
@@ -449,31 +450,34 @@ export default class Terminal extends Component {
             playersDiv.appendChild(playersLine);
             this.terminalContent.appendChild(playersDiv);
             
-            // Save to history - use messages.alsoHere if available, otherwise build it
-            if (messages && messages.alsoHere) {
-                this.saveTerminalMessage(messages.alsoHere, 'info');
-            } else {
-                const combinedEntities = [...otherPlayers];
-                if (npcs && npcs.length > 0) {
-                    npcs.forEach(npc => {
-                        const statusMessage = this.getNPCStatusMessage(npc);
-                        combinedEntities.push(npc.name + (statusMessage ? ' ' + statusMessage : ''));
-                    });
-                }
-                const historyText = combinedEntities.length > 0 
-                    ? 'Also here: ' + combinedEntities.join(', ')
-                    : 'Also here: No one else is here.';
-                this.saveTerminalMessage(historyText, 'info');
+            // Build history text from the entities we just displayed inline
+            // This is only for saving to history, not for display (we already displayed it inline above)
+            const combinedEntities = [...otherPlayers];
+            if (npcs && npcs.length > 0) {
+                npcs.forEach(npc => {
+                    const statusMessage = this.getNPCStatusMessage(npc);
+                    // Use raw NPC name for history (markup will be processed when history is displayed)
+                    combinedEntities.push(npc.name + (statusMessage ? ' ' + statusMessage : ''));
+                });
             }
+            const historyText = combinedEntities.length > 0 
+                ? 'Also here: ' + combinedEntities.join(', ')
+                : 'Also here: No one else is here.';
+            // Save to history only - saveTerminalMessage doesn't display, it only saves to server
+            this.saveTerminalMessage(historyText, 'info');
         }
         
-        // Display exits (CRITICAL: uses parseMarkup)
-        if (messages && messages.obviousExits && messages.obviousExits.trim() !== '') {
+        // Display exits (CRITICAL: uses parseMarkup or pre-processed HTML)
+        if (messages && (messages.obviousExitsHtml || messages.obviousExits) && (messages.obviousExits || '').trim() !== '') {
             const exitsDiv = document.createElement('div');
             exitsDiv.className = 'exits-section';
-            exitsDiv.innerHTML = parseMarkup(messages.obviousExits, '#00ffff');
+            // Use pre-processed HTML if available (server-side markup processing), otherwise process on client
+            exitsDiv.innerHTML = messages.obviousExitsHtml || parseMarkup(messages.obviousExits, '#00ffff');
             this.terminalContent.appendChild(exitsDiv);
-            this.saveTerminalMessage(messages.obviousExits, 'info');
+            // Save raw message to history (for backward compatibility)
+            if (messages.obviousExits) {
+                this.saveTerminalMessage(messages.obviousExits, 'info');
+            }
         } else if (exits && exits.length > 0) {
             const exitsDiv = document.createElement('div');
             exitsDiv.className = 'exits-section';

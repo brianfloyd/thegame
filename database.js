@@ -960,6 +960,7 @@ async function getAllActiveNPCs() {
         outputDistribution: row.output_distribution || 'ground',
         failureStates: safeJsonParse(row.failure_states, [], `failure_states (NPC ${row.npc_id})`),
         color: row.display_color || '#00ffff',
+        harvestableTime: row.harvestable_time || 60000, // Default 60 seconds if not set
         harvestableTime: row.harvestable_time || 60000,
         cooldownTime: row.cooldown_time || 120000,
         enableResonanceBonuses: row.enable_resonance_bonuses !== false, // Default to true
@@ -1110,6 +1111,13 @@ async function getLoreKeepersInRoom(roomId) {
     puzzleAwardDelaySeconds: row.puzzle_award_delay_seconds,
     puzzleAwardDelayResponse: row.puzzle_award_delay_response
   }));
+}
+
+/**
+ * Get Merchant config by NPC ID
+ */
+async function getMerchantByNpcId(npcId) {
+  return getOne('SELECT * FROM merchants WHERE npc_id = $1', [npcId]);
 }
 
 /**
@@ -1859,10 +1867,28 @@ async function getRoomItems(roomId) {
   );
   
   // Normalize item names to canonical names
+  // NOTE: After migration 080, some items may have been stored with item IDs as names (e.g., "1" instead of "Pulse Resin")
   const normalized = [];
   for (const item of items) {
-    const itemDef = await getItemByName(item.item_name);
-    const canonicalName = itemDef ? itemDef.name : item.item_name;
+    let canonicalName = item.item_name;
+    
+    // Check if item_name is a numeric string (item ID) - this happens when items were stored with IDs before conversion
+    if (!isNaN(parseInt(item.item_name)) && isFinite(item.item_name) && item.item_name.trim() !== '') {
+      // Try to look up by ID first
+      const itemDefById = await getItemById(parseInt(item.item_name));
+      if (itemDefById) {
+        canonicalName = itemDefById.name;
+      } else {
+        // If ID lookup fails, try by name as fallback
+        const itemDefByName = await getItemByName(item.item_name);
+        canonicalName = itemDefByName ? itemDefByName.name : item.item_name;
+      }
+    } else {
+      // Normal name lookup
+      const itemDef = await getItemByName(item.item_name);
+      canonicalName = itemDef ? itemDef.name : item.item_name;
+    }
+    
     normalized.push({
       item_name: canonicalName,
       quantity: parseInt(item.quantity)
@@ -1888,10 +1914,24 @@ async function addRoomItem(roomId, itemName, quantity = 1) {
 }
 
 async function removeRoomItem(roomId, itemName, quantity = 1) {
-  const existing = await getOne(
-    `SELECT id, quantity FROM room_items WHERE room_id = $1 AND LOWER(REPLACE(item_name, '_', ' ')) = LOWER(REPLACE($2, '_', ' ')) LIMIT 1`,
+  // First, try to find the item by name (normal case)
+  let existing = await getOne(
+    `SELECT id, quantity, item_name FROM room_items WHERE room_id = $1 AND LOWER(REPLACE(item_name, '_', ' ')) = LOWER(REPLACE($2, '_', ' ')) LIMIT 1`,
     [roomId, itemName]
   );
+  
+  // If not found by name, the item might be stored with an item ID as the name (legacy data from migration 080)
+  // Try to find it by looking up the item ID and matching against stored IDs
+  if (!existing) {
+    const itemDef = await getItemByName(itemName);
+    if (itemDef) {
+      // Try to find room items with this item's ID stored as the name
+      existing = await getOne(
+        `SELECT id, quantity, item_name FROM room_items WHERE room_id = $1 AND item_name = $2 LIMIT 1`,
+        [roomId, itemDef.id.toString()]
+      );
+    }
+  }
   
   if (!existing) return false;
   
@@ -2404,6 +2444,35 @@ async function getPlayerWarehouseDeeds(playerId, warehouseLocationKey) {
       deeds.push({
         item_name: itemDef.name,
         item_id: itemDef.id,
+        max_item_types: itemDef.deed_base_max_item_types || 1,
+        max_quantity_per_type: itemDef.deed_base_max_quantity_per_type || 100,
+        upgrade_tier: itemDef.deed_upgrade_tier || 1
+      });
+    }
+  }
+  
+  return deeds;
+}
+
+async function getAllPlayerWarehouseDeeds(playerId) {
+  // Get ALL deed items player owns (for auto-store warehouse selection)
+  const playerItems = await getPlayerItems(playerId);
+  const deeds = [];
+  
+  for (const item of playerItems) {
+    const itemDef = await getItemByName(item.item_name);
+    if (itemDef && itemDef.item_type === 'deed' && itemDef.deed_warehouse_location_key) {
+      // Get warehouse room name for display
+      const warehouseRoom = await getOne(
+        'SELECT id, name FROM rooms WHERE id = $1',
+        [parseInt(itemDef.deed_warehouse_location_key)]
+      );
+      
+      deeds.push({
+        item_name: itemDef.name,
+        item_id: itemDef.id,
+        warehouse_location_key: itemDef.deed_warehouse_location_key,
+        warehouse_name: warehouseRoom ? warehouseRoom.name : `Warehouse ${itemDef.deed_warehouse_location_key}`,
         max_item_types: itemDef.deed_base_max_item_types || 1,
         max_quantity_per_type: itemDef.deed_base_max_quantity_per_type || 100,
         upgrade_tier: itemDef.deed_upgrade_tier || 1
@@ -3427,11 +3496,17 @@ async function addTicketTag(id, tag) {
     throw new Error('Ticket not found');
   }
   
-  const currentTags = ticket.tags || [];
-  if (!Array.isArray(currentTags)) {
-    // Handle case where tags might be stored as string
-    const parsed = currentTags.length > 0 ? JSON.parse(currentTags) : [];
-    currentTags = parsed;
+  // Handle JSONB (already an array) or JSON string
+  let currentTags = ticket.tags || [];
+  if (typeof currentTags === 'string') {
+    try {
+      currentTags = currentTags.length > 0 ? JSON.parse(currentTags) : [];
+    } catch (e) {
+      currentTags = [];
+    }
+  } else if (!Array.isArray(currentTags)) {
+    // If it's not a string and not an array, default to empty array
+    currentTags = [];
   }
   
   // Add tag if not already present
@@ -3585,6 +3660,7 @@ module.exports = {
   // Lore Keepers
   getLoreKeeperByNpcId,
   getLoreKeepersInRoom,
+  getMerchantByNpcId,
   createLoreKeeper,
   updateLoreKeeper,
   deleteLoreKeeperByNpcId,
@@ -3648,6 +3724,7 @@ module.exports = {
   hasPlayerWarehouseDeed,
   checkWarehouseAccess,
   getPlayerWarehouseDeeds,
+  getAllPlayerWarehouseDeeds,
   
   // Player Bank
   getPlayerBank,

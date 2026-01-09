@@ -374,9 +374,14 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
             const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const escapedOpening = escapeRegex(opening);
             const escapedClosing = escapeRegex(closing);
-            const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
+            // Use simple non-greedy match - works for multi-character delimiters like ".."
+            const pattern = new RegExp(`${escapedOpening}([\\s\\S]*?)${escapedClosing}`, 'g');
             
             processedContent = processedContent.replace(pattern, (match, innerContent) => {
+                // Skip empty content
+                if (!innerContent || innerContent.trim() === '') {
+                    return match;
+                }
                 const escapedContent = escapeHtml(innerContent);
                 let color = convention.color;
                 if (color === 'keyword') {
@@ -420,17 +425,20 @@ export function parseMarkup(text, keywordColor = '#ff00ff') {
         const escapedOpening = escapeRegex(opening);
         const escapedClosing = escapeRegex(closing);
         
-        // Create regex pattern - match content between opening and closing
-        // Standard pattern for regular conventions
-        const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
+        // Create regex pattern - use simple non-greedy match
+        // Works correctly for multi-character delimiters like ".."
+        const pattern = new RegExp(`${escapedOpening}([\\s\\S]*?)${escapedClosing}`, 'g');
         
         result = result.replace(pattern, (match, content) => {
             // CRITICAL: Skip if this match contains a markup placeholder
             // This prevents nested markup from being processed multiple times
-            // When a convention matches content that's already been processed by another convention,
-            // that content will have been replaced with a placeholder
-            if (match.includes('__MARKUP_')) {
+            if (match.includes('__MARKUP_') || match.includes('__TYPEWRITER_')) {
                 return match; // Already processed by another convention, skip
+            }
+            
+            // Skip empty content
+            if (!content || content.trim() === '') {
+                return match;
             }
             
             // Escape the content to prevent XSS

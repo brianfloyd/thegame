@@ -54,10 +54,62 @@ export default class MapWidget extends Widget {
         header.style.alignItems = 'center';
         header.style.padding = '8px';
         
+        // Create title container with info icon
+        const titleContainer = document.createElement('div');
+        titleContainer.style.display = 'flex';
+        titleContainer.style.alignItems = 'center';
+        titleContainer.style.gap = '8px';
+        
         const title = document.createElement('h3');
         title.textContent = 'Map';
         title.style.margin = '0';
-        header.appendChild(title);
+        titleContainer.appendChild(title);
+        
+        // Create info icon with tooltip
+        const infoIcon = document.createElement('span');
+        infoIcon.textContent = '(i)';
+        infoIcon.style.cursor = 'help';
+        infoIcon.style.color = '#888';
+        infoIcon.style.fontSize = '0.9em';
+        infoIcon.style.fontStyle = 'italic';
+        infoIcon.style.position = 'relative';
+        infoIcon.style.userSelect = 'none';
+        infoIcon.title = 'Zoom in and out using mouse wheel\nNavigate using command line, compass, or number keys\nRecenter map using arrow keys';
+        
+        // Create tooltip element
+        const tooltip = document.createElement('div');
+        tooltip.className = 'map-info-tooltip';
+        tooltip.style.display = 'none';
+        tooltip.style.position = 'absolute';
+        tooltip.style.bottom = '100%';
+        tooltip.style.left = '50%';
+        tooltip.style.transform = 'translateX(-50%)';
+        tooltip.style.marginBottom = '5px';
+        tooltip.style.padding = '8px 12px';
+        tooltip.style.backgroundColor = '#1a1a2e';
+        tooltip.style.border = '1px solid #667eea';
+        tooltip.style.borderRadius = '4px';
+        tooltip.style.color = '#fff';
+        tooltip.style.fontSize = '0.85em';
+        tooltip.style.whiteSpace = 'pre-line';
+        tooltip.style.textAlign = 'left';
+        tooltip.style.zIndex = '1000';
+        tooltip.style.minWidth = '200px';
+        tooltip.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+        tooltip.textContent = 'Zoom in and out using mouse wheel\nNavigate using command line, compass, or number keys\nRecenter map using arrow keys';
+        
+        // Add hover handlers
+        infoIcon.addEventListener('mouseenter', () => {
+            tooltip.style.display = 'block';
+        });
+        
+        infoIcon.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+        
+        infoIcon.appendChild(tooltip);
+        titleContainer.appendChild(infoIcon);
+        header.appendChild(titleContainer);
         
         // Create pathing mode controls container
         const controlsContainer = document.createElement('div');

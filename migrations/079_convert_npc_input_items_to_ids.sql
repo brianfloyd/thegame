@@ -73,3 +73,6 @@ COMMENT ON COLUMN scriptable_npcs.input_items IS
 
 
 
+
+
+

@@ -132,6 +132,12 @@ function parseTypewriterMarkup(text) {
 function parseMarkupServer(text, keywordColor = '#ff00ff') {
     if (!text || typeof text !== 'string') return '';
     
+    // Debug: log conventions count and input
+    const conventionCount = Object.keys(markupConventions).length;
+    if (text.includes('..') && conventionCount === 0) {
+        console.log(`[parseMarkupServer] WARNING: No conventions loaded! Input: "${text.substring(0, 50)}..."`);
+    }
+    
     const glowColor = keywordColor || '#ff00ff';
     
     // First, process typewriter markup (preserve inner content for further processing)
@@ -166,22 +172,31 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
         const opening = convention.opening;
         const closing = convention.closing;
         
+        // Skip line-start patterns (handled separately)
+        if (opening.startsWith('^') || closing === '' || closing === '$') {
+            continue;
+        }
+        
         // Escape special regex characters
         const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const escapedOpening = escapeRegex(opening);
         const escapedClosing = escapeRegex(closing);
         
-        // Create regex pattern - match content between opening and closing
-        // CRITICAL: Exclude matches that are inside existing markup placeholders
-        const pattern = new RegExp(`${escapedOpening}((?:[^${escapedClosing}]|${escapedClosing}(?![^${escapedClosing}]*${escapedOpening}))+?)${escapedClosing}`, 'g');
+        // Create regex pattern - use non-greedy match for content between delimiters
+        // For multi-character delimiters like "..", we need to use negative lookahead
+        // Pattern: opening + (anything that's not followed by closing, non-greedy) + closing
+        const pattern = new RegExp(`${escapedOpening}([\\s\\S]*?)${escapedClosing}`, 'g');
         
         result = result.replace(pattern, (match, content) => {
             // CRITICAL: Skip if this match contains a markup placeholder
             // This prevents nested markup from being processed multiple times
-            // When a convention matches content that's already been processed by another convention,
-            // that content will have been replaced with a placeholder
-            if (match.includes('__MARKUP_')) {
+            if (match.includes('__MARKUP_') || match.includes('__TYPEWRITER_')) {
                 return match; // Already processed by another convention, skip
+            }
+            
+            // Skip empty content
+            if (!content || content.trim() === '') {
+                return match;
             }
             
             // Escape the content to prevent XSS
@@ -237,10 +252,11 @@ function parseMarkupServer(text, keywordColor = '#ff00ff') {
 
 /**
  * Format message for terminal display
+ * Returns parsed HTML content (not wrapped in div - Terminal creates the wrapper)
  * @param {string} text - Raw text with markup
- * @param {string} type - Message type ('info', 'error', 'system')
+ * @param {string} type - Message type ('info', 'error', 'system') - currently unused
  * @param {string} keywordColor - Color for <text> markup (default: '#00ffff')
- * @returns {string} Complete HTML string ready for client
+ * @returns {string} Parsed HTML content ready for insertion
  */
 function formatMessageForTerminal(text, type = 'info', keywordColor = '#00ffff') {
     if (!text || typeof text !== 'string') {
@@ -249,19 +265,12 @@ function formatMessageForTerminal(text, type = 'info', keywordColor = '#00ffff')
     }
     
     try {
-        // Parse markup
-        const parsedContent = parseMarkupServer(text, keywordColor);
-        
-        // Determine CSS class based on type
-        const messageClass = type === 'error' ? 'error-message' : 'info-message';
-        
-        // Return complete HTML structure
-        return `<div class="${messageClass}">${parsedContent}</div>`;
+        // Parse markup and return content only (Terminal creates the wrapper div)
+        return parseMarkupServer(text, keywordColor);
     } catch (err) {
         console.error('[MarkupService] Error in formatMessageForTerminal:', err);
         // Fallback: return escaped text
-        const messageClass = type === 'error' ? 'error-message' : 'info-message';
-        return `<div class="${messageClass}">${escapeHtml(text)}</div>`;
+        return escapeHtml(text);
     }
 }
 

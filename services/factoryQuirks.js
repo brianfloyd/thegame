@@ -86,6 +86,7 @@ function getFactoryQuirk(room) {
   // Keep backward compatibility check during migration
   let quirks = room.factory_quirks;
   
+  // Handle JSONB (already an object) or JSON string
   if (typeof quirks === 'string') {
     try {
       quirks = JSON.parse(quirks);
@@ -93,6 +94,9 @@ function getFactoryQuirk(room) {
       console.error('[factoryQuirks] Failed to parse factory_quirks:', e);
       return null;
     }
+  } else if (quirks && typeof quirks === 'object') {
+    // JSONB column - already an object, make a copy
+    quirks = JSON.parse(JSON.stringify(quirks));
   }
   
   // Validate quirk type

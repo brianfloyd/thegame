@@ -39,7 +39,22 @@ async function updatePlayer(ctx, data) {
     return;
   }
 
-  const { player } = data;
+  // Support both formats: { player: { id, ... } } and { playerId, updates: { ... } }
+  let player;
+  if (data.player && data.player.id) {
+    // Format 1: { player: { id, ...fields } }
+    player = data.player;
+  } else if (data.playerId && data.updates) {
+    // Format 2: { playerId, updates: { ...fields } }
+    player = {
+      id: data.playerId,
+      ...data.updates
+    };
+  } else {
+    ws.send(JSON.stringify({ type: 'error', message: 'Player id required' }));
+    return;
+  }
+
   if (!player || !player.id) {
     ws.send(JSON.stringify({ type: 'error', message: 'Player id required' }));
     return;

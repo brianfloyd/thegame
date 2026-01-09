@@ -47,3 +47,6 @@ COMMENT ON COLUMN scriptable_npcs.harvest_prerequisite_item_id IS
 
 
 
+
+
+

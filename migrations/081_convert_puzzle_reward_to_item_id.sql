@@ -45,3 +45,6 @@ COMMENT ON COLUMN scriptable_npcs.puzzle_reward_item_id IS
 
 
 
+
+
+

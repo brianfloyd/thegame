@@ -375,7 +375,9 @@ export default class Game {
             case 'playerStats':
                 if (data.stats?.playerName) {
                     this.currentPlayerName = data.stats.playerName;
-                    document.title = `The Game - ${data.stats.playerName}`;
+                    // Strip @ symbols from player name for page title
+                    const cleanPlayerName = data.stats.playerName.replace(/@/g, '');
+                    document.title = `The Game - ${cleanPlayerName}`;
                     this.messageBus.emit('player:authenticated', {
                         playerName: this.currentPlayerName
                     });
@@ -417,7 +419,8 @@ export default class Game {
             case 'inventoryList':
                 this.messageBus.emit('inventory:update', {
                     items: data.items,
-                    hasWarehouseDeed: data.hasWarehouseDeed
+                    hasWarehouseDeed: data.hasWarehouseDeed,
+                    silent: data.silent || false
                 });
                 break;
                 
@@ -472,17 +475,7 @@ export default class Game {
                 });
                 break;
                 
-            // Path/Loop execution
-            case 'pathExecutionStarted':
-            case 'pathExecutionResumed':
-            case 'pathExecutionComplete':
-            case 'pathExecutionStopped':
-            case 'pathExecutionFailed':
-                this.messageBus.emit('path:execution', {
-                    type: data.type,
-                    message: data.message
-                });
-                break;
+            // Path/Loop execution - handled individually below for proper data passing
                 
             // Auto-navigation
             case 'autoNavigationStarted':
@@ -609,7 +602,9 @@ export default class Game {
                 
             case 'pathExecutionStarted':
                 this.messageBus.emit('paths:executionStarted', {
-                    message: data.message
+                    message: data.message,
+                    stepCount: data.stepCount,
+                    needsNavigation: data.needsNavigation
                 });
                 break;
                 
@@ -654,6 +649,18 @@ export default class Game {
                 this.messageBus.emit('system:message', {
                     message: 'Debug observation ended.'
                 });
+                break;
+                
+            case 'autoStoreConfig':
+                this.messageBus.emit('autoStoreConfig', data);
+                break;
+                
+            case 'widgetConfig':
+                this.messageBus.emit('widgetConfig', data);
+                break;
+                
+            case 'widgetConfigUpdated':
+                this.messageBus.emit('widgetConfigUpdated', data);
                 break;
                 
             // Default: emit raw message for components that need it

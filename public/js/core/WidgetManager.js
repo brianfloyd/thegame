@@ -165,7 +165,10 @@ export default class WidgetManager {
             'autopath:rooms',
             'autopath:calculated',
             'pathSaved',
-            'pathDeleted'
+            'pathDeleted',
+            'autoStoreConfig',
+            'widgetConfig',
+            'widgetConfigUpdated'
         ];
         
         messageTypes.forEach(msgType => {

@@ -25,3 +25,6 @@ WHERE message_key = 'harvest_cooldown' AND message_template LIKE '%<{npcName}>%'
 
 
 
+
+
+
