@@ -389,6 +389,16 @@ body {
     font-family: 'Courier New', monospace;
 }
 
+.look-prefix {
+    color: #ffaa00;
+    font-weight: bold;
+    font-size: 18px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: 'Courier New', monospace;
+}
+
 .room-name {
     color: #ffff00;
     font-weight: bold;

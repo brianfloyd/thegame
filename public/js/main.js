@@ -313,7 +313,9 @@ function normalizeCommand(input) {
     // Handle other commands
     if (commandType === 'look') {
         terminal.resetIdleTimer();
-        return { type: 'look' };
+        // Support "look <direction>" or "look <target>"
+        const target = args.length > 0 ? args.join(' ') : null;
+        return { type: 'look', target: target };
     }
     
     if (commandType === 'inventory') {

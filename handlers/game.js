@@ -35,6 +35,62 @@ const loreKeeperEngagementTimers = new Map();
 const activeGlowCodexPuzzles = new Map();
 
 /**
+ * Get connected map data when player is on a junction room
+ * Returns null if not on a junction, or { rooms, mapId, mapName, connectionDirection } if on junction
+ * @param {object} db - Database module
+ * @param {object} currentRoom - The current room object (must have connected_map_id, connection_direction)
+ * @param {object} colorMap - Room type colors map
+ * @returns {object|null} Connected map data or null
+ */
+async function getConnectedMapData(db, currentRoom, colorMap) {
+  // Check if current room is a junction (has connected_map_id)
+  if (!currentRoom || !currentRoom.connected_map_id) {
+    return null;
+  }
+  
+  try {
+    // Get all rooms from the connected map
+    const connectedMapRooms = await db.getRoomsByMap(currentRoom.connected_map_id);
+    const connectedMap = await db.getMapById(currentRoom.connected_map_id);
+    
+    if (!connectedMapRooms || connectedMapRooms.length === 0) {
+      return null;
+    }
+    
+    const rooms = connectedMapRooms.map(r => ({
+      id: r.id,
+      name: r.name,
+      x: r.x,
+      y: r.y,
+      mapId: r.map_id,
+      roomType: r.room_type || 'normal',
+      connected_map_id: r.connected_map_id || null,
+      connected_room_x: r.connected_room_x || null,
+      connected_room_y: r.connected_room_y || null,
+      connection_direction: r.connection_direction || null
+    }));
+    
+    // Find the entry point room in the connected map (the room we would arrive at)
+    const entryRoom = connectedMapRooms.find(r => 
+      r.x === currentRoom.connected_room_x && 
+      r.y === currentRoom.connected_room_y
+    );
+    
+    return {
+      rooms: rooms,
+      mapId: currentRoom.connected_map_id,
+      mapName: connectedMap ? connectedMap.name : 'Unknown',
+      connectionDirection: currentRoom.connection_direction || null,
+      entryRoom: entryRoom ? { x: entryRoom.x, y: entryRoom.y, id: entryRoom.id } : null,
+      roomTypeColors: colorMap
+    };
+  } catch (error) {
+    console.error('Error getting connected map data:', error);
+    return null;
+  }
+}
+
+/**
  * Check if a player should receive an award based on award behavior settings
  * Returns { shouldAward: boolean, delayMessage: string | null }
  */
@@ -530,6 +586,9 @@ async function authenticateSession(ctx, data) {
     colorMap[rtc.room_type] = rtc.color;
   });
   
+  // Check if player is on a junction room - if so, include connected map data
+  const connectedMapData = await getConnectedMapData(db, room, colorMap);
+  
   ws.send(JSON.stringify({
     type: 'mapData',
     rooms: allRooms,
@@ -538,7 +597,8 @@ async function authenticateSession(ctx, data) {
       x: room.x,
       y: room.y
     },
-    mapId: room.map_id
+    mapId: room.map_id,
+    connectedMapData: connectedMapData
   }));
 
   // Notify others in the room (exclude this connection)
@@ -1106,6 +1166,16 @@ async function move(ctx, data) {
       }
     }));
 
+    // Get room type colors for connected map data
+    const roomTypeColors = await db.getAllRoomTypeColors();
+    const colorMap = {};
+    roomTypeColors.forEach(rtc => {
+      colorMap[rtc.room_type] = rtc.color;
+    });
+    
+    // Check if player is on a junction room - if so, include connected map data
+    const connectedMapData = await getConnectedMapData(db, targetRoom, colorMap);
+    
     // If this was a map transition, send new map data
     if (isMapTransition) {
       const newMapRooms = await db.getRoomsByMap(targetRoom.map_id);
@@ -1116,14 +1186,11 @@ async function move(ctx, data) {
         y: r.y,
         mapId: r.map_id,
         roomType: r.room_type || 'normal',
-        connected_map_id: r.connected_map_id || null
+        connected_map_id: r.connected_map_id || null,
+        connected_room_x: r.connected_room_x || null,
+        connected_room_y: r.connected_room_y || null,
+        connection_direction: r.connection_direction || null
       }));
-      
-      const roomTypeColors = await db.getAllRoomTypeColors();
-      const colorMap = {};
-      roomTypeColors.forEach(rtc => {
-        colorMap[rtc.room_type] = rtc.color;
-      });
       
       playerData.ws.send(JSON.stringify({
         type: 'mapData',
@@ -1133,17 +1200,19 @@ async function move(ctx, data) {
           x: targetRoom.x,
           y: targetRoom.y
         },
-        mapId: targetRoom.map_id
+        mapId: targetRoom.map_id,
+        connectedMapData: connectedMapData
       }));
     } else {
-      // Just update map position
+      // Just update map position - but also include connected map data if on junction
       playerData.ws.send(JSON.stringify({
         type: 'mapUpdate',
         currentRoom: {
           x: targetRoom.x,
           y: targetRoom.y
         },
-        mapId: targetRoom.map_id
+        mapId: targetRoom.map_id,
+        connectedMapData: connectedMapData
       }));
     }
   }
@@ -1306,6 +1375,251 @@ async function look(ctx, data) {
     await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, true);
     
     return;
+  }
+
+  // Check if target is a direction - normalize direction names
+  const directionMap = {
+    'n': 'N', 'north': 'N',
+    's': 'S', 'south': 'S',
+    'e': 'E', 'east': 'E',
+    'w': 'W', 'west': 'W',
+    'ne': 'NE', 'northeast': 'NE', 'northe': 'NE',
+    'nw': 'NW', 'northwest': 'NW', 'northw': 'NW',
+    'se': 'SE', 'southeast': 'SE', 'southe': 'SE',
+    'sw': 'SW', 'southwest': 'SW', 'southw': 'SW',
+    'u': 'U', 'up': 'U',
+    'd': 'D', 'down': 'D'
+  };
+  
+  const targetLower = target.toLowerCase();
+  const directionCode = directionMap[targetLower];
+  
+  if (directionCode) {
+    // This is a direction - check if it's a valid exit
+    const exits = await getExits(db, currentRoom);
+    
+    if (exits.includes(directionCode)) {
+      // Valid exit - find the target room and show its details
+      let targetRoom = null;
+      
+      // Handle up/down directions (not yet implemented for movement, but might be in exits)
+      if (directionCode === 'U' || directionCode === 'D') {
+        ws.send(JSON.stringify({
+          type: 'message',
+          message: 'Up/Down movement is not yet implemented, so you cannot look in that direction.'
+        }));
+        return;
+      }
+      
+      // Check if current room has a map connection in this direction
+      if (currentRoom.connection_direction === directionCode && currentRoom.connected_map_id) {
+        // Map transition
+        targetRoom = await db.getRoomByCoords(
+          currentRoom.connected_map_id,
+          currentRoom.connected_room_x,
+          currentRoom.connected_room_y
+        );
+      } else {
+        // Normal adjacent room in same map
+        let targetX = currentRoom.x;
+        let targetY = currentRoom.y;
+        
+        if (directionCode === 'N') {
+          targetY += 1;
+        } else if (directionCode === 'S') {
+          targetY -= 1;
+        } else if (directionCode === 'E') {
+          targetX += 1;
+        } else if (directionCode === 'W') {
+          targetX -= 1;
+        } else if (directionCode === 'NE') {
+          targetX += 1;
+          targetY += 1;
+        } else if (directionCode === 'NW') {
+          targetX -= 1;
+          targetY += 1;
+        } else if (directionCode === 'SE') {
+          targetX += 1;
+          targetY -= 1;
+        } else if (directionCode === 'SW') {
+          targetX -= 1;
+          targetY -= 1;
+        }
+        
+        targetRoom = await db.getRoomByCoords(currentRoom.map_id, targetX, targetY);
+      }
+      
+      if (targetRoom) {
+        // Convert direction code to readable name for message
+        const directionNames = {
+          'N': 'north', 'S': 'south', 'E': 'east', 'W': 'west',
+          'NE': 'northeast', 'NW': 'northwest', 'SE': 'southeast', 'SW': 'southwest',
+          'U': 'up', 'D': 'down'
+        };
+        const directionName = directionNames[directionCode] || directionCode.toLowerCase();
+        
+        // Get "Looking..." prefix message
+        const lookPrefix = messageCache.getFormattedMessage('look_direction_prefix', { direction: directionName });
+        
+        // Send room update for the target room with prefix
+        // Get players and NPCs in target room
+        const playersInTargetRoom = getConnectedPlayersInRoom(connectedPlayers, targetRoom.id);
+        const npcsInTargetRoom = await db.getNPCsInRoom(targetRoom.id);
+        const targetRoomItems = await db.getRoomItems(targetRoom.id);
+        const targetRoomExits = await getExits(db, targetRoom);
+        
+        // Get map name
+        const map = await db.getMapById(targetRoom.map_id);
+        const mapName = map ? map.name : '';
+        
+        // Format NPCs with state descriptions
+        const now = Date.now();
+        const formattedNPCs = await Promise.all(npcsInTargetRoom.map(async npc => {
+          const baseCycleTime = npc.base_cycle_time || 12000;
+          const npcData = {
+            id: npc.id,
+            name: npc.name,
+            description: npc.description,
+            state: npc.state,
+            color: npc.display_color || npc.color || '#00ffff',
+            baseCycleTime: baseCycleTime,
+            harvestableTime: npc.harvestableTime || 60000,
+            cooldownTime: npc.cooldownTime || 120000,
+            statusMessageIdle: npc.statusMessageIdle ?? '(idle)',
+            statusMessageReady: npc.statusMessageReady ?? '(ready)',
+            statusMessageHarvesting: npc.statusMessageHarvesting ?? '(harvesting)',
+            statusMessageCooldown: npc.statusMessageCooldown ?? '(cooldown)'
+          };
+          
+          // Calculate harvest/cooldown progress (simplified version)
+          if (npc.state && npc.state.harvest_active && npc.state.harvest_start_time) {
+            const harvestElapsed = now - npc.state.harvest_start_time;
+            const effectiveHarvestableTime = npc.state.effective_harvestable_time || npcData.harvestableTime;
+            const harvestRemaining = Math.max(0, effectiveHarvestableTime - harvestElapsed);
+            npcData.harvestProgress = harvestRemaining / effectiveHarvestableTime;
+            npcData.harvestStatus = 'active';
+          } else if (npc.state && npc.state.cooldown_until && now < npc.state.cooldown_until) {
+            const cooldownRemaining = npc.state.cooldown_until - now;
+            const baseCooldownTime = npcData.cooldownTime;
+            npcData.harvestProgress = (baseCooldownTime - cooldownRemaining) / baseCooldownTime;
+            npcData.harvestStatus = 'cooldown';
+          } else {
+            npcData.harvestProgress = 1.0;
+            npcData.harvestStatus = 'ready';
+          }
+          
+          return npcData;
+        }));
+        
+        // Combine players and NPCs for display
+        const combinedEntities = [...playersInTargetRoom].sort();
+        formattedNPCs.forEach(npc => {
+          let npcDisplay = npc.name;
+          if (npc.state && typeof npc.state === 'object') {
+            const cycles = npc.state.cycles || 0;
+            let statusMessage = '';
+            if (cycles === 0) {
+              statusMessage = npc.statusMessageIdle ?? '(idle)';
+            } else if (npc.harvestStatus === 'active') {
+              statusMessage = npc.statusMessageHarvesting ?? '(harvesting)';
+            } else if (npc.harvestStatus === 'cooldown') {
+              statusMessage = npc.statusMessageCooldown ?? '(cooldown)';
+            } else {
+              statusMessage = npc.statusMessageReady ?? '(ready)';
+            }
+            if (statusMessage) {
+              npcDisplay += ' ' + statusMessage;
+            }
+          }
+          combinedEntities.push(npcDisplay);
+        });
+        
+        // Format messages
+        let alsoHereMessage = '';
+        if (combinedEntities.length > 0) {
+          alsoHereMessage = messageCache.getFormattedMessage('room_also_here', {
+            '[char|NPC array]': combinedEntities
+          });
+        } else {
+          alsoHereMessage = messageCache.getFormattedMessage('room_no_one_here');
+        }
+        
+        const exitsForMessage = targetRoomExits.length > 0 ? targetRoomExits : [];
+        const obviousExitsMessage = messageCache.getFormattedMessage('room_obvious_exits', {
+          '[directions array]': exitsForMessage
+        });
+        
+        const itemsString = targetRoomItems.length > 0 
+          ? targetRoomItems.map(item => {
+              const itemName = item.item_name || item.name;
+              return itemName + (item.quantity > 1 ? ` (${item.quantity})` : '');
+            }).join(', ')
+          : 'Nothing';
+        
+        const onGroundMessage = messageCache.getFormattedMessage('room_on_ground', {
+          '[items array]': itemsString
+        });
+        
+        // Process markup
+        const { parseMarkupServer } = require('../utils/markupService');
+        const processedDescription = targetRoom.description ? parseMarkupServer(targetRoom.description, '#00ffff') : '';
+        const processedAlsoHere = alsoHereMessage ? parseMarkupServer(alsoHereMessage, '#00ffff') : '';
+        const processedObviousExits = obviousExitsMessage ? parseMarkupServer(obviousExitsMessage, '#00ffff') : '';
+        const processedOnGround = onGroundMessage ? parseMarkupServer(onGroundMessage, '#00ffff') : '';
+        
+        // Send room update with "Looking..." prefix
+        ws.send(JSON.stringify({
+          type: 'roomUpdate',
+          room: {
+            id: targetRoom.id,
+            name: targetRoom.name,
+            description: targetRoom.description,
+            descriptionHtml: processedDescription,
+            x: targetRoom.x,
+            y: targetRoom.y,
+            mapName: mapName,
+            roomType: targetRoom.room_type || 'normal'
+          },
+          players: playersInTargetRoom,
+          npcs: formattedNPCs,
+          roomItems: targetRoomItems,
+          exits: targetRoomExits,
+          showFullInfo: true,
+          messages: {
+            prefix: lookPrefix, // Add prefix to indicate this is a look, not actual room entry
+            alsoHere: alsoHereMessage, // Raw text (for backward compatibility)
+            alsoHereHtml: processedAlsoHere, // Pre-processed HTML with markup
+            obviousExits: obviousExitsMessage, // Raw text (for backward compatibility)
+            obviousExitsHtml: processedObviousExits, // Pre-processed HTML with markup
+            onGround: onGroundMessage, // Raw text (for backward compatibility)
+            onGroundHtml: processedOnGround // Pre-processed HTML with markup
+          },
+          isLooking: true // Flag to indicate this is a look command, not actual movement
+        }));
+        
+        return;
+      }
+    } else {
+      // Invalid direction (no exit) - show random whimsical message
+      const wallMessages = [
+        'look_direction_wall_1',
+        'look_direction_wall_2',
+        'look_direction_wall_3',
+        'look_direction_wall_4',
+        'look_direction_wall_5'
+      ];
+      
+      // Select random message
+      const randomIndex = Math.floor(Math.random() * wallMessages.length);
+      const wallMessage = messageCache.getFormattedMessage(wallMessages[randomIndex]);
+      
+      ws.send(JSON.stringify({
+        type: 'message',
+        message: wallMessage
+      }));
+      
+      return;
+    }
   }
 
   // LOOK at NPC in room by (partial) name match
@@ -6583,6 +6897,7 @@ async function getMapData(ctx, data) {
 
     // Get current room for the player (only if they're in this map)
     let currentRoom = null;
+    let connectedMapData = null;
     if (playerData.roomId) {
       const playerRoom = await db.getRoomById(playerData.roomId);
       if (playerRoom && playerRoom.map_id === mapId) {
@@ -6591,6 +6906,8 @@ async function getMapData(ctx, data) {
           y: playerRoom.y,
           id: playerRoom.id
         };
+        // Check if player is on a junction room
+        connectedMapData = await getConnectedMapData(db, playerRoom, colorMap);
       }
     }
 
@@ -6599,7 +6916,8 @@ async function getMapData(ctx, data) {
       rooms: allRooms,
       roomTypeColors: colorMap,
       currentRoom: currentRoom,
-      mapId: mapId
+      mapId: mapId,
+      connectedMapData: connectedMapData
     }));
   } catch (error) {
     console.error('Error getting map data:', error);

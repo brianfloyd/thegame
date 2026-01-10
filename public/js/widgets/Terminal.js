@@ -379,13 +379,14 @@ export default class Terminal extends Component {
      * Handle room update event
      */
     handleRoomUpdate(data) {
-        const { room, players, exits, npcs, roomItems, showFullInfo, messages } = data;
+        const { room, players, exits, npcs, roomItems, showFullInfo, messages, isLooking } = data;
         if (!room) return;
         
-        const isNewRoom = room.id !== this.currentRoomId;
+        // If isLooking is true, don't update currentRoomId (we're just peeking, not actually in that room)
+        const isNewRoom = !isLooking && room.id !== this.currentRoomId;
         
-        // Clear NPC tracking map when room changes
-        if (isNewRoom) {
+        // Clear NPC tracking map when room changes (but not when just looking)
+        if (isNewRoom && !isLooking) {
             this.currentRoomNPCs.clear();
         }
         
@@ -395,18 +396,24 @@ export default class Terminal extends Component {
             this.waitingForReconnectRoomUpdate = false; // Reset flag
         }
         
-        this.currentRoomId = room.id;
+        // Only update currentRoomId if we're not just looking
+        if (!isLooking) {
+            this.currentRoomId = room.id;
+        }
         
         // Display full room info when entering a new room, forced (look command), or after reconnection
-        if (isNewRoom || showFullInfo || forceFullDisplay) {
-            this.updateRoomView(room, players, exits, npcs, roomItems, showFullInfo || forceFullDisplay, messages);
+        if (isNewRoom || showFullInfo || forceFullDisplay || isLooking) {
+            this.updateRoomView(room, players, exits, npcs, roomItems, showFullInfo || forceFullDisplay || isLooking, messages, isLooking);
         } else {
             // Same room - check for NPC status updates
             this.updateNPCStatusesInPlace(npcs);
         }
         
         // Always update room items display (dynamic, doesn't scroll)
-        this.updateRoomItemsDisplay(roomItems, messages);
+        // But skip if we're just looking (not in that room)
+        if (!isLooking) {
+            this.updateRoomItemsDisplay(roomItems, messages);
+        }
     }
     
     /**
@@ -441,16 +448,32 @@ export default class Terminal extends Component {
      * Update room view with full room information
      * CRITICAL: All text rendering uses parseMarkup()
      */
-    updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay = false, messages = null) {
+    updateRoomView(room, players, exits, npcs, roomItems, forceFullDisplay = false, messages = null, isLooking = false) {
         if (!this.terminalContent) return;
         
-        // Add separator for readability
-        if (this.terminalContent.children.length > 0) {
+        // If this is a "looking" command, display the prefix message FIRST and prominently
+        if (isLooking && messages && messages.prefix) {
+            const prefixDiv = document.createElement('div');
+            prefixDiv.className = 'look-prefix';
+            prefixDiv.textContent = messages.prefix;
+            this.terminalContent.appendChild(prefixDiv);
+            this.saveTerminalMessage(messages.prefix, 'info');
+            
+            // Add separator after prefix to visually separate the looked-at room
             const separator = document.createElement('div');
             separator.className = 'terminal-separator';
             separator.textContent = '─'.repeat(40);
             this.terminalContent.appendChild(separator);
             this.saveTerminalMessage('─'.repeat(40), 'info');
+        } else {
+            // Normal room view - add separator if there's previous content
+            if (this.terminalContent.children.length > 0) {
+                const separator = document.createElement('div');
+                separator.className = 'terminal-separator';
+                separator.textContent = '─'.repeat(40);
+                this.terminalContent.appendChild(separator);
+                this.saveTerminalMessage('─'.repeat(40), 'info');
+            }
         }
         
         // Display room name with map name prefix

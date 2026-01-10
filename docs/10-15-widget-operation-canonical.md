@@ -70,11 +70,22 @@ The WidgetManager handles widget lifecycle, message routing, and visibility mana
 - Displays room map visualization
 - Shows current room and surrounding rooms
 - Handles map updates and pathing visualization
+- **Multi-Map Junction Display:** When player stands on a junction room (white room with `connected_map_id`), displays both the current map and the connected map in a split view
 - **Default Active:** Yes (order: 30)
 
+**Multi-Map Junction Visualization:**
+When the player is on a junction room (a room that connects two maps):
+- The widget splits the canvas based on the connection direction (S/N = vertical split, E/W = horizontal split)
+- Current map is displayed with the junction room anchored at the edge facing the connected map
+- Connected map is displayed with its entry room anchored at the edge facing the current map
+- Both maps touch seamlessly with no separator
+- Entry room in connected map is highlighted with cyan border
+- Zoom affects both maps uniformly
+- Pan affects both maps uniformly
+
 **Message Types Handled:**
-- `map:data` - Initial map data
-- `map:update` - Map updates
+- `map:data` - Initial map data (includes `connectedMapData` when on junction)
+- `map:update` - Map updates (includes `connectedMapData` when on junction)
 - `pathing:modeStarted` - Pathing mode activation
 - `pathing:room` - Pathing room selection
 - `pathing:saved` - Path saved confirmation
@@ -88,6 +99,15 @@ The WidgetManager handles widget lifecycle, message routing, and visibility mana
 - `autonav:started` - Auto-navigation started
 - `autonav:complete` - Auto-navigation complete
 - `autonav:failed` - Auto-navigation failed
+
+**Server Data:**
+When player is on a junction room, server includes `connectedMapData` in `mapData` and `mapUpdate` messages:
+- `connectedMapData.rooms` - All rooms from the connected map
+- `connectedMapData.mapId` - ID of the connected map
+- `connectedMapData.mapName` - Name of the connected map
+- `connectedMapData.connectionDirection` - Direction of connection (N/S/E/W)
+- `connectedMapData.entryRoom` - The room in the connected map that the junction leads to
+- `connectedMapData.roomTypeColors` - Room type colors for the connected map
 
 ---
 

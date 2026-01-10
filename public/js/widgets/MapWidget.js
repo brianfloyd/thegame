@@ -19,6 +19,9 @@ export default class MapWidget extends Widget {
         this.currentMapId = null;
         this.roomTypeColors = {};
         
+        // Connected map data for junction rooms
+        this.connectedMapData = null;
+        
         // Pathing mode state
         this.pathingModeActive = false;
         this.pathStartRoom = null;
@@ -567,6 +570,9 @@ export default class MapWidget extends Widget {
         this.currentRoom = data.currentRoom;
         this.roomTypeColors = data.roomTypeColors || {};
         
+        // Store connected map data for junction rooms
+        this.connectedMapData = data.connectedMapData || null;
+        
         // If there's a pending pathing step, add it now
         if (window.pendingPathingStep) {
             const step = window.pendingPathingStep;
@@ -600,6 +606,8 @@ export default class MapWidget extends Widget {
         if (data.mapId) {
             this.currentMapId = data.mapId;
         }
+        // Update connected map data (could be null if player left a junction)
+        this.connectedMapData = data.connectedMapData || null;
         this.renderMap();
     }
     
@@ -698,6 +706,7 @@ export default class MapWidget extends Widget {
     
     /**
      * Render map using shared MapRenderer
+     * When on a junction room, renders both current map and connected map
      */
     renderMap() {
         if (!this.mapRenderer || !this.mapCanvas || !this.mapCtx) return;
@@ -717,8 +726,17 @@ export default class MapWidget extends Widget {
         // Filter to only rooms from the map we're rendering
         const currentMapRooms = this.mapRooms.filter(room => room.mapId === renderMapId);
         
-        // Render using MapRenderer
-        this.mapRenderer.render(currentMapRooms, centerRoom);
+        // Check if we need to render connected map (junction room)
+        const hasConnectedMap = !this.pathingModeActive && this.connectedMapData && 
+                                this.connectedMapData.rooms && this.connectedMapData.rooms.length > 0;
+        
+        if (hasConnectedMap) {
+            // Render dual-map view
+            this.renderDualMap(currentMapRooms, centerRoom);
+        } else {
+            // Single map render
+            this.mapRenderer.render(currentMapRooms, centerRoom);
+        }
         
         // Draw path lines in pathing mode (overlay on top)
         if (this.pathingModeActive && this.currentPath.length > 1 && this.mapRenderer.renderedBounds) {
@@ -757,6 +775,248 @@ export default class MapWidget extends Widget {
             }
             ctx.stroke();
         }
+    }
+    
+    /**
+     * Render dual-map view when on a junction room
+     * Splits canvas based on connection direction and renders both maps seamlessly
+     */
+    renderDualMap(currentMapRooms, centerRoom) {
+        const ctx = this.mapCtx;
+        const canvasWidth = this.mapCanvas.width;
+        const canvasHeight = this.mapCanvas.height;
+        
+        // Clear canvas
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        
+        const connectionDir = this.connectedMapData.connectionDirection?.toUpperCase() || 'S';
+        const connectedRooms = this.connectedMapData.rooms;
+        const connectedEntryRoom = this.connectedMapData.entryRoom;
+        
+        // Determine split orientation based on connection direction
+        // S/N = vertical split, E/W = horizontal split
+        const isVerticalSplit = connectionDir === 'S' || connectionDir === 'N';
+        
+        // Calculate split dimensions (50% each, no separator - maps touch directly)
+        let currentMapRect, connectedMapRect;
+        
+        if (isVerticalSplit) {
+            const halfHeight = Math.floor(canvasHeight / 2);
+            if (connectionDir === 'S') {
+                // Connected map is south, so it goes on bottom
+                currentMapRect = { x: 0, y: 0, width: canvasWidth, height: halfHeight };
+                connectedMapRect = { x: 0, y: halfHeight, width: canvasWidth, height: canvasHeight - halfHeight };
+            } else {
+                // N: Connected map is north, goes on top
+                connectedMapRect = { x: 0, y: 0, width: canvasWidth, height: halfHeight };
+                currentMapRect = { x: 0, y: halfHeight, width: canvasWidth, height: canvasHeight - halfHeight };
+            }
+        } else {
+            const halfWidth = Math.floor(canvasWidth / 2);
+            if (connectionDir === 'E') {
+                // Connected map is east, goes on right
+                currentMapRect = { x: 0, y: 0, width: halfWidth, height: canvasHeight };
+                connectedMapRect = { x: halfWidth, y: 0, width: canvasWidth - halfWidth, height: canvasHeight };
+            } else {
+                // W: Connected map is west, goes on left
+                connectedMapRect = { x: 0, y: 0, width: halfWidth, height: canvasHeight };
+                currentMapRect = { x: halfWidth, y: 0, width: canvasWidth - halfWidth, height: canvasHeight };
+            }
+        }
+        
+        // Determine anchor edges so the junction rooms touch at the boundary
+        // Current map's junction should be at the edge facing the connected map
+        // Connected map's entry should be at the edge facing the current map
+        let currentAnchor, connectedAnchor;
+        if (connectionDir === 'S') {
+            currentAnchor = 'bottom';  // Junction at bottom of current map region
+            connectedAnchor = 'top';   // Entry at top of connected map region
+        } else if (connectionDir === 'N') {
+            currentAnchor = 'top';
+            connectedAnchor = 'bottom';
+        } else if (connectionDir === 'E') {
+            currentAnchor = 'right';
+            connectedAnchor = 'left';
+        } else { // W
+            currentAnchor = 'left';
+            connectedAnchor = 'right';
+        }
+        
+        // Render current map with junction anchored at edge
+        this.renderMapInRegion(currentMapRooms, centerRoom, currentMapRect, this.roomTypeColors, true, currentAnchor);
+        
+        // Render connected map with entry anchored at edge
+        const connectedCenterRoom = connectedEntryRoom || connectedRooms[0];
+        this.renderMapInRegion(connectedRooms, connectedCenterRoom, connectedMapRect, 
+                               this.connectedMapData.roomTypeColors || this.roomTypeColors, false, connectedAnchor);
+    }
+    
+    /**
+     * Render a map within a specific rectangular region of the canvas
+     * @param {string} anchor - Where to anchor the center room: 'center', 'top', 'bottom', 'left', 'right'
+     */
+    renderMapInRegion(rooms, centerRoom, rect, roomTypeColors, isCurrentMap, anchor = 'center') {
+        if (!rooms || rooms.length === 0 || !centerRoom) return;
+        
+        const ctx = this.mapCtx;
+        
+        // Save context state
+        ctx.save();
+        
+        // Clip to the region
+        ctx.beginPath();
+        ctx.rect(rect.x, rect.y, rect.width, rect.height);
+        ctx.clip();
+        
+        // Calculate grid size based on region dimensions
+        const gridRows = Math.floor(this.VIEWPORT_SIZE / 2); // Smaller grid for split view
+        const aspectRatio = rect.width / rect.height;
+        const gridCols = Math.round(gridRows * aspectRatio);
+        
+        // Calculate cell size with current zoom applied
+        const baseCellSizeX = rect.width / gridCols;
+        const baseCellSizeY = rect.height / gridRows;
+        const baseCellSize = Math.min(baseCellSizeX, baseCellSizeY);
+        
+        // Apply zoom from main renderer
+        const zoomFactor = this.mapRenderer.zoom < 1.0 ? (1.0 / this.mapRenderer.zoom) : 1.0;
+        let cellSize = baseCellSize * this.mapRenderer.zoom;
+        cellSize = Math.max(cellSize, this.mapRenderer.minCellSize);
+        
+        // Calculate expanded bounds for zoomed out view
+        const halfCols = Math.floor(gridCols / 2 * zoomFactor);
+        const halfRows = Math.floor(gridRows / 2 * zoomFactor);
+        
+        const minX = centerRoom.x - halfCols + this.mapRenderer.panX;
+        const maxX = centerRoom.x + halfCols + this.mapRenderer.panX;
+        const minY = centerRoom.y - halfRows + this.mapRenderer.panY;
+        const maxY = centerRoom.y + halfRows + this.mapRenderer.panY;
+        
+        // Calculate grid dimensions
+        const expandedGridCols = halfCols * 2 + 1;
+        const expandedGridRows = halfRows * 2 + 1;
+        const scaledGridWidth = expandedGridCols * cellSize;
+        const scaledGridHeight = expandedGridRows * cellSize;
+        
+        // Calculate offsets within the region based on anchor
+        // The anchor determines where the center room should appear in the region
+        let offsetX, offsetY;
+        
+        // Calculate center room's position within the grid
+        const centerRoomGridX = centerRoom.x - minX;
+        const centerRoomGridY = maxY - centerRoom.y;
+        
+        switch (anchor) {
+            case 'top':
+                // Center room should be at top of region
+                offsetX = rect.x + Math.floor((rect.width - scaledGridWidth) / 2);
+                offsetY = rect.y - centerRoomGridY * cellSize + cellSize / 2;
+                break;
+            case 'bottom':
+                // Center room should be at bottom of region
+                offsetX = rect.x + Math.floor((rect.width - scaledGridWidth) / 2);
+                offsetY = rect.y + rect.height - (centerRoomGridY + 1) * cellSize - cellSize / 2;
+                break;
+            case 'left':
+                // Center room should be at left of region
+                offsetX = rect.x - centerRoomGridX * cellSize + cellSize / 2;
+                offsetY = rect.y + Math.floor((rect.height - scaledGridHeight) / 2);
+                break;
+            case 'right':
+                // Center room should be at right of region
+                offsetX = rect.x + rect.width - (centerRoomGridX + 1) * cellSize - cellSize / 2;
+                offsetY = rect.y + Math.floor((rect.height - scaledGridHeight) / 2);
+                break;
+            default: // 'center'
+                offsetX = rect.x + Math.floor((rect.width - scaledGridWidth) / 2);
+                offsetY = rect.y + Math.floor((rect.height - scaledGridHeight) / 2);
+        }
+        
+        // Create room map for drawing
+        const roomMap = new Map();
+        rooms.forEach(room => {
+            roomMap.set(`${room.x},${room.y}`, room);
+        });
+        
+        // Draw connections first
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        const directions = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 0 }, { dx: 1, dy: 1 },
+            { dx: 0, dy: 1 }, { dx: -1, dy: 1 }, { dx: -1, dy: 0 }, { dx: -1, dy: -1 }
+        ];
+        
+        rooms.forEach(room => {
+            if (room.x < minX || room.x > maxX || room.y < minY || room.y > maxY) return;
+            
+            const screenX = offsetX + (room.x - minX) * cellSize;
+            const screenY = offsetY + (maxY - room.y) * cellSize;
+            const roomCenterX = screenX + cellSize / 2;
+            const roomCenterY = screenY + cellSize / 2;
+            
+            directions.forEach(dir => {
+                const adjKey = `${room.x + dir.dx},${room.y + dir.dy}`;
+                if (roomMap.has(adjKey)) {
+                    const adjRoom = roomMap.get(adjKey);
+                    if (adjRoom.x >= minX && adjRoom.x <= maxX && 
+                        adjRoom.y >= minY && adjRoom.y <= maxY) {
+                        const adjScreenX = offsetX + (adjRoom.x - minX) * cellSize;
+                        const adjScreenY = offsetY + (maxY - adjRoom.y) * cellSize;
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(roomCenterX, roomCenterY);
+                        ctx.lineTo(adjScreenX + cellSize / 2, adjScreenY + cellSize / 2);
+                        ctx.stroke();
+                    }
+                }
+            });
+        });
+        
+        // Draw rooms
+        rooms.forEach(room => {
+            if (room.x < minX || room.x > maxX || room.y < minY || room.y > maxY) return;
+            
+            const screenX = offsetX + (room.x - minX) * cellSize;
+            const screenY = offsetY + (maxY - room.y) * cellSize;
+            
+            // Get room color
+            const hasConnection = room.connected_map_id !== null && room.connected_map_id !== undefined;
+            let fillColor = hasConnection ? '#ffffff' : (roomTypeColors[room.roomType] || '#666');
+            
+            // Highlight current room in current map
+            const isCurrent = isCurrentMap && this.currentRoom && 
+                             room.x === this.currentRoom.x && room.y === this.currentRoom.y;
+            
+            // Highlight entry room in connected map
+            const isEntry = !isCurrentMap && this.connectedMapData?.entryRoom &&
+                           room.x === this.connectedMapData.entryRoom.x && 
+                           room.y === this.connectedMapData.entryRoom.y;
+            
+            // Draw room fill
+            ctx.fillStyle = fillColor;
+            const roomSize = Math.max(1, cellSize - 2);
+            ctx.fillRect(screenX + 1, screenY + 1, roomSize, roomSize);
+            
+            // Draw border
+            if (isCurrent) {
+                ctx.strokeStyle = '#ffff00';
+                ctx.lineWidth = 2;
+            } else if (isEntry) {
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+            } else if (hasConnection) {
+                ctx.strokeStyle = '#cccccc';
+                ctx.lineWidth = 1;
+            } else {
+                ctx.strokeStyle = this.darkenColor(fillColor, 0.5);
+                ctx.lineWidth = 1;
+            }
+            ctx.strokeRect(screenX + 1, screenY + 1, roomSize, roomSize);
+        });
+        
+        // Restore context state
+        ctx.restore();
     }
     
     /**

@@ -299,13 +299,61 @@ pulseEcho
 wealth
 who
 inventory
+look
 help
 ```
 
 Rules:
 - `attune` ignores any trailing arguments  
 - `pulseEcho` may have synonyms (`pulse`, `pe`, `p`)  
-- `help` and `?` are synonyms  
+- `look` supports multiple usage patterns (see Section 10.1)
+- `help` and `?` are synonyms
+
+### 10.1 Look Command
+
+The `look` command (abbreviation: `l`) has three distinct behaviors:
+
+#### 10.1.1 Look at Current Room
+```
+look
+l
+```
+When used without arguments, displays the full room description, NPCs, players, items, and exits for the player's current room. This is equivalent to the view when entering a room.
+
+#### 10.1.2 Look in a Direction
+```
+look <direction>
+look north
+look south
+look east
+look west
+look northeast
+look northwest
+look southeast
+look southwest
+```
+
+When used with a direction argument, the player peers into an adjacent room without moving:
+- **Valid exit direction**: Displays the target room's full description, NPCs, players, items, and exits. The display is prefixed with "Looking {direction}..." to clearly indicate the player is viewing, not entering, the room. The player's current room ID is not updated.
+- **Invalid direction (no exit)**: Displays one of five randomly selected whimsical messages from the game messages system (category: `command`, keys: `look_direction_wall_1` through `look_direction_wall_5`).
+
+Direction matching:
+- Supports full direction names (north, south, east, west, northeast, northwest, southeast, southwest)
+- Supports abbreviations (n, s, e, w, ne, nw, se, sw)
+- Case-insensitive
+- Up/down directions are not yet implemented and return a message indicating this
+
+#### 10.1.3 Look at NPC
+```
+look <npc name>
+look rat
+look rhythm
+```
+When used with an NPC name argument (partial matching supported), displays the NPC's description. If multiple NPCs match, all matching descriptions are shown.
+
+Message templates:
+- Prefix when looking in direction: `look_direction_prefix` (editable in game_messages)
+- Wall messages: `look_direction_wall_1` through `look_direction_wall_5` (editable in game_messages)  
 
 ---
 

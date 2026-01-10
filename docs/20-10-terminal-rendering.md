@@ -102,7 +102,26 @@ When the player enters or looks at a room, the Terminal renders:
 - players
 - NPC statuses
 
-### 4.1 Description Rendering
+### 4.1 Look Direction Prefix
+
+When a player uses `look <direction>` to view an adjacent room without moving, the display is prefixed with a prominent "Looking {direction}..." message to clearly indicate the player is viewing, not entering, the room.
+
+Rendering order:
+1. **Look prefix** (if `isLooking === true`): Displays "Looking {direction}..." in orange (`#ffaa00`), bold, uppercase, 18px font
+2. Separator line
+3. Room name and description
+4. Room contents (NPCs, players, items, exits)
+
+The `isLooking` flag prevents the Terminal from updating `currentRoomId`, ensuring the player's actual location remains unchanged.
+
+CSS class: `.look-prefix`
+- Color: `#ffaa00` (orange)
+- Font-weight: bold
+- Font-size: 18px
+- Text-transform: uppercase
+- Letter-spacing: 1px
+
+### 4.2 Description Rendering
 ```
 roomDescDiv.innerHTML = parseMarkup(room.description, '#00ffff')
 ```

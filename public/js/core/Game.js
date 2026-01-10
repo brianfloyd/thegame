@@ -479,14 +479,16 @@ export default class Game {
                     rooms: data.rooms,
                     currentRoom: data.currentRoom,
                     mapId: data.mapId,
-                    roomTypeColors: data.roomTypeColors
+                    roomTypeColors: data.roomTypeColors,
+                    connectedMapData: data.connectedMapData || null
                 });
                 break;
                 
             case 'mapUpdate':
                 this.messageBus.emit('map:update', {
                     currentRoom: data.currentRoom,
-                    mapId: data.mapId
+                    mapId: data.mapId,
+                    connectedMapData: data.connectedMapData || null
                 });
                 break;
                 
