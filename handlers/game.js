@@ -1651,6 +1651,91 @@ async function look(ctx, data) {
 }
 
 /**
+ * Find best matching item(s) from a list using improved matching algorithm
+ * Prioritizes: 1) Exact match, 2) Starts-with match, 3) Longest match, 4) Substring match
+ * @param {Array} items - Array of items with item_name property
+ * @param {string} query - Search query (case-insensitive)
+ * @returns {Array} Array of matching items, sorted by match quality
+ */
+function findMatchingItems(items, query) {
+  const queryLower = query.toLowerCase().trim();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+  
+  // Score each item based on match quality
+  const scored = items.map(item => {
+    const itemNameLower = item.item_name.toLowerCase();
+    let score = 0;
+    
+    // Exact match gets highest priority
+    if (itemNameLower === queryLower) {
+      score = 1000;
+    }
+    // Starts-with match gets second priority
+    else if (itemNameLower.startsWith(queryLower)) {
+      score = 800;
+      // Longer exact start gets higher score
+      score += queryLower.length;
+    }
+    // Check if all query words match word starts (word-boundary matching)
+    else {
+      const itemWords = itemNameLower.split(/\s+/).filter(w => w.length > 0);
+      let allWordsMatchAsStarts = true;
+      let wordStartMatches = 0;
+      
+      // Check if each query word matches the start of an item word
+      for (const queryWord of queryWords) {
+        let wordMatched = false;
+        for (const itemWord of itemWords) {
+          if (itemWord.startsWith(queryWord)) {
+            wordMatched = true;
+            wordStartMatches++;
+            break;
+          }
+        }
+        if (!wordMatched) {
+          allWordsMatchAsStarts = false;
+          break;
+        }
+      }
+      
+      if (allWordsMatchAsStarts && wordStartMatches === queryWords.length) {
+        // All words match as starts - good match
+        score = 600 + wordStartMatches * 10;
+        // Prefer matches where item word count matches query word count
+        if (itemWords.length === queryWords.length) {
+          score += 50;
+        }
+      }
+      // Contains match (substring) - lower priority, but only if no word-boundary match
+      else if (itemNameLower.includes(queryLower)) {
+        score = 400;
+        // Longer matching substring gets higher score
+        score += queryLower.length;
+      }
+      // No match at all
+      else {
+        return null;
+      }
+    }
+    
+    // Prefer shorter item names when scores are similar (more specific)
+    score -= itemNameLower.length * 0.1;
+    
+    return { item, score };
+  }).filter(result => result !== null);
+  
+  // Sort by score (highest first), then by item name length (shorter first for same score)
+  scored.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return a.item.item_name.length - b.item.item_name.length;
+  });
+  
+  return scored.map(result => result.item);
+}
+
+/**
  * Handle inventory command
  */
 async function inventory(ctx, data) {
@@ -1716,13 +1801,15 @@ async function take(ctx, data) {
   const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
   
   const roomItems = await db.getRoomItems(currentRoom.id);
-  const matches = roomItems.filter(i => i.item_name.toLowerCase().includes(query));
+  const matches = findMatchingItems(roomItems, query);
   
   if (matches.length === 0) {
     ws.send(JSON.stringify({ type: 'message', message: `There is no "${query}" here.` }));
+    return;
   } else if (matches.length > 1) {
     const names = matches.map(i => i.item_name).join(', ');
     ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
   } else {
     const item = matches[0];
     const availableQuantity = item.quantity;
@@ -1828,13 +1915,15 @@ async function drop(ctx, data) {
   const isAll = requestedQuantity === 'all' || requestedQuantity === 'All';
   
   const playerItems = await db.getPlayerItems(player.id);
-  const matches = playerItems.filter(i => i.item_name.toLowerCase().includes(query));
+  const matches = findMatchingItems(playerItems, query);
   
   if (matches.length === 0) {
     ws.send(JSON.stringify({ type: 'message', message: `You don't have "${query}".` }));
+    return;
   } else if (matches.length > 1) {
     const names = matches.map(i => i.item_name).join(', ');
     ws.send(JSON.stringify({ type: 'message', message: `Which did you mean: ${names}?` }));
+    return;
   } else {
     const item = matches[0];
     const availableQuantity = item.quantity;
@@ -1850,12 +1939,13 @@ async function drop(ctx, data) {
         return;
       }
       
+      // If requesting more than available, drop all available (don't error)
       if (quantityToDrop > availableQuantity) {
+        quantityToDrop = availableQuantity;
         ws.send(JSON.stringify({ 
           type: 'message', 
-          message: `You only have ${availableQuantity} ${item.item_name}.` 
+          message: `You only have ${availableQuantity} ${item.item_name}. Dropping all ${availableQuantity}.` 
         }));
-        return;
       }
     }
     
@@ -4508,7 +4598,7 @@ async function store(ctx, data) {
   
   // Get player inventory
   const playerItems = await db.getPlayerItems(player.id);
-  const matches = playerItems.filter(i => i.item_name.toLowerCase().includes(query));
+  const matches = findMatchingItems(playerItems, query);
   
   if (matches.length === 0) {
     ws.send(JSON.stringify({ type: 'message', message: `You don't have "${query}".` }));
@@ -4535,12 +4625,13 @@ async function store(ctx, data) {
       return;
     }
     
+    // If requesting more than available, store all available (don't error)
     if (quantityToStore > availableQuantity) {
+      quantityToStore = availableQuantity;
       ws.send(JSON.stringify({ 
         type: 'message', 
-        message: `You only have ${availableQuantity} ${item.item_name}.` 
+        message: `You only have ${availableQuantity} ${item.item_name}. Storing all ${availableQuantity}.` 
       }));
-      return;
     }
   }
   
@@ -4669,7 +4760,7 @@ async function withdraw(ctx, data) {
   
   // Get warehouse items
   const warehouseItems = await db.getWarehouseItems(player.id, warehouseLocationKey);
-  const matches = warehouseItems.filter(i => i.item_name.toLowerCase().includes(query));
+  const matches = findMatchingItems(warehouseItems, query);
   
   if (matches.length === 0) {
     ws.send(JSON.stringify({ type: 'message', message: `You don't have "${query}" stored here.` }));
@@ -4696,12 +4787,13 @@ async function withdraw(ctx, data) {
       return;
     }
     
+    // If requesting more than available, withdraw all available (don't error)
     if (quantityToWithdraw > availableQuantity) {
+      quantityToWithdraw = availableQuantity;
       ws.send(JSON.stringify({ 
         type: 'message', 
-        message: `You only have ${availableQuantity} ${item.item_name} stored.` 
+        message: `You only have ${availableQuantity} ${item.item_name} stored. Withdrawing all ${availableQuantity}.` 
       }));
-      return;
     }
   }
   
@@ -4958,10 +5050,10 @@ async function deposit(ctx, data) {
       return;
     }
     
-    // Check if player has enough
+    // If requesting more than available, deposit all available (don't error)
     if (playerCurrencyQuantity < amountToDeposit) {
-      ws.send(JSON.stringify({ type: 'error', message: `You don't have enough ${matchedCurrency.name}. You have ${playerCurrencyQuantity}.` }));
-      return;
+      amountToDeposit = playerCurrencyQuantity;
+      ws.send(JSON.stringify({ type: 'message', message: `You only have ${playerCurrencyQuantity} ${matchedCurrency.name}. Depositing all ${playerCurrencyQuantity}.` }));
     }
     
     // Remove from inventory and deposit to bank
@@ -5378,12 +5470,11 @@ async function buy(ctx, data) {
     // Get merchant items for this room
     const merchantItems = await db.getMerchantItemsForRoom(currentRoom.id);
     
-    // Find item by partial name matching
+    // Find item by improved matching
     const allItems = await db.getAllItems();
-    const matchedItems = allItems.filter(item => 
-      item.name.toLowerCase().includes(itemName.toLowerCase()) ||
-      itemName.toLowerCase().includes(item.name.toLowerCase())
-    );
+    // Convert to format expected by findMatchingItems (needs item_name property)
+    const itemsForMatching = allItems.map(item => ({ item_name: item.name, ...item }));
+    const matchedItems = findMatchingItems(itemsForMatching, itemName.toLowerCase());
     
     if (matchedItems.length === 0) {
       ws.send(JSON.stringify({ type: 'error', message: `Item "${itemName}" not found.` }));
@@ -5391,21 +5482,23 @@ async function buy(ctx, data) {
     }
     
     if (matchedItems.length > 1) {
-      ws.send(JSON.stringify({ type: 'error', message: `Which did you mean: ${matchedItems.map(i => i.name).join(', ')}?` }));
+      ws.send(JSON.stringify({ type: 'error', message: `Which did you mean: ${matchedItems.map(i => i.item_name || i.name).join(', ')}?` }));
       return;
     }
     
     const targetItem = matchedItems[0];
+    // Get the actual item name (could be from item_name or name property)
+    const actualItemName = targetItem.item_name || targetItem.name;
     const merchantItem = merchantItems.find(mi => mi.item_id === targetItem.id);
     
     if (!merchantItem) {
-      ws.send(JSON.stringify({ type: 'error', message: `"${targetItem.name}" is not for sale here.` }));
+      ws.send(JSON.stringify({ type: 'error', message: `"${actualItemName}" is not for sale here.` }));
       return;
     }
     
     // Check if item is buyable
     if (!merchantItem.buyable) {
-      ws.send(JSON.stringify({ type: 'error', message: `"${targetItem.name}" cannot be purchased.` }));
+      ws.send(JSON.stringify({ type: 'error', message: `"${actualItemName}" cannot be purchased.` }));
       return;
     }
     
@@ -5432,8 +5525,8 @@ async function buy(ctx, data) {
     // Remove currency from player (with auto-conversion)
     await db.removePlayerCurrency(player.id, totalPrice);
     
-    // Add item to player inventory
-    await db.addPlayerItem(player.id, targetItem.name, quantity);
+    // Add item to player inventory (use actualItemName which could be item_name or name)
+    await db.addPlayerItem(player.id, actualItemName, quantity);
     
     // Update merchant inventory (if not unlimited)
     if (!merchantItem.unlimited) {
@@ -5456,7 +5549,7 @@ async function buy(ctx, data) {
     
     ws.send(JSON.stringify({ 
       type: 'message', 
-      message: `Purchased ${quantity} ${targetItem.name}${quantity !== 1 ? '(s)' : ''} for ${priceMsg}.` 
+      message: `Purchased ${quantity} ${actualItemName}${quantity !== 1 ? '(s)' : ''} for ${priceMsg}.` 
     }));
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: err.message }));
@@ -5497,11 +5590,8 @@ async function sell(ctx, data) {
     // Get player inventory
     const playerItems = await db.getPlayerItems(player.id);
     
-    // Find item by partial name matching
-    const matchedItems = playerItems.filter(item => 
-      item.item_name.toLowerCase().includes(itemName.toLowerCase()) ||
-      itemName.toLowerCase().includes(item.item_name.toLowerCase())
-    );
+    // Find item by improved matching
+    const matchedItems = findMatchingItems(playerItems, itemName.toLowerCase());
     
     if (matchedItems.length === 0) {
       ws.send(JSON.stringify({ type: 'error', message: `You don't have "${itemName}".` }));
@@ -5515,10 +5605,11 @@ async function sell(ctx, data) {
     
     const targetItem = matchedItems[0];
     
-    // Check if player has enough
+    // If requesting more than available, sell all available (don't error)
+    let quantityToSell = quantity;
     if (targetItem.quantity < quantity) {
-      ws.send(JSON.stringify({ type: 'error', message: `You only have ${targetItem.quantity} ${targetItem.item_name}.` }));
-      return;
+      quantityToSell = targetItem.quantity;
+      ws.send(JSON.stringify({ type: 'message', message: `You only have ${targetItem.quantity} ${targetItem.item_name}. Selling all ${targetItem.quantity}.` }));
     }
     
     // Get merchant items for this room
@@ -5533,14 +5624,14 @@ async function sell(ctx, data) {
     }
     
     // Calculate payment (use merchant's price)
-    const totalPayment = merchantItem.price * quantity;
+    const totalPayment = merchantItem.price * quantityToSell;
     if (totalPayment <= 0) {
       ws.send(JSON.stringify({ type: 'error', message: 'This merchant does not pay for this item.' }));
       return;
     }
     
     // Remove item from player inventory
-    await db.removePlayerItem(player.id, targetItem.item_name, quantity);
+    await db.removePlayerItem(player.id, targetItem.item_name, quantityToSell);
     
     // Add currency to player (with auto-conversion)
     await db.addPlayerCurrency(player.id, totalPayment);
@@ -5549,7 +5640,7 @@ async function sell(ctx, data) {
     if (!merchantItem.unlimited) {
       await db.query(
         'UPDATE merchant_items SET current_qty = current_qty + $1 WHERE id = $2',
-        [quantity, merchantItem.id]
+        [quantityToSell, merchantItem.id]
       );
     }
     
@@ -5566,7 +5657,7 @@ async function sell(ctx, data) {
     
     ws.send(JSON.stringify({ 
       type: 'message', 
-      message: `Sold ${quantity} ${targetItem.item_name}${quantity !== 1 ? '(s)' : ''} for ${paymentMsg}.` 
+      message: `Sold ${quantityToSell} ${targetItem.item_name}${quantityToSell !== 1 ? '(s)' : ''} for ${paymentMsg}.` 
     }));
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: err.message }));

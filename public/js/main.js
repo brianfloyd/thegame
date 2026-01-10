@@ -408,14 +408,58 @@ function normalizeCommand(input) {
     }
     
     if (commandType === 'buy') {
-        const quantity = args.length > 1 ? parseInt(args[args.length - 1]) : 1;
-        const itemName = quantity > 1 ? args.slice(0, -1).join(' ') : args.join(' ');
+        // Support both formats: "buy <item> [qty]" and "buy [qty] <item>"
+        const firstArgIsNum = args.length > 0 && !isNaN(parseInt(args[0]));
+        const lastArgIsNum = args.length > 1 && !isNaN(parseInt(args[args.length - 1]));
+        
+        let quantity, itemName;
+        if (firstArgIsNum && !lastArgIsNum) {
+            // Format: "buy <qty> <item>"
+            quantity = parseInt(args[0]);
+            itemName = args.slice(1).join(' ');
+        } else if (lastArgIsNum) {
+            // Format: "buy <item> <qty>"
+            quantity = parseInt(args[args.length - 1]);
+            itemName = args.slice(0, -1).join(' ');
+        } else {
+            // No quantity specified
+            quantity = 1;
+            itemName = args.join(' ');
+        }
+        
+        if (!itemName) {
+            terminal.addMessage('Buy what?', 'error');
+            return null;
+        }
+        
         return { type: 'buy', itemName: itemName, quantity: isNaN(quantity) ? 1 : quantity };
     }
     
     if (commandType === 'sell') {
-        const quantity = args.length > 1 ? parseInt(args[args.length - 1]) : 1;
-        const itemName = quantity > 1 ? args.slice(0, -1).join(' ') : args.join(' ');
+        // Support both formats: "sell <item> [qty]" and "sell [qty] <item>"
+        const firstArgIsNum = args.length > 0 && !isNaN(parseInt(args[0]));
+        const lastArgIsNum = args.length > 1 && !isNaN(parseInt(args[args.length - 1]));
+        
+        let quantity, itemName;
+        if (firstArgIsNum && !lastArgIsNum) {
+            // Format: "sell <qty> <item>"
+            quantity = parseInt(args[0]);
+            itemName = args.slice(1).join(' ');
+        } else if (lastArgIsNum) {
+            // Format: "sell <item> <qty>"
+            quantity = parseInt(args[args.length - 1]);
+            itemName = args.slice(0, -1).join(' ');
+        } else {
+            // No quantity specified
+            quantity = 1;
+            itemName = args.join(' ');
+        }
+        
+        if (!itemName) {
+            terminal.addMessage('Sell what?', 'error');
+            return null;
+        }
+        
         return { type: 'sell', itemName: itemName, quantity: isNaN(quantity) ? 1 : quantity };
     }
     
@@ -424,14 +468,57 @@ function normalizeCommand(input) {
     }
     
     if (commandType === 'store') {
-        const quantity = args.length > 1 ? (args[args.length - 1] === 'all' ? 'all' : parseInt(args[args.length - 1])) : 1;
-        const itemName = args.length > 1 && args[args.length - 1] !== 'all' ? args.slice(0, -1).join(' ') : args.join(' ');
+        // Support both formats: "store <item> [qty]" and "store [qty] <item>"
+        // Check if first arg is a number (quantity first format)
+        const firstArgIsNum = args.length > 0 && !isNaN(parseInt(args[0])) && args[0] !== 'all';
+        // Check if last arg is a number or 'all' (quantity last format)
+        const lastArgIsQty = args.length > 1 && (args[args.length - 1] === 'all' || (!isNaN(parseInt(args[args.length - 1])) && args[args.length - 1] !== 'all'));
+        
+        let quantity, itemName;
+        if (firstArgIsNum) {
+            // Format: "store <qty> <item>"
+            quantity = args[0] === 'all' ? 'all' : parseInt(args[0]);
+            itemName = args.slice(1).join(' ');
+        } else if (lastArgIsQty) {
+            // Format: "store <item> <qty>"
+            quantity = args[args.length - 1] === 'all' ? 'all' : parseInt(args[args.length - 1]);
+            itemName = args.slice(0, -1).join(' ');
+        } else {
+            // No quantity specified
+            quantity = 1;
+            itemName = args.join(' ');
+        }
+        
+        if (!itemName) {
+            terminal.addMessage('Store what?', 'error');
+            return null;
+        }
+        
         return { type: 'store', itemName: itemName, quantity: quantity };
     }
     
     if (commandType === 'withdraw') {
-        const quantity = args.length > 1 ? (args[args.length - 1] === 'all' ? 'all' : parseInt(args[args.length - 1])) : 1;
-        const itemName = args.length > 1 && args[args.length - 1] !== 'all' ? args.slice(0, -1).join(' ') : args.join(' ');
+        // Support both formats: "withdraw <item> [qty]" and "withdraw [qty] <item>"
+        const firstArgIsNum = args.length > 0 && !isNaN(parseInt(args[0])) && args[0] !== 'all';
+        const lastArgIsQty = args.length > 1 && (args[args.length - 1] === 'all' || (!isNaN(parseInt(args[args.length - 1])) && args[args.length - 1] !== 'all'));
+        
+        let quantity, itemName;
+        if (firstArgIsNum) {
+            quantity = args[0] === 'all' ? 'all' : parseInt(args[0]);
+            itemName = args.slice(1).join(' ');
+        } else if (lastArgIsQty) {
+            quantity = args[args.length - 1] === 'all' ? 'all' : parseInt(args[args.length - 1]);
+            itemName = args.slice(0, -1).join(' ');
+        } else {
+            quantity = 1;
+            itemName = args.join(' ');
+        }
+        
+        if (!itemName) {
+            terminal.addMessage('Withdraw what?', 'error');
+            return null;
+        }
+        
         return { type: 'withdraw', itemName: itemName, quantity: quantity };
     }
     
