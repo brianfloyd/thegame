@@ -7283,8 +7283,8 @@ async function createTicket(ctx, data) {
     return;
   }
   
-  // Validate ticket type
-  const validTypes = ['bug', 'feature', 'debug', 'manual', 'user'];
+  // Validate ticket type (must match database constraint from migration 068)
+  const validTypes = ['bug', 'feature', 'debug'];
   if (!validTypes.includes(ticket_type)) {
     ws.send(JSON.stringify({ type: 'error', message: `Ticket type must be one of: ${validTypes.join(', ')}` }));
     return;
@@ -7346,23 +7346,39 @@ async function getTickets(ctx, data) {
     return;
   }
   
-  const { status = null, limit = 100, includeResolved = false } = data;
+  const { status = null, limit = 100, includeResolved = false, includeDeleted = false } = data;
   
   try {
+    console.log(`[getTickets] Request: status=${status}, limit=${limit}, includeResolved=${includeResolved}, includeDeleted=${includeDeleted}`);
+    
     let tickets;
     if (status) {
-      tickets = await db.listDebugTodos({ status, limit });
+      tickets = await db.listDebugTodos({ status, limit, includeDeleted });
     } else {
-      tickets = await db.listDebugTodos({ limit: limit * 2 }); // Get more to filter
+      tickets = await db.listDebugTodos({ limit: limit * 2, includeDeleted }); // Get more to filter
     }
+    
+    console.log(`[getTickets] Retrieved ${tickets.length} tickets from database`);
     
     // Filter out resolved if not requested
     if (!includeResolved) {
+      const beforeFilter = tickets.length;
       tickets = tickets.filter(t => t.status !== 'resolved');
+      console.log(`[getTickets] Filtered out resolved: ${beforeFilter} -> ${tickets.length}`);
+    }
+    
+    // Filter out tickets with invalid ticket_type (from before migration 068)
+    const validTypes = ['bug', 'feature', 'debug'];
+    const beforeTypeFilter = tickets.length;
+    tickets = tickets.filter(t => !t.ticket_type || validTypes.includes(t.ticket_type));
+    if (tickets.length < beforeTypeFilter) {
+      console.warn(`[getTickets] Filtered out ${beforeTypeFilter - tickets.length} tickets with invalid ticket_type`);
     }
     
     // Limit results
     tickets = tickets.slice(0, limit);
+    
+    console.log(`[getTickets] Sending ${tickets.length} tickets to client`);
     
     ws.send(JSON.stringify({
       type: 'ticketsList',
@@ -7387,7 +7403,12 @@ async function updateTicket(ctx, data) {
     return;
   }
   
-  const { ticketId, status, feedback, resolutionNotes, priority, ticketType, deleted, title, description } = data;
+  // Accept both snake_case and camelCase field names for compatibility
+  const ticketType = data.ticketType || data.ticket_type;
+  const resolutionNotes = data.resolutionNotes || data.resolution_notes;
+  const reproSteps = data.reproSteps || data.repro_steps;
+  
+  const { ticketId, status, feedback, priority, deleted, title, description } = data;
   
   if (!ticketId) {
     ws.send(JSON.stringify({ type: 'error', message: 'Ticket ID is required' }));
@@ -7411,7 +7432,7 @@ async function updateTicket(ctx, data) {
     }
   }
   
-  // Validate ticket type if provided
+  // Validate ticket type if provided (must match database constraint from migration 068)
   if (ticketType) {
     const validTypes = ['bug', 'feature', 'debug'];
     if (!validTypes.includes(ticketType)) {
@@ -7427,6 +7448,7 @@ async function updateTicket(ctx, data) {
     if (ticketType) updates.ticketType = ticketType; // database.js expects ticketType, maps to ticket_type column
     if (title !== undefined) updates.title = title;
     if (description !== undefined) updates.description = description;
+    if (reproSteps !== undefined) updates.reproSteps = reproSteps;
     if (feedback) {
       // Append feedback to resolution notes
       const ticket = await db.getDebugTodo(ticketId);
@@ -7434,7 +7456,7 @@ async function updateTicket(ctx, data) {
       const feedbackText = `\n\n[Feedback from ${playerData.playerName}]: ${feedback}`;
       updates.resolutionNotes = existingNotes + feedbackText;
     }
-    if (resolutionNotes) updates.resolutionNotes = resolutionNotes;
+    if (resolutionNotes !== undefined) updates.resolutionNotes = resolutionNotes;
     
     const updated = await db.updateDebugTodo(ticketId, updates);
     

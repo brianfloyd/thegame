@@ -68,6 +68,15 @@ export default class TicketsWidget extends Widget {
     onAttach() {
         this.container = this.rootElement;
         
+        // Restore tab from localStorage if available
+        if (typeof localStorage !== 'undefined') {
+            const savedTab = localStorage.getItem('ticketsWidget_tab');
+            if (savedTab && ['openPending', 'testing'].includes(savedTab)) {
+                this.currentTab = savedTab;
+                console.log(`[TicketsWidget] Restored tab from localStorage: ${this.currentTab}`);
+            }
+        }
+        
         this.setupEventListeners();
         this.loadTickets();
         
@@ -253,6 +262,18 @@ export default class TicketsWidget extends Widget {
             // Always update tickets array with fresh data from server
             // Use mapRowsToTickets for consistent normalization
             this.tickets = mapRowsToTickets(data.tickets);
+            
+            // Debug: Verify ticket statuses after mapping
+            console.log(`[TicketsWidget] After mapping, ticket statuses:`, this.tickets.map(t => `#${t.id}:${t.status || 'MISSING'}`).slice(0, 10).join(', '), this.tickets.length > 10 ? '...' : '');
+            
+            // Ensure all tickets have valid status (safety check)
+            this.tickets.forEach(ticket => {
+                if (!ticket.status || !TICKET_STATUSES.includes(ticket.status)) {
+                    console.warn(`[TicketsWidget] Ticket #${ticket.id} has invalid/missing status: "${ticket.status}", defaulting to 'open'`);
+                    ticket.status = 'open';
+                }
+            });
+            
             this.lastSuccessfulLoad = Date.now();
             
             // CRITICAL: Verify filter is still correct after updating tickets
@@ -334,12 +355,18 @@ export default class TicketsWidget extends Widget {
     renderTickets() {
         if (!this.container) {
             console.error('[TicketsWidget] Container not found, cannot render');
-            return;
+            // Try to get container from rootElement
+            if (this.rootElement) {
+                console.log('[TicketsWidget] Attempting to use rootElement as container');
+                this.container = this.rootElement;
+            } else {
+                return;
+            }
         }
         
         // CRITICAL: Preserve filter status - don't let it get reset
         const filterBeforeRender = this.filterStatus;
-        console.log(`[TicketsWidget] RENDER START - Filter: "${filterBeforeRender}", Tickets: ${this.tickets.length}`);
+        console.log(`[TicketsWidget] RENDER START - Filter: "${filterBeforeRender}", Tickets: ${this.tickets ? this.tickets.length : 0}, Container: ${this.container ? 'found' : 'missing'}`);
         
         // Ensure filter status is valid BEFORE filtering
         if (!['open', 'in_progress', 'resolved', 'all'].includes(this.filterStatus)) {
@@ -356,11 +383,25 @@ export default class TicketsWidget extends Widget {
             }
         }
         
-        console.log(`[TicketsWidget] Rendering with ${this.tickets.length} total tickets, filter: "${this.filterStatus}"`);
+        console.log(`[TicketsWidget] Rendering with ${this.tickets.length} total tickets, filter: "${this.filterStatus}", currentTab: "${this.currentTab}"`);
+        
+        // Ensure currentTab is valid
+        if (!this.currentTab || !['openPending', 'testing'].includes(this.currentTab)) {
+            console.warn(`[TicketsWidget] Invalid currentTab: "${this.currentTab}", defaulting to 'openPending'`);
+            this.currentTab = 'openPending';
+        }
         
         // Filter out deleted tickets first
         let filtered = this.tickets.filter(t => t && t.status !== 'deleted');
         console.log(`[TicketsWidget] After removing deleted: ${filtered.length} tickets`);
+        
+        // Debug: Show status breakdown
+        const statusBreakdown = {};
+        filtered.forEach(t => {
+            const status = t.status || 'undefined';
+            statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+        });
+        console.log(`[TicketsWidget] Ticket status breakdown:`, statusBreakdown);
         
         // Filter tickets based on current tab (tabs work independently of filterStatus)
         let tabTickets = [];
@@ -369,21 +410,31 @@ export default class TicketsWidget extends Widget {
         
         if (this.currentTab === 'openPending') {
             // Tab 1: Open and Pending tickets (open status)
-            tabTickets = filtered.filter(t => t.status === 'open');
+            tabTickets = filtered.filter(t => t && t.status === 'open');
             tabTitle = 'Open/Pending';
             tabCount = tabTickets.length;
-            console.log(`[TicketsWidget] Open/Pending tab: ${tabTickets.length} tickets`);
+            console.log(`[TicketsWidget] Open/Pending tab: ${tabTickets.length} tickets (filtered from ${filtered.length} total)`);
+            if (tabTickets.length === 0 && filtered.length > 0) {
+                console.warn(`[TicketsWidget] WARNING: No 'open' tickets found, but ${filtered.length} non-deleted tickets exist. Statuses:`, Object.keys(statusBreakdown));
+            }
         } else if (this.currentTab === 'testing') {
             // Tab 2: Testing - ALL in_progress tickets
-            tabTickets = filtered.filter(t => t.status === 'in_progress');
+            tabTickets = filtered.filter(t => t && t.status === 'in_progress');
             tabTitle = 'Testing';
             tabCount = tabTickets.length;
-            console.log(`[TicketsWidget] Testing tab: ${tabTickets.length} in_progress tickets`);
+            console.log(`[TicketsWidget] Testing tab: ${tabTickets.length} in_progress tickets (filtered from ${filtered.length} total)`);
+            if (tabTickets.length === 0 && filtered.length > 0) {
+                console.warn(`[TicketsWidget] WARNING: No 'in_progress' tickets found, but ${filtered.length} non-deleted tickets exist. Statuses:`, Object.keys(statusBreakdown));
+            }
             if (tabTickets.length > 0) {
                 tabTickets.forEach(t => {
                     console.log(`[TicketsWidget]   - Ticket #${t.id}: status="${t.status}", title="${t.title}"`);
                 });
             }
+        } else {
+            console.error(`[TicketsWidget] Unknown currentTab: "${this.currentTab}"`);
+            tabTitle = 'Unknown';
+            tabCount = 0;
         }
         
         let html = `

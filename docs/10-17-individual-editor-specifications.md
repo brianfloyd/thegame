@@ -1262,7 +1262,7 @@ filters: {
 formData: {
     title: '',                   // Required, max 200 chars
     description: '',
-    ticket_type: 'bug',          // 'bug', 'feature', 'debug', 'manual', 'user'
+    ticket_type: 'bug',          // 'bug', 'feature', 'debug' (matches database constraint)
     status: 'open',              // 'open', 'backlog', 'in_progress', 'resolved', 'deleted'
     priority: 2,                 // 1 (low), 2 (medium), 3 (high), 4 (critical)
     repro_steps: '',
@@ -1276,7 +1276,7 @@ formData: {
 filters: {
     status: 'all',               // 'all', 'open', 'backlog', 'in_progress', 'resolved'
     priority: '',                // '', '1', '2', '3', '4'
-    ticketType: '',              // '', 'bug', 'feature', 'debug', 'manual', 'user'
+    ticketType: '',              // '', 'bug', 'feature', 'debug' (matches database constraint)
     search: ''
 }
 ```
@@ -1398,14 +1398,21 @@ refreshIntervalMs: 5000
 **Ticket Model:**
 - Uses `mapRowToTicket`, `mapRowsToTickets` from `/js/models/ticket.js`
 - Uses `TICKET_STATUSES`, `TICKET_TYPES`, `TICKET_PRIORITIES`, `PRIORITY_LABELS`, `STATUS_EMOJIS`, `TYPE_LABELS` constants
+- **Valid Ticket Types:** `TICKET_TYPES = ['bug', 'feature', 'debug']` (matches database constraint in `debug_todos.ticket_type`)
 
 **LocalStorage:**
 - Filters saved to `ticketEditor_filters` key
 - Persists across page reloads
 
+**Database Schema:**
+- `debug_todos.ticket_type` CHECK constraint: `IN ('bug', 'feature', 'debug')`
+- See `20-04-database-schema-canonical-spec.md` section 5.5 for full schema
+
 **References:**
 - `public/gameeditors/ticket-editor.js:8-19` (imports)
 - `public/gameeditors/ticket-editor.js:443-459` (filter persistence)
+- `public/js/models/ticket.js` (TICKET_TYPES, TYPE_LABELS constants)
+- `migrations/068_update_ticket_types.sql` (database constraint)
 
 ---
 

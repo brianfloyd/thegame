@@ -14,9 +14,9 @@
 export const TICKET_STATUSES = ['open', 'backlog', 'in_progress', 'resolved', 'deleted'];
 
 /**
- * Valid ticket types
+ * Valid ticket types (must match database constraint from migration 068)
  */
-export const TICKET_TYPES = ['bug', 'feature', 'debug', 'manual', 'user'];
+export const TICKET_TYPES = ['bug', 'feature', 'debug'];
 
 /**
  * Valid ticket priorities (1=low, 2=medium, 3=high, 4=critical)
@@ -45,14 +45,12 @@ export const STATUS_EMOJIS = {
 };
 
 /**
- * Type labels with emojis for display
+ * Type labels with emojis for display (must match valid ticket types)
  */
 export const TYPE_LABELS = {
     bug: '🐛 Bug',
     feature: '✨ Feature',
-    debug: '🔍 Debug',
-    manual: '📝 Manual',
-    user: '👤 User'
+    debug: '🔍 Debug'
 };
 
 /**

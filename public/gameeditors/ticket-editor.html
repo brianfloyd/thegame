@@ -54,8 +54,6 @@
                     <option value="bug">🐛 Bug</option>
                     <option value="feature">✨ Feature</option>
                     <option value="debug">🔍 Debug</option>
-                    <option value="manual">📝 Manual</option>
-                    <option value="user">👤 User</option>
                 </select>
                 <input type="text" class="editor-input search-input" placeholder="Search tickets..." 
                        x-model="filters.search" @input="applyFilter()">
@@ -173,8 +171,6 @@
                                         <option value="bug">🐛 Bug</option>
                                         <option value="feature">✨ Feature</option>
                                         <option value="debug">🔍 Debug</option>
-                                        <option value="manual">📝 Manual</option>
-                                        <option value="user">👤 User</option>
                                     </select>
                                 </div>
                             </div>
@@ -270,7 +266,7 @@
     <!-- Load editor module, then Alpine.js -->
     <script type="module">
         // Import the editor module first
-        await import('/ticket-editor.js');
+        await import('/gameeditors/ticket-editor.js');
         console.log('[TicketEditor] Module loaded, ticketEditor available:', typeof window.ticketEditor);
         
         // Now load Alpine.js

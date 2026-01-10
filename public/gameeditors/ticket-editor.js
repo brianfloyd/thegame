@@ -64,6 +64,17 @@ window.ticketEditor = function() {
         init() {
             console.log('[TicketEditor] Initializing...');
             
+            // Restore filters from localStorage FIRST (before loading tickets)
+            this.restoreFilters();
+            
+            // Validate filters after restore
+            if (!['all', 'open', 'backlog', 'in_progress', 'resolved'].includes(this.filters.status)) {
+                console.warn(`[TicketEditor] Invalid status filter after restore: "${this.filters.status}", resetting to 'all'`);
+                this.filters.status = 'all';
+            }
+            
+            console.log('[TicketEditor] Initial filters:', this.filters);
+            
             // Initialize EditorBase
             EditorBase.init({
                 onReady: (socket) => {
@@ -83,9 +94,6 @@ window.ticketEditor = function() {
                 }
             });
             
-            // Restore filters from localStorage
-            this.restoreFilters();
-            
             // Handle page unload
             window.addEventListener('beforeunload', () => {
                 EditorBase.setNavigatingAway(true);
@@ -97,14 +105,110 @@ window.ticketEditor = function() {
          * Handle WebSocket messages
          */
         handleMessage(data) {
-            console.log('[TicketEditor] Received message:', data.type);
+            console.log('[TicketEditor] Received message:', data.type, data);
             
             switch (data.type) {
                 case 'ticketsList':
+                    console.log(`[TicketEditor] Received ticketsList with ${data.tickets ? data.tickets.length : 0} tickets`);
+                    console.log('[TicketEditor] Raw tickets data:', data.tickets);
+                    
+                    // Map tickets
                     this.tickets = mapRowsToTickets(data.tickets || []);
+                    console.log(`[TicketEditor] Mapped to ${this.tickets.length} tickets`);
+                    
+                    // Debug: Show status breakdown
+                    if (this.tickets.length > 0) {
+                        const statusBreakdown = {};
+                        this.tickets.forEach(t => {
+                            const status = t && t.status ? t.status : 'undefined';
+                            statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+                        });
+                        console.log('[TicketEditor] Ticket status breakdown:', statusBreakdown);
+                        console.log('[TicketEditor] Current filter status:', this.filters.status);
+                        console.log('[TicketEditor] Sample ticket:', this.tickets[0]);
+                    }
+                    
+                    // Ensure filteredTickets array exists (Alpine.js reactivity)
+                    if (!this.filteredTickets) {
+                        this.filteredTickets = [];
+                    }
+                    
+                    // Apply filters
                     this.applyFilter();
                     this.loading = false;
-                    console.log(`[TicketEditor] Loaded ${this.tickets.length} tickets`);
+                    
+                    console.log(`[TicketEditor] Final state: ${this.tickets.length} total tickets, ${this.filteredTickets ? this.filteredTickets.length : 0} filtered tickets`);
+                    
+                    // If no tickets showing but tickets exist, check all filters and auto-reset
+                    if (this.tickets.length > 0 && (!this.filteredTickets || this.filteredTickets.length === 0)) {
+                        const availableStatuses = [...new Set(this.tickets.map(t => t && t.status ? t.status : 'undefined').filter(Boolean))];
+                        // Normalize priorities to numbers for comparison
+                        const availablePriorities = [...new Set(this.tickets.map(t => {
+                            if (!t || t.priority === null || t.priority === undefined) return null;
+                            const p = typeof t.priority === 'number' ? t.priority : parseInt(t.priority);
+                            return isNaN(p) ? null : p;
+                        }).filter(p => p !== null))];
+                        const availableTypes = [...new Set(this.tickets.map(t => t && t.ticket_type ? t.ticket_type : 'undefined').filter(Boolean))];
+                        
+                        console.log('[TicketEditor] Available filter values:', {
+                            statuses: availableStatuses,
+                            priorities: availablePriorities,
+                            types: availableTypes
+                        });
+                        
+                        const filterIssues = [];
+                        let shouldReset = false;
+                        
+                        // Check status filter
+                        if (this.filters.status !== 'all' && !availableStatuses.includes(this.filters.status)) {
+                            filterIssues.push(`status "${this.filters.status}"`);
+                            shouldReset = true;
+                        }
+                        
+                        // Check priority filter
+                        if (this.filters.priority) {
+                            const priorityNum = parseInt(this.filters.priority);
+                            if (!availablePriorities.includes(priorityNum)) {
+                                filterIssues.push(`priority ${priorityNum}`);
+                                shouldReset = true;
+                            }
+                        }
+                        
+                        // Check ticket type filter
+                        if (this.filters.ticketType && !availableTypes.includes(this.filters.ticketType)) {
+                            filterIssues.push(`type "${this.filters.ticketType}"`);
+                            shouldReset = true;
+                        }
+                        
+                        console.warn('[TicketEditor] WARNING: Tickets loaded but none match current filters!', {
+                            totalTickets: this.tickets.length,
+                            currentFilters: this.filters,
+                            availableStatuses: availableStatuses,
+                            availablePriorities: availablePriorities,
+                            availableTypes: availableTypes,
+                            filterIssues: filterIssues
+                        });
+                        
+                        // Auto-reset filters if they're too restrictive
+                        if (shouldReset) {
+                            console.log(`[TicketEditor] Auto-resetting filters (${filterIssues.join(', ')} filter out all tickets)`);
+                            
+                            // Reset problematic filters
+                            if (this.filters.status !== 'all' && !availableStatuses.includes(this.filters.status)) {
+                                this.filters.status = 'all';
+                            }
+                            if (this.filters.priority && !availablePriorities.includes(parseInt(this.filters.priority))) {
+                                this.filters.priority = '';
+                            }
+                            if (this.filters.ticketType && !availableTypes.includes(this.filters.ticketType)) {
+                                this.filters.ticketType = '';
+                            }
+                            
+                            // Re-apply filters
+                            this.applyFilter();
+                            this.showNotification(`No tickets match current filters (${filterIssues.join(', ')}). Filters reset to show all tickets.`, 'info');
+                        }
+                    }
                     break;
                     
                 case 'ticketCreated':
@@ -160,6 +264,7 @@ window.ticketEditor = function() {
          * Load tickets from server
          */
         loadTickets() {
+            console.log('[TicketEditor] Loading tickets...');
             this.loading = true;
             EditorBase.send({
                 type: 'getTickets',
@@ -168,45 +273,101 @@ window.ticketEditor = function() {
                 includeResolved: true,
                 includeDeleted: false
             });
+            console.log('[TicketEditor] Sent getTickets message');
         },
         
         /**
          * Apply filters to ticket list
          */
         applyFilter() {
+            console.log('[TicketEditor] applyFilter() called', {
+                ticketsCount: this.tickets.length,
+                filters: this.filters
+            });
+            
             let filtered = [...this.tickets];
+            console.log('[TicketEditor] Starting with', filtered.length, 'tickets');
             
             // Filter by status
             if (this.filters.status !== 'all') {
-                filtered = filtered.filter(t => t.status === this.filters.status);
+                const beforeStatus = filtered.length;
+                filtered = filtered.filter(t => {
+                    const matches = t && t.status === this.filters.status;
+                    if (!matches && t) {
+                        console.log(`[TicketEditor] Filtering out ticket #${t.id} - status "${t.status}" !== filter "${this.filters.status}"`);
+                    }
+                    return matches;
+                });
+                console.log(`[TicketEditor] After status filter (${this.filters.status}): ${beforeStatus} -> ${filtered.length}`);
+            } else {
+                console.log('[TicketEditor] Status filter is "all", showing all tickets');
             }
             
             // Filter by priority
             if (this.filters.priority) {
+                const beforePriority = filtered.length;
                 const priority = parseInt(this.filters.priority);
-                filtered = filtered.filter(t => t.priority === priority);
+                
+                // Get available priorities before filtering (for debugging)
+                const availablePrioritiesBefore = [...new Set(filtered.map(t => {
+                    if (!t) return null;
+                    return typeof t.priority === 'number' ? t.priority : parseInt(t.priority);
+                }).filter(p => p !== null && !isNaN(p)))];
+                
+                filtered = filtered.filter(t => {
+                    if (!t) return false;
+                    const ticketPriority = typeof t.priority === 'number' ? t.priority : parseInt(t.priority);
+                    const matches = ticketPriority === priority;
+                    if (!matches && t) {
+                        console.log(`[TicketEditor] Filtering out ticket #${t.id} - priority ${ticketPriority} !== filter ${priority}`);
+                    }
+                    return matches;
+                });
+                
+                console.log(`[TicketEditor] After priority filter (${priority}): ${beforePriority} -> ${filtered.length}`);
+                if (filtered.length === 0 && beforePriority > 0) {
+                    console.warn(`[TicketEditor] Priority filter ${priority} filtered out all ${beforePriority} tickets. Available priorities before filter:`, availablePrioritiesBefore);
+                }
             }
             
             // Filter by ticket type
             if (this.filters.ticketType) {
-                filtered = filtered.filter(t => t.ticket_type === this.filters.ticketType);
+                const beforeType = filtered.length;
+                filtered = filtered.filter(t => t && t.ticket_type === this.filters.ticketType);
+                console.log(`[TicketEditor] After ticket type filter (${this.filters.ticketType}): ${beforeType} -> ${filtered.length}`);
             }
             
             // Filter by search term
             if (this.filters.search.trim()) {
+                const beforeSearch = filtered.length;
                 const search = this.filters.search.toLowerCase();
                 filtered = filtered.filter(t => 
-                    t.title.toLowerCase().includes(search) ||
-                    (t.description && t.description.toLowerCase().includes(search)) ||
-                    t.id.toString().includes(search)
+                    t && (
+                        (t.title && t.title.toLowerCase().includes(search)) ||
+                        (t.description && t.description.toLowerCase().includes(search)) ||
+                        t.id.toString().includes(search)
+                    )
                 );
+                console.log(`[TicketEditor] After search filter ("${this.filters.search}"): ${beforeSearch} -> ${filtered.length}`);
             }
             
             // Sort by priority (highest first), then by created_at (newest first)
             filtered.sort((a, b) => {
+                if (!a || !b) return 0;
                 if (b.priority !== a.priority) return b.priority - a.priority;
                 return new Date(b.created_at) - new Date(a.created_at);
             });
+            
+            console.log(`[TicketEditor] Final filtered count: ${filtered.length} tickets`);
+            if (filtered.length > 0) {
+                console.log('[TicketEditor] Sample filtered tickets:', filtered.slice(0, 3).map(t => `#${t.id}:${t.status}`));
+            } else if (this.tickets.length > 0) {
+                console.warn('[TicketEditor] WARNING: All tickets filtered out!', {
+                    totalTickets: this.tickets.length,
+                    filters: this.filters,
+                    ticketStatuses: [...new Set(this.tickets.map(t => t.status))]
+                });
+            }
             
             this.filteredTickets = filtered;
             
@@ -294,7 +455,7 @@ window.ticketEditor = function() {
             const payload = {
                 title: this.formData.title.trim(),
                 description: this.formData.description.trim(),
-                ticket_type: this.formData.ticket_type,
+                ticket_type: this.formData.ticket_type, // createTicket expects snake_case
                 status: this.formData.status,
                 priority: parseInt(this.formData.priority),
                 repro_steps: this.formData.repro_steps.trim() || null,
@@ -311,11 +472,18 @@ window.ticketEditor = function() {
                 });
                 this.isCreating = false;
             } else if (this.selectedTicket) {
-                // Update existing ticket
+                // Update existing ticket (updateTicket accepts both snake_case and camelCase)
                 EditorBase.send({
                     type: 'updateTicket',
                     ticketId: this.selectedTicket.id,
-                    ...payload
+                    ticketType: payload.ticket_type, // updateTicket prefers camelCase
+                    status: payload.status,
+                    priority: payload.priority,
+                    reproSteps: payload.repro_steps,
+                    resolutionNotes: payload.resolution_notes,
+                    title: payload.title,
+                    description: payload.description,
+                    tags: payload.tags
                 });
             }
         },
@@ -451,10 +619,26 @@ window.ticketEditor = function() {
             try {
                 const saved = localStorage.getItem('ticketEditor_filters');
                 if (saved) {
-                    this.filters = { ...this.filters, ...JSON.parse(saved) };
+                    const restored = JSON.parse(saved);
+                    console.log('[TicketEditor] Restoring filters from localStorage:', restored);
+                    this.filters = { ...this.filters, ...restored };
+                    // Ensure status filter is valid
+                    if (this.filters.status && !['all', 'open', 'backlog', 'in_progress', 'resolved'].includes(this.filters.status)) {
+                        console.warn(`[TicketEditor] Invalid restored status filter: "${this.filters.status}", resetting to 'all'`);
+                        this.filters.status = 'all';
+                    }
+                } else {
+                    console.log('[TicketEditor] No saved filters found in localStorage, using defaults');
                 }
             } catch (e) {
                 console.warn('[TicketEditor] Failed to restore filters:', e);
+                // Reset to defaults on error
+                this.filters = {
+                    status: 'all',
+                    priority: '',
+                    ticketType: '',
+                    search: ''
+                };
             }
         },
         
