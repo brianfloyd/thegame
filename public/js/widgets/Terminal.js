@@ -32,6 +32,12 @@ export default class Terminal extends Component {
         this.currentRoomNPCs = new Map(); // npcId -> { element, nameSpan, statusSpan, lastStatus }
         // Track if disconnect message has been shown (to prevent duplicate messages)
         this.disconnectMessageShown = false;
+        // Track timeout message element and interval for animated dots
+        this.timeoutMessageElement = null;
+        this.timeoutInterval = null;
+        this.timeoutDotCount = 0;
+        // Track if we're waiting for room update after reconnection
+        this.waitingForReconnectRoomUpdate = false;
         this.ticketManagerFilter = 'all'; // Track current filter in ticket manager
         this.allTickets = [];
         this.ticketManager = null;
@@ -105,11 +111,8 @@ export default class Terminal extends Component {
         this.subscribe('ticket:error', (data) => this.handleTicketError(data));
         this.subscribe('ticketsList', (data) => this.handleTicketsList(data));
         this.subscribe('ticketUpdated', (data) => {
-            console.log('[Terminal] ticketUpdated event received:', data);
-            
             // If ticket was deleted, immediately remove it from local array to prevent stale display
             if (data.ticket && data.ticket.status === 'deleted') {
-                console.log(`[Terminal] Ticket #${data.ticketId} was deleted, removing from local array immediately`);
                 this.allTickets = (this.allTickets || []).filter(t => t && t.id !== data.ticketId);
                 // If ticket manager is visible, re-render immediately
                 if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
@@ -126,17 +129,12 @@ export default class Terminal extends Component {
             }
             
             if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
-                console.log('[Terminal] Reloading tickets after update');
                 this.loadTicketsForManager();
-            } else {
-                console.log('[Terminal] Ticket manager not visible, skipping reload');
             }
         });
         
         this.subscribe('ticketFeedbackAdded', (data) => {
-            console.log('[Terminal] ticketFeedbackAdded event received:', data);
             if (this.ticketManager && !this.ticketManager.classList.contains('hidden')) {
-                console.log('[Terminal] Reloading tickets after feedback added');
                 this.loadTicketsForManager();
             }
         });
@@ -247,25 +245,134 @@ export default class Terminal extends Component {
     }
     
     /**
-     * Handle disconnect event - show one disconnect message
+     * Handle disconnect event - show animated timeout message with dots
      */
     handleDisconnected(data) {
-        // Only show disconnect message once
+        // Always clean up and replace any existing disconnect messages
+        if (this.terminalContent) {
+            // First, remove any existing disconnect/reconnect messages (old static messages)
+            const errorMessages = this.terminalContent.querySelectorAll('.error-message');
+            errorMessages.forEach(msg => {
+                const text = msg.textContent || msg.innerText || '';
+                if (text.toLowerCase().includes('connection has failed') || 
+                    text.toLowerCase().includes('attempting to reconnect') ||
+                    text.toLowerCase().includes('server connection') ||
+                    text.toLowerCase().includes('server timeout')) {
+                    msg.remove();
+                }
+            });
+            
+            // Also remove any existing timeout message element if it exists
+            const existingTimeoutMsg = document.getElementById('timeout-message');
+            if (existingTimeoutMsg) {
+                existingTimeoutMsg.remove();
+            }
+            
+            // Clear any existing timeout interval
+            if (this.timeoutInterval) {
+                clearInterval(this.timeoutInterval);
+                this.timeoutInterval = null;
+            }
+        }
+        
+        // Only show disconnect message once per disconnect session
         if (!this.disconnectMessageShown) {
             this.disconnectMessageShown = true;
-            this.addMessage('Server connection has failed. Attempting to reconnect...', 'error', true);
+            this.timeoutDotCount = 1; // Start with 1 dot immediately
+            
+            if (this.terminalContent) {
+                // Create the new timeout message element
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'error-message';
+                msgDiv.id = 'timeout-message';
+                msgDiv.textContent = 'server timeout.'; // Start with 1 dot
+                this.terminalContent.appendChild(msgDiv);
+                this.timeoutMessageElement = msgDiv;
+                
+                // Start interval to increment dots every 5 seconds
+                this.timeoutInterval = setInterval(() => {
+                    if (this.timeoutMessageElement && this.terminalContent) {
+                        // Verify the element still exists in the DOM
+                        if (!document.getElementById('timeout-message')) {
+                            // Element was removed, clean up
+                            if (this.timeoutInterval) {
+                                clearInterval(this.timeoutInterval);
+                                this.timeoutInterval = null;
+                            }
+                            return;
+                        }
+                        
+                        this.timeoutDotCount++;
+                        
+                        // Reset after 100 dots
+                        if (this.timeoutDotCount > 100) {
+                            this.timeoutDotCount = 1;
+                        }
+                        
+                        // Update the message with dots
+                        const dots = '.'.repeat(this.timeoutDotCount);
+                        this.timeoutMessageElement.textContent = `server timeout${dots}`;
+                    } else {
+                        // Clean up if element was removed
+                        if (this.timeoutInterval) {
+                            clearInterval(this.timeoutInterval);
+                            this.timeoutInterval = null;
+                        }
+                    }
+                }, 5000); // Update every 5 seconds
+            }
         }
     }
     
     /**
-     * Handle reconnect event - optionally show reconnection message
+     * Handle reconnect event - clear disconnect messages
+     * Note: Server automatically sends roomUpdate and triggers look after authentication
      */
     handleConnected(data) {
         // Reset disconnect message flag on successful reconnection
+        const wasDisconnected = this.disconnectMessageShown;
         this.disconnectMessageShown = false;
-        // Optionally show reconnection message, but keep it brief
-        // Only show if we were previously disconnected (can check if we want)
-        // For now, we'll let the server handle showing reconnection status
+        
+        // Clear timeout interval if it exists
+        if (this.timeoutInterval) {
+            clearInterval(this.timeoutInterval);
+            this.timeoutInterval = null;
+        }
+        
+        // Remove timeout message element if it exists
+        if (this.timeoutMessageElement) {
+            this.timeoutMessageElement.remove();
+            this.timeoutMessageElement = null;
+        }
+        this.timeoutDotCount = 0;
+        
+        if (wasDisconnected && this.terminalContent) {
+            // Remove recent disconnect/reconnection error messages from terminal
+            const errorMessages = this.terminalContent.querySelectorAll('.error-message');
+            // Remove the last few error messages that are likely connection-related
+            // Check last 10 messages for connection-related errors (in case multiple reconnect attempts)
+            const messagesToCheck = Array.from(errorMessages).slice(-10);
+            messagesToCheck.forEach(msg => {
+                const text = msg.textContent || msg.innerText || '';
+                if (text.toLowerCase().includes('connection has failed') || 
+                    text.toLowerCase().includes('attempting to reconnect') ||
+                    text.toLowerCase().includes('server connection') ||
+                    text.toLowerCase().includes('server timeout') ||
+                    text.toLowerCase().includes('not valid session') ||
+                    text.toLowerCase().includes('select a character') ||
+                    text.toLowerCase().includes('please authenticate')) {
+                    msg.remove();
+                }
+            });
+            
+            // Show reconnection success message
+            // Server will automatically send roomUpdate and trigger look after authentication completes
+            this.addMessage('✓ Reconnected to server successfully.', 'info', true);
+            
+            // Mark that we're waiting for room update after reconnection
+            // This will be handled when roomUpdate arrives (server sends it automatically after auth)
+            this.waitingForReconnectRoomUpdate = true;
+        }
     }
     
     /**
@@ -282,11 +389,17 @@ export default class Terminal extends Component {
             this.currentRoomNPCs.clear();
         }
         
+        // If we're waiting for room update after reconnection, force full display
+        const forceFullDisplay = this.waitingForReconnectRoomUpdate;
+        if (forceFullDisplay) {
+            this.waitingForReconnectRoomUpdate = false; // Reset flag
+        }
+        
         this.currentRoomId = room.id;
         
-        // Only display full room info when entering a new room or forced (look command)
-        if (isNewRoom || showFullInfo) {
-            this.updateRoomView(room, players, exits, npcs, roomItems, showFullInfo, messages);
+        // Display full room info when entering a new room, forced (look command), or after reconnection
+        if (isNewRoom || showFullInfo || forceFullDisplay) {
+            this.updateRoomView(room, players, exits, npcs, roomItems, showFullInfo || forceFullDisplay, messages);
         } else {
             // Same room - check for NPC status updates
             this.updateNPCStatusesInPlace(npcs);
@@ -768,10 +881,6 @@ export default class Terminal extends Component {
             // Parse markup only (no markdown - use markup conventions instead)
             const formattedHtml = parseMarkup(message, '#00ffff');
             
-            // DEBUG: Log markup parsing results
-            console.log('[Terminal] handleTalked - message:', message);
-            console.log('[Terminal] handleTalked - formattedHtml:', formattedHtml);
-            
             const msgDiv = document.createElement('div');
             msgDiv.className = 'talked-message';
             msgDiv.innerHTML = `<span class="talked-player">${this.escapeHtml(this.cleanPlayerName(playerName))}</span> says: <span class="talked-text">${formattedHtml}</span>`;
@@ -817,7 +926,6 @@ export default class Terminal extends Component {
             this.openZorkTicketManager();
         });
         
-        console.log('[Terminal] ZORK interface button initialized');
     }
     
     /**
@@ -835,7 +943,6 @@ export default class Terminal extends Component {
             const storedFilter = localStorage.getItem('ticketManager_filter');
             if (storedFilter && ['all', 'open', 'backlog', 'in_progress', 'resolved'].includes(storedFilter)) {
                 this.ticketManagerFilter = storedFilter;
-                console.log(`[Terminal] Restored ticket manager filter from localStorage: "${storedFilter}"`);
                 // Update active button
                 setTimeout(() => {
                     const filterBtn = manager.querySelector(`[data-filter="${storedFilter}"]`);
@@ -972,7 +1079,6 @@ export default class Terminal extends Component {
      * Handle tickets list response
      */
     handleTicketsList(data) {
-        console.log('[Terminal] handleTicketsList called with', data.tickets?.length || 0, 'tickets');
         if (!this.ticketManager) {
             console.warn('[Terminal] Ticket manager not found, cannot update list');
             return;
@@ -982,22 +1088,16 @@ export default class Terminal extends Component {
         const activeFilterBtn = this.ticketManager.querySelector('.ticket-filter-btn.active');
         if (activeFilterBtn) {
             const filterFromButton = activeFilterBtn.dataset.filter || 'all';
-            console.log(`[Terminal] Restoring filter from active button: "${filterFromButton}"`);
             this.ticketManagerFilter = filterFromButton;
-        } else {
-            // No active button, use stored filter or default to 'all'
-            console.log(`[Terminal] No active filter button, using stored filter: "${this.ticketManagerFilter}"`);
         }
         
         this.allTickets = data.tickets || [];
-        console.log(`[Terminal] Updated allTickets (${this.allTickets.length} tickets), rendering with filter: "${this.ticketManagerFilter}"`);
         this.renderTicketManagerList(this.ticketManagerFilter);
         
         // If a ticket was selected, re-select it to refresh details
         const selectedItem = this.ticketManager.querySelector('.ticket-manager-item.selected');
         if (selectedItem) {
             const ticketId = parseInt(selectedItem.dataset.ticketId);
-            console.log('[Terminal] Re-selecting ticket', ticketId, 'to refresh details');
             this.selectTicketInManager(ticketId);
         }
     }
@@ -1016,9 +1116,6 @@ export default class Terminal extends Component {
         // Store the filter
         this.ticketManagerFilter = filter;
         
-        console.log(`[Terminal] renderTicketManagerList with filter: "${filter}", searchTerm: "${searchTerm}"`);
-        console.log(`[Terminal] Total tickets: ${this.allTickets.length}`);
-        
         const listContainer = this.ticketManager.querySelector('#ticketManagerList');
         if (!listContainer) return;
         
@@ -1027,15 +1124,9 @@ export default class Terminal extends Component {
         // CRITICAL: Always filter out deleted tickets first, regardless of filter
         const beforeDeletedFilter = filtered.length;
         filtered = filtered.filter(t => t && t.status !== 'deleted');
-        if (filtered.length !== beforeDeletedFilter) {
-            console.log(`[Terminal] Filtered out ${beforeDeletedFilter - filtered.length} deleted tickets`);
-        }
-        
         // Apply status filter
         if (filter !== 'all') {
-            const beforeFilter = filtered.length;
             filtered = filtered.filter(t => t.status === filter);
-            console.log(`[Terminal] Filtered by status "${filter}": ${beforeFilter} -> ${filtered.length} tickets`);
         }
         
         // Apply search
@@ -1104,7 +1195,6 @@ export default class Terminal extends Component {
      * Filter tickets in manager
      */
     filterTicketsInManager(filter) {
-        console.log(`[Terminal] filterTicketsInManager called with filter: "${filter}"`);
         // Store the filter
         this.ticketManagerFilter = filter;
         // Save to localStorage
@@ -1232,7 +1322,6 @@ export default class Terminal extends Component {
             newBtn.addEventListener('click', (e) => {
                 const action = e.target.dataset.action;
                 const ticketId = parseInt(e.target.dataset.ticketId);
-                console.log('[Terminal] Ticket action clicked:', action, 'ticketId:', ticketId);
                 if (action === 'start-work') {
                     this.updateTicketStatusInManager(ticketId, 'in_progress');
                 } else if (action === 'resolve') {
@@ -1255,7 +1344,6 @@ export default class Terminal extends Component {
      */
     showCreateTicketForm(manager) {
         // Use the same dialog opening method
-        console.log('[Terminal] showCreateTicketForm called, opening dialog');
         this.openZorkTicketDialog();
     }
     
@@ -1265,15 +1353,12 @@ export default class Terminal extends Component {
     handleStatusChangeInManager(selectElement) {
         const ticketId = parseInt(selectElement.dataset.ticketId);
         const newStatus = selectElement.value;
-        console.log('[Terminal] Status change requested:', newStatus, 'ticketId:', ticketId);
         
         // Update local ticket data immediately (optimistic update)
         const ticket = this.allTickets.find(t => t.id === ticketId);
         if (ticket) {
-            const oldStatus = ticket.status;
             ticket.status = newStatus;
             ticket.updated_at = new Date().toISOString();
-            console.log(`[Terminal] Updated local ticket #${ticketId} status from "${oldStatus}" to "${newStatus}"`);
         } else {
             console.error(`[Terminal] Ticket #${ticketId} not found in local tickets array`);
         }
@@ -1285,7 +1370,6 @@ export default class Terminal extends Component {
             if (statusBadge) {
                 statusBadge.textContent = newStatus;
                 statusBadge.className = `ticket-status-badge ticket-status-${newStatus}`;
-                console.log(`[Terminal] Updated status badge to "${newStatus}"`);
             }
             
             // Update status emoji in header
@@ -1297,7 +1381,6 @@ export default class Terminal extends Component {
         }
         
         // Save to server immediately
-        console.log(`[Terminal] Sending status update to server: ticketId=${ticketId}, status=${newStatus}`);
         this.updateTicketStatusInManager(ticketId, newStatus);
     }
     
@@ -1311,37 +1394,28 @@ export default class Terminal extends Component {
             return;
         }
         
-        console.log('[Terminal] Updating ticket status:', ticketId, 'to', status, 'from', ticket.status);
-        
         if (status === 'resolved') {
             // Use bespoke dialog for resolution notes
-            console.log('[Terminal] Opening resolve dialog');
             const dialog = this.createBespokeDialog('Resolve Ticket', 'Add resolution notes (optional):', (notes) => {
-                console.log('[Terminal] Resolve dialog submitted with notes:', notes ? 'yes' : 'no');
                 this.updateTicketStatusInManagerWithNotes(ticketId, status, notes);
             });
             if (dialog) {
                 dialog.classList.remove('hidden');
-                console.log('[Terminal] Resolve dialog shown');
             }
             return;
         } else if (status === 'open' && ticket.status === 'resolved') {
             // Reopening a resolved ticket - allow notes for regression tracking
-            console.log('[Terminal] Opening reopen dialog');
             const dialog = this.createBespokeDialog('Reopen Ticket', 'Reopen as regression bug? Add notes (optional):', (notes) => {
-                console.log('[Terminal] Reopen dialog submitted with notes:', notes ? 'yes' : 'no');
                 const reopenNotes = 'Reopened as regression bug' + (notes ? '\n\n' + notes : '');
                 this.updateTicketStatusInManagerWithNotes(ticketId, status, reopenNotes);
             });
             if (dialog) {
                 dialog.classList.remove('hidden');
-                console.log('[Terminal] Reopen dialog shown');
             }
             return;
         }
         
         // For other status changes (e.g., start-work), update directly
-        console.log('[Terminal] Updating status directly (no dialog)');
         this.updateTicketStatusInManagerWithNotes(ticketId, status, null);
     }
     
@@ -1355,8 +1429,6 @@ export default class Terminal extends Component {
             this.game.messageBus.emit('terminal:error', { message: 'Not connected to server. Cannot update ticket.' });
             return;
         }
-        
-        console.log('[Terminal] Sending updateTicket:', { ticketId, status, hasNotes: !!resolutionNotes });
         
         ws.send(JSON.stringify({
             type: 'updateTicket',
@@ -1563,8 +1635,6 @@ export default class Terminal extends Component {
             return;
         }
         
-        console.log('[Terminal] Sending updateTicket:', { ticketId, ...data });
-        
         ws.send(JSON.stringify({
             type: 'updateTicket',
             ticketId: ticketId,
@@ -1592,21 +1662,13 @@ export default class Terminal extends Component {
      * Show add context form
      */
     showAddContextForm(ticketId) {
-        console.log('[Terminal] Opening add context dialog for ticket:', ticketId);
         const dialog = this.createBespokeDialog('Add Context', 'Add context, notes, or feedback:', (context) => {
             if (context && context.trim()) {
-                console.log('[Terminal] Submitting context for ticket:', ticketId, 'context:', context);
                 this.addContextToTicket(ticketId, context.trim());
-            } else {
-                console.log('[Terminal] No context provided, skipping');
             }
         });
         if (dialog) {
             dialog.classList.remove('hidden');
-            console.log('[Terminal] Dialog shown, hidden class removed. Dialog visible:', !dialog.classList.contains('hidden'));
-            console.log('[Terminal] Dialog element:', dialog);
-            console.log('[Terminal] Dialog computed style display:', window.getComputedStyle(dialog).display);
-            console.log('[Terminal] Dialog z-index:', window.getComputedStyle(dialog).zIndex);
         } else {
             console.error('[Terminal] Failed to create dialog');
         }
@@ -1622,8 +1684,6 @@ export default class Terminal extends Component {
             this.game.messageBus.emit('terminal:error', { message: 'Not connected to server. Cannot add context.' });
             return;
         }
-        
-        console.log('[Terminal] Sending addTicketFeedback:', { ticketId, contextLength: context.length });
         
         ws.send(JSON.stringify({
             type: 'addTicketFeedback',
@@ -1645,17 +1705,14 @@ export default class Terminal extends Component {
      * Show delete ticket confirmation dialog in manager
      */
     showDeleteTicketDialogInManager(ticketId) {
-        console.log('[Terminal] Opening delete ticket dialog for ticket:', ticketId);
         const dialog = this.createBespokeDialog('Delete Ticket', 'Are you sure you want to delete this ticket? It will be marked as deleted and Cursor will ignore it. Type "DELETE" to confirm:', (confirmation) => {
             if (confirmation && confirmation.trim().toUpperCase() === 'DELETE') {
-                console.log('[Terminal] Delete confirmed for ticket:', ticketId);
                 this.updateTicketStatusInManager(ticketId, 'deleted');
                 // Reload tickets after delete
                 setTimeout(() => {
                     this.loadTicketsForManager();
                 }, 500);
             } else {
-                console.log('[Terminal] Delete not confirmed, confirmation text:', confirmation);
                 // Show error if confirmation doesn't match
                 const errorDiv = dialog.querySelector('#ticketActionError');
                 if (errorDiv) {
@@ -1706,10 +1763,8 @@ export default class Terminal extends Component {
         
         // Ensure z-index is correct (should be 5000 from CSS, but verify)
         const computedZIndex = window.getComputedStyle(dialog).zIndex;
-        console.log('[Terminal] ZORK ticket dialog z-index:', computedZIndex);
         if (parseInt(computedZIndex) < 4000) {
             dialog.style.zIndex = '5000';
-            console.log('[Terminal] Fixed ZORK ticket dialog z-index to 5000');
         }
         
         // Setup drag and resize functionality
@@ -1719,7 +1774,6 @@ export default class Terminal extends Component {
         setTimeout(() => {
             titleInput.focus();
             titleInput.select();
-            console.log('[Terminal] ZORK ticket dialog opened and focused');
         }, 100);
         
         // Setup submit handler (always, to ensure it's ready)
@@ -1873,7 +1927,6 @@ export default class Terminal extends Component {
         
         // If handlers are already set up, don't set them up again
         if (this.zorkTicketSubmitHandler && dialog._handlersSetup) {
-            console.log('[Terminal] ZORK ticket dialog handlers already set up, skipping');
             return;
         }
         
@@ -1891,7 +1944,6 @@ export default class Terminal extends Component {
         }
         
         const closeDialog = () => {
-            console.log('[Terminal] Closing ZORK ticket dialog');
             dialog.classList.add('hidden');
             errorDiv.classList.add('hidden');
         };
@@ -2471,8 +2523,6 @@ export default class Terminal extends Component {
                 this.startRecording();
             }
         });
-        
-        console.log('[Terminal] Voice input initialized');
     }
     
     /**

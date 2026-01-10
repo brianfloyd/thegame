@@ -321,7 +321,6 @@ function startAutoRefresh(db, callback, intervalMs = 5000) {
     
     // Start interval
     autoRefreshInterval = setInterval(refresh, intervalMs);
-    console.log(`[TicketService] Auto-refresh started (${intervalMs}ms)`);
 }
 
 /**
@@ -332,7 +331,6 @@ function stopAutoRefresh() {
         clearInterval(autoRefreshInterval);
         autoRefreshInterval = null;
         autoRefreshCallback = null;
-        console.log('[TicketService] Auto-refresh stopped');
     }
 }
 

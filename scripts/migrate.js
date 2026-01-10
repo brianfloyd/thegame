@@ -56,7 +56,6 @@ async function runMigrations() {
     
     for (const file of migrationFiles) {
       if (appliedMigrations.has(file)) {
-        console.log(`  Skipping ${file} (already applied)`);
         continue;
       }
       

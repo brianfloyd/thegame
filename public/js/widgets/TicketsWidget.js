@@ -43,7 +43,6 @@ export default class TicketsWidget extends Widget {
             const savedFilter = localStorage.getItem('ticketsWidget_filter');
             if (savedFilter && ['open', 'in_progress', 'resolved', 'all'].includes(savedFilter)) {
                 this.filterStatus = savedFilter;
-                console.log(`[TicketsWidget] Restored filter from localStorage: ${this.filterStatus}`);
             }
         }
     }
@@ -71,10 +70,16 @@ export default class TicketsWidget extends Widget {
         // Restore tab from localStorage if available
         if (typeof localStorage !== 'undefined') {
             const savedTab = localStorage.getItem('ticketsWidget_tab');
-            if (savedTab && ['openPending', 'testing'].includes(savedTab)) {
+            if (savedTab && ['openPending', 'testing', 'backlog'].includes(savedTab)) {
                 this.currentTab = savedTab;
-                console.log(`[TicketsWidget] Restored tab from localStorage: ${this.currentTab}`);
+            } else {
+                // Default to openPending if no saved tab or invalid tab
+                this.currentTab = 'openPending';
+                localStorage.setItem('ticketsWidget_tab', 'openPending');
             }
+        } else {
+            // No localStorage, default to openPending
+            this.currentTab = 'openPending';
         }
         
         this.setupEventListeners();
@@ -154,7 +159,6 @@ export default class TicketsWidget extends Widget {
                     if (ticketId && !isNaN(ticketId)) {
                         // Only trigger if not clicking on action buttons or their children
                         if (!target.closest('.ticket-actions-compact') && !target.closest('button')) {
-                            console.log('[TicketsWidget] Ticket item clicked, opening ticket #' + ticketId);
                             this.viewTicket(ticketId);
                         }
                     }
@@ -166,17 +170,18 @@ export default class TicketsWidget extends Widget {
     }
     
     setTab(tab) {
-        if (!['openPending', 'testing'].includes(tab)) return;
+        if (!['openPending', 'testing', 'backlog'].includes(tab)) {
+            console.warn(`[TicketsWidget] Invalid tab: "${tab}", ignoring`);
+            return;
+        }
         this.currentTab = tab;
         if (typeof localStorage !== 'undefined') {
             localStorage.setItem('ticketsWidget_tab', tab);
         }
-        console.log(`[TicketsWidget] Switched to tab: ${tab}`);
         this.renderTickets();
     }
     
     setFilter(status) {
-        console.log(`[TicketsWidget] Setting filter to: ${status}`);
         this.filterStatus = status;
         // Save filter to localStorage to persist across refreshes
         if (typeof localStorage !== 'undefined') {
@@ -199,36 +204,39 @@ export default class TicketsWidget extends Widget {
         
         // Prevent concurrent loads
         if (this.isLoading) {
-            console.log('[TicketsWidget] Already loading, skipping duplicate request');
             return;
         }
         
         this.isLoading = true;
-        console.log(`[TicketsWidget] Loading tickets with filter: ${this.filterStatus}, includeResolved: ${this.showResolved || this.filterStatus === 'resolved'}`);
         
-            // Request ALL tickets, let client do the filtering
-            // This prevents server-side filtering from returning empty arrays
-            this.game.send({
-                type: 'getTickets',
-                status: null, // Always get all tickets, filter on client
-                limit: 100,
-                includeResolved: true, // Get all tickets including resolved
-                includeDeleted: false // Don't include deleted tickets
-            });
+        // Request ALL tickets, let client do the filtering
+        // This prevents server-side filtering from returning empty arrays
+        this.game.send({
+            type: 'getTickets',
+            status: null, // Always get all tickets, filter on client
+            limit: 100,
+            includeResolved: true, // Get all tickets including resolved
+            includeDeleted: false // Don't include deleted tickets
+        });
+        
+        // Set a timeout to reset isLoading if no response comes back
+        // This prevents the widget from getting stuck in loading state
+        setTimeout(() => {
+            if (this.isLoading) {
+                console.warn('[TicketsWidget] Load timeout - no response received after 5 seconds, resetting isLoading');
+                this.isLoading = false;
+            }
+        }, 5000);
     }
     
     
     handleTicketsList(data) {
         this.isLoading = false; // Mark loading as complete
         
-        console.log('[TicketsWidget] ========== handleTicketsList START ==========');
-        console.log('[TicketsWidget] Current filter status BEFORE update: "${this.filterStatus}"');
-        
         // CRITICAL: Save filter to localStorage before any operations
         const savedFilter = this.filterStatus;
         if (typeof localStorage !== 'undefined') {
             localStorage.setItem('ticketsWidget_filter', savedFilter);
-            console.log(`[TicketsWidget] Saved filter to localStorage: "${savedFilter}"`);
         }
         
         // Validate data structure
@@ -245,15 +253,11 @@ export default class TicketsWidget extends Widget {
         
         // Update tickets from server response
         if (Array.isArray(data.tickets)) {
-            console.log(`[TicketsWidget] Received ${data.tickets.length} tickets from server`);
-            console.log(`[TicketsWidget] Ticket statuses from server:`, data.tickets.map(t => `#${t.id}:${t.status}`).join(', '));
-            
             // CRITICAL: Restore filter from localStorage in case it was lost
             if (typeof localStorage !== 'undefined') {
                 const storedFilter = localStorage.getItem('ticketsWidget_filter');
                 if (storedFilter && ['open', 'in_progress', 'resolved', 'all'].includes(storedFilter)) {
                     if (this.filterStatus !== storedFilter) {
-                        console.warn(`[TicketsWidget] Filter mismatch! Current: "${this.filterStatus}", Stored: "${storedFilter}", restoring from localStorage`);
                         this.filterStatus = storedFilter;
                     }
                 }
@@ -263,14 +267,23 @@ export default class TicketsWidget extends Widget {
             // Use mapRowsToTickets for consistent normalization
             this.tickets = mapRowsToTickets(data.tickets);
             
-            // Debug: Verify ticket statuses after mapping
-            console.log(`[TicketsWidget] After mapping, ticket statuses:`, this.tickets.map(t => `#${t.id}:${t.status || 'MISSING'}`).slice(0, 10).join(', '), this.tickets.length > 10 ? '...' : '');
-            
-            // Ensure all tickets have valid status (safety check)
+            // Ensure all tickets have valid status (safety check and normalization)
             this.tickets.forEach(ticket => {
-                if (!ticket.status || !TICKET_STATUSES.includes(ticket.status)) {
-                    console.warn(`[TicketsWidget] Ticket #${ticket.id} has invalid/missing status: "${ticket.status}", defaulting to 'open'`);
+                if (!ticket.status) {
+                    console.warn(`[TicketsWidget] Ticket #${ticket.id} has missing status, defaulting to 'open'`);
                     ticket.status = 'open';
+                } else {
+                    // Normalize status: trim whitespace and ensure lowercase
+                    const normalizedStatus = ticket.status.trim().toLowerCase();
+                    if (normalizedStatus !== ticket.status) {
+                        ticket.status = normalizedStatus;
+                    }
+                    
+                    // Check if normalized status is valid
+                    if (!TICKET_STATUSES.includes(ticket.status)) {
+                        console.warn(`[TicketsWidget] Ticket #${ticket.id} has invalid status: "${ticket.status}", defaulting to 'open'`);
+                        ticket.status = 'open';
+                    }
                 }
             });
             
@@ -286,14 +299,8 @@ export default class TicketsWidget extends Widget {
                 }
             }
             
-            console.log(`[TicketsWidget] Updated tickets array, now has ${this.tickets.length} tickets`);
-            console.log(`[TicketsWidget] Current filter AFTER update: "${this.filterStatus}"`);
-            console.log('[TicketsWidget] ========== About to call render() ==========');
-            
             // Render with current filter (don't change filter)
             this.renderTickets();
-            
-            console.log('[TicketsWidget] ========== handleTicketsList END ==========');
         } else {
             console.error('[TicketsWidget] Received non-array tickets:', typeof data.tickets, data.tickets);
             // Don't clear tickets if we get bad data - keep existing ones
@@ -301,11 +308,8 @@ export default class TicketsWidget extends Widget {
     }
     
     handleTicketUpdated(data) {
-        console.log('[TicketsWidget] Ticket updated:', data);
-        
         // If ticket was deleted, immediately remove it from local array to prevent stale display
         if (data.ticket && data.ticket.status === 'deleted') {
-            console.log(`[TicketsWidget] Ticket #${data.ticketId} was deleted, removing from local array immediately`);
             this.tickets = this.tickets.filter(t => t && t.id !== data.ticketId);
             // Re-render immediately to reflect deletion
             this.renderTickets();
@@ -366,7 +370,6 @@ export default class TicketsWidget extends Widget {
         
         // CRITICAL: Preserve filter status - don't let it get reset
         const filterBeforeRender = this.filterStatus;
-        console.log(`[TicketsWidget] RENDER START - Filter: "${filterBeforeRender}", Tickets: ${this.tickets ? this.tickets.length : 0}, Container: ${this.container ? 'found' : 'missing'}`);
         
         // Ensure filter status is valid BEFORE filtering
         if (!['open', 'in_progress', 'resolved', 'all'].includes(this.filterStatus)) {
@@ -386,22 +389,17 @@ export default class TicketsWidget extends Widget {
         console.log(`[TicketsWidget] Rendering with ${this.tickets.length} total tickets, filter: "${this.filterStatus}", currentTab: "${this.currentTab}"`);
         
         // Ensure currentTab is valid
-        if (!this.currentTab || !['openPending', 'testing'].includes(this.currentTab)) {
+        if (!this.currentTab || !['openPending', 'testing', 'backlog'].includes(this.currentTab)) {
             console.warn(`[TicketsWidget] Invalid currentTab: "${this.currentTab}", defaulting to 'openPending'`);
             this.currentTab = 'openPending';
+            // Save to localStorage
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('ticketsWidget_tab', 'openPending');
+            }
         }
         
         // Filter out deleted tickets first
         let filtered = this.tickets.filter(t => t && t.status !== 'deleted');
-        console.log(`[TicketsWidget] After removing deleted: ${filtered.length} tickets`);
-        
-        // Debug: Show status breakdown
-        const statusBreakdown = {};
-        filtered.forEach(t => {
-            const status = t.status || 'undefined';
-            statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
-        });
-        console.log(`[TicketsWidget] Ticket status breakdown:`, statusBreakdown);
         
         // Filter tickets based on current tab (tabs work independently of filterStatus)
         let tabTickets = [];
@@ -413,24 +411,11 @@ export default class TicketsWidget extends Widget {
             tabTickets = filtered.filter(t => t && t.status === 'open');
             tabTitle = 'Open/Pending';
             tabCount = tabTickets.length;
-            console.log(`[TicketsWidget] Open/Pending tab: ${tabTickets.length} tickets (filtered from ${filtered.length} total)`);
-            if (tabTickets.length === 0 && filtered.length > 0) {
-                console.warn(`[TicketsWidget] WARNING: No 'open' tickets found, but ${filtered.length} non-deleted tickets exist. Statuses:`, Object.keys(statusBreakdown));
-            }
         } else if (this.currentTab === 'testing') {
             // Tab 2: Testing - ALL in_progress tickets
             tabTickets = filtered.filter(t => t && t.status === 'in_progress');
             tabTitle = 'Testing';
             tabCount = tabTickets.length;
-            console.log(`[TicketsWidget] Testing tab: ${tabTickets.length} in_progress tickets (filtered from ${filtered.length} total)`);
-            if (tabTickets.length === 0 && filtered.length > 0) {
-                console.warn(`[TicketsWidget] WARNING: No 'in_progress' tickets found, but ${filtered.length} non-deleted tickets exist. Statuses:`, Object.keys(statusBreakdown));
-            }
-            if (tabTickets.length > 0) {
-                tabTickets.forEach(t => {
-                    console.log(`[TicketsWidget]   - Ticket #${t.id}: status="${t.status}", title="${t.title}"`);
-                });
-            }
         } else {
             console.error(`[TicketsWidget] Unknown currentTab: "${this.currentTab}"`);
             tabTitle = 'Unknown';

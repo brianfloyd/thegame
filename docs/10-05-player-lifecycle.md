@@ -340,26 +340,77 @@ The character is now offline.
 
 # 🔄 11. Reconnection Handling
 
-On reconnect:
+The game supports **graceful reconnection** after network interruptions or server restarts.
 
-- If the player logs in as the same character  
-- AND their previous session ended less than a defined grace window  
-- AND no conflicting session exists  
+## 11.1 Client-Side Reconnection Logic
 
-Then:
+Located in `public/js/core/Game.js`:
 
-### Fast Reconnect Path  
-- skip rebuilding world state from scratch  
-- load the last valid snapshot  
-- rejoin the world at the saved location  
-- resume applicable timers  
+### Connection State Management
+```javascript
+{
+  ws: WebSocket | null,
+  isReconnecting: boolean,
+  reconnectTimer: number | null,
+  disconnectMessageShown: boolean
+}
+```
+
+### Reconnection Flow
+1. **On WebSocket close**: `scheduleReconnect()` is called
+2. **Backoff**: 3-second delay before retry
+3. **Duplicate prevention**: Skip if already connecting/reconnecting
+4. **Clean connection**: Clear old WebSocket and timers before new attempt
+5. **State reset**: On successful reconnect, reset `disconnectMessageShown` flag
+
+### Player Name Persistence
+On receiving `playerStats`, the client stores:
+```javascript
+sessionStorage.setItem('gamePlayerName', playerName)
+```
+
+On reconnect, this name is sent with `authenticateSession` to enable session restoration.
+
+## 11.2 Server-Side Session Restoration
+
+When the server restarts, in-memory sessions are lost. The restoration mechanism:
+
+1. Client sends `authenticateSession` with stored `playerName`
+2. Server detects empty `sessionStore` but valid session cookie
+3. Server looks up player by name, retrieves account ID
+4. Server rebuilds session in `sessionStore`
+5. Session proceeds as normal (sends `playerStats`, `roomUpdate`, etc.)
+
+See `docs/50-01-auth-and-sessions-canonical.md` Section 11.1 for full details.
+
+## 11.3 Fast Reconnect Path (Network Drop)
+
+If the server is still running:
+- Session may still exist in memory
+- Client reconnects and re-authenticates
+- Skip rebuilding world state from scratch
+- Rejoin the world at the saved location
+- Resume applicable timers
+
+## 11.4 Conflict Resolution
 
 If a conflicting session exists:
-- new login overrides  
-- old session is invalidated  
+- New login overrides
+- Old session is invalidated
 
 If too much time has passed:
-- perform full fresh load (as in steps 4–6)
+- Perform full fresh load (as in steps 4–6)
+
+## 11.5 Terminal Feedback
+
+During disconnection:
+- Display: `server timeout.` with animated dots (every 5 seconds)
+- Dots reset after 100
+
+On successful reconnection:
+- Clear previous disconnect messages
+- Display: `✓ Reconnected to server successfully.`
+- Automatically receive `roomUpdate` to refresh game state
 
 ---
 

@@ -4,11 +4,11 @@
 **Last Updated:** Based on codebase analysis  
 **Purpose:** Complete specification of widget architecture, CSS structure, and blueprint for adding new widgets seamlessly to the widgets panel.
 
+**Note:** For details on how existing widgets operate in gameplay, see `10-15-widget-operation-canonical.md`.
+
 ---
 
 ## 1. WIDGET ARCHITECTURE OVERVIEW
-
-**Note:** For general file structure and directory organization rules, see **`20-00-file-structure-canonical.md`**. This section documents widget-specific file locations only.
 
 ### 1.1 Widget File Structure
 ```
@@ -16,15 +16,15 @@ public/
 ├── js/
 │   ├── core/
 │   │   ├── WidgetManager.js      # Widget lifecycle and message routing
-│   │   ├── Component.js          # Base class for DOM-based widgets
+│   │   ├── Component.js          # Base class for DOM-based components (non-panel UI)
 │   │   └── Game.js               # Game instance with MessageBus
 │   └── widgets/
-│       ├── Widget.js             # Base class for render-based widgets
+│       ├── Widget.js             # Base class for render-based widgets (ALL panel widgets)
 │       ├── widget_registry.js    # Widget definitions and configuration
 │       ├── StatsWidget.js        # Example render-based widget
 │       ├── CommsWidget.js        # Example render-based widget
-│       ├── NPCWidget.js          # Example Component-based widget
-│       └── FactoryWidget.js      # Example Component-based widget
+│       ├── NPCWidget.js          # Example auto-managed widget
+│       └── FactoryWidget.js      # Example auto-managed widget
 ├── css/
 │   └── widget-shared.css         # Shared CSS for all widgets
 └── game.html                     # Links widget-shared.css
@@ -294,9 +294,9 @@ The codebase uses TWO different base classes for different purposes. Understandi
 ```
 
 ### 3.3 Slot Types
-- **`'standard'`** - Normal widget, appears in standard widget panel
+- **`'standard'`** - Normal widget, appears in standard widget panel (single slot width)
 - **`'fullwidth'`** - Wide widget, takes full width (spans 2 columns)
-- **`'special'`** - Auto-managed widgets (NPC, Factory)
+- **`'special'`** - Auto-managed widgets (NPC, Factory) - uses special slot
 
 **Dynamic Width:**
 - CommsWidget uses `widget-fullwidth` class to expand to 2 slots when broadcast mode is selected
@@ -350,7 +350,7 @@ game.widgetManager.mountAll();
 #### Step 1: Create Widget Class File
 **Location:** `public/js/widgets/YourWidget.js`
 
-**For Render-Based Widget (Recommended):**
+**For Render-Based Widget (Required for ALL panel widgets):**
 ```javascript
 import Widget from './Widget.js';
 
@@ -358,11 +358,12 @@ export default class YourWidget extends Widget {
     constructor(game, id) {
         super(game, id);
         // Initialize widget state (NO DOM lookups)
+        this.yourData = null;
     }
     
     init() {
         super.init();
-        // Set up widget state only
+        // Set up widget state only (NO DOM lookups)
     }
     
     render() {
@@ -391,11 +392,17 @@ export default class YourWidget extends Widget {
         this.content = this.rootElement.querySelector('#yourWidgetContent');
         
         // Set up event listeners
+        this.setupEventListeners();
+        
         // Initialize widget behavior
+        this.loadData();
     }
     
     onDetach() {
         // Clean up event listeners
+        if (this._eventHandler) {
+            this.rootElement.removeEventListener('click', this._eventHandler);
+        }
     }
     
     onMessage(msg) {
@@ -405,14 +412,27 @@ export default class YourWidget extends Widget {
         }
     }
     
+    setupEventListeners() {
+        // Use event delegation to avoid losing listeners on re-render
+        this._eventHandler = (e) => {
+            // Handle clicks
+        };
+        this.rootElement.addEventListener('click', this._eventHandler);
+    }
+    
     updateWidget(data) {
         if (!this.content) return;
         // Update widget display
     }
+    
+    loadData() {
+        // Request data from server if needed
+        this.game.send({ type: 'getYourData' });
+    }
 }
 ```
 
-**For Component-Based Component (NOT a panel widget - use existing DOM):**
+**For Component-Based Component (ONLY for non-panel UI - NOT for widgets):**
 ```javascript
 import Component from '../core/Component.js';
 
@@ -480,7 +500,17 @@ const WIDGET_CLASSES = {
 };
 ```
 
-#### Step 4: Add CSS Theme (Optional)
+#### Step 4: Add Message Routing (If Needed)
+**File:** `public/js/core/WidgetManager.js`
+
+If your widget needs new message types, add to `subscribeToGameEvents()` method:
+```javascript
+this.messageBus.on('yourEvent', (data) => {
+    this.handleMessage({ type: 'yourMessageType', ...data });
+});
+```
+
+#### Step 5: Add CSS Theme (Optional)
 **File:** `public/css/widget-shared.css`
 
 If widget needs unique theme:
@@ -502,7 +532,7 @@ Apply theme in `render()`:
 root.className = 'widget widget-yourwidget widget-theme-yourwidget';
 ```
 
-#### Step 5: Use Standardized CSS Classes
+#### Step 6: Use Standardized CSS Classes
 Use shared CSS classes for consistent styling:
 - `.widget-btn`, `.widget-btn-primary` for buttons
 - `.widget-input` for inputs
@@ -575,6 +605,22 @@ To route new message type:
 2. Call `this.handleMessage({ type: 'yourType', ...data })`
 3. Widgets handle in their `onMessage()` method
 
+**Example:**
+```javascript
+this.messageBus.on('yourEvent', (data) => {
+    this.handleMessage({ type: 'yourMessageType', ...data });
+});
+```
+
+Then in your widget:
+```javascript
+onMessage(msg) {
+    if (msg.type === 'yourMessageType') {
+        // Handle the message
+    }
+}
+```
+
 ---
 
 ## 8. WIDGET VISIBILITY LOGIC
@@ -591,18 +637,35 @@ To route new message type:
 - Visibility controlled by widget's internal state
 - Widget sets visibility state in message handlers
 - WidgetManager checks widget's state properties to determine visibility
-- **NPC Widget:**
-  - Shows when `widget.activeNPC` is truthy (set in `handleRoomUpdate()`)
+- **NPC Widget Example:**
   - Widget sets `this.activeNPC = npc` when NPC has active harvest/cooldown
   - Widget sets `this.activeNPC = null` when no active NPC
   - WidgetManager checks: `shouldShow = !!widget.activeNPC`
-- **Factory Widget:**
-  - Shows when `widget.inFactoryRoom === true` (set in `handleRoomChange()`)
+- **Factory Widget Example:**
   - Widget sets `this.inFactoryRoom = true` when room type is 'factory'
   - Widget sets `this.inFactoryRoom = false` when not in factory room
   - WidgetManager checks: `shouldShow = widget.inFactoryRoom !== undefined ? widget.inFactoryRoom : this.playerState.inFactoryRoom`
 - **CRITICAL:** Auto-managed widgets MUST set their visibility state properties in message handlers
 - WidgetManager calls `updateVisibility()` after routing messages, so widgets have a chance to update state first
+
+**Implementation Pattern for Auto-Managed Widgets:**
+```javascript
+// In widget's onMessage()
+onMessage(msg) {
+    if (msg.type === 'roomUpdate') {
+        // Check conditions for visibility
+        const shouldShow = this.checkVisibilityConditions(msg.data);
+        this.visible = shouldShow; // Set state property
+        
+        // Update display if attached
+        if (this.attached) {
+            this.updateDisplay();
+        }
+    }
+}
+
+// WidgetManager checks this property in updateVisibility()
+```
 
 ---
 
@@ -739,7 +802,7 @@ The toggle switch CSS in `widget-shared.css` matches `editor-core.css` lines 492
 
 ### 10.3 Auto-Managed Widget (NPCWidget Pattern)
 
-#### 10.3.1 Direct Server-to-Widget Messaging for Resource Tracking
+#### Direct Server-to-Widget Messaging for Resource Tracking
 
 **Pattern:** For widgets monitoring server-side processes (like NPC cycle engine), use direct WebSocket messages for precise, real-time updates.
 
@@ -794,15 +857,14 @@ handleDirectResourceGain(msg) {
 - Widgets monitoring server-side processes (NPC cycles, crafting, etc.)
 - When timing accuracy is critical
 - When inventory/stats updates may arrive late or miss events
-- **Widget-based** (migrated from Component)
-- Implements `render()` to create DOM structure
-- Receives messages via `onMessage()` from WidgetManager
-- Auto-shows/hides based on harvest state
-- Tracks `activeNPC` property for visibility
-- WidgetManager checks `widget.activeNPC` to determine visibility
+
+**Visibility State Management:**
+- Widget sets `this.activeNPC = npc` when harvest/cooldown active
+- Widget sets `this.activeNPC = null` when no active NPC
+- WidgetManager checks `!!widget.activeNPC` to determine visibility
 
 ### 10.4 Complex Interactive Widget (FactoryWidget Pattern)
-- **Widget-based** (migrated from Component)
+- **Widget-based** (render-based)
 - Implements `render()` to create DOM structure
 - Receives messages via `onMessage()` from WidgetManager
 - Drag-and-drop functionality
@@ -817,12 +879,15 @@ handleDirectResourceGain(msg) {
 
 ### 11.1 Widget Development
 1. **Use standardized CSS classes** - Maintains consistency
-2. **Follow base class pattern** - Extend Widget or Component appropriately
+2. **Follow base class pattern** - Extend Widget for ALL panel widgets
 3. **Handle errors gracefully** - Check for null DOM elements
-4. **Clean up in onDetach()** - Remove event listeners
+4. **Clean up in onDetach()** - Remove event listeners, clear intervals
 5. **Use widget theme** - Apply theme class for unique appearance
 6. **Test visibility logic** - Ensure requirements work correctly
 7. **Document message types** - Comment which messages widget handles
+8. **Use event delegation** - Prevents losing listeners on re-render
+9. **NO DOM lookups in init()** - Only in `onAttach()` or query from `this.rootElement`
+10. **Set visibility state for auto-managed widgets** - WidgetManager checks properties
 
 ### 11.2 CSS Guidelines
 1. **Use widget-shared.css classes** - Don't create custom classes unless necessary
@@ -830,6 +895,7 @@ handleDirectResourceGain(msg) {
 3. **Maintain retro aesthetic** - Keep terminal/retro styling
 4. **Test responsive behavior** - Ensure widgets work at different sizes
 5. **Use flexbox** - Widget content should use flex layout
+6. **Use toggle switch canonical structure** - Always use exact HTML structure for toggles
 
 ### 11.3 Registry Guidelines
 1. **Unique IDs** - Ensure widget ID is unique
@@ -837,6 +903,7 @@ handleDirectResourceGain(msg) {
 3. **Clear requirements** - Set `requiresGod`, `requiresWarehouse`, `requiresFactory` appropriately
 4. **Icon selection** - Use SVG path or empty string for first letter fallback
 5. **Slot type** - Choose `standard`, `fullwidth`, or `special` appropriately
+6. **Auto-managed flag** - Set `autoManaged: true` only if widget controls its own visibility
 
 ---
 
@@ -851,23 +918,33 @@ handleDirectResourceGain(msg) {
 - Check browser console for errors
 
 ### 12.2 Widget Not Receiving Messages
-- Check WidgetManager subscribes to message type
+- Check WidgetManager subscribes to message type in `subscribeToGameEvents()`
 - Check WidgetManager routes message via `handleMessage()`
 - Check widget implements `onMessage()` method
 - Check widget is attached (for regular widgets)
-- Check widget is auto-managed (for auto-managed widgets)
+- Check widget is auto-managed (for auto-managed widgets, they always receive messages)
+- Check message type matches what widget expects
 
 ### 12.3 Widget Styling Issues
 - Check widget-shared.css is linked in game.html
 - Check widget uses standardized CSS classes
 - Check theme class is applied if using theme
 - Check CSS specificity (widget classes should override)
+- Check toggle switch uses canonical HTML structure
 
 ### 12.4 Widget Not Updating
-- Check `onMessage()` is called
+- Check `onMessage()` is called (add console.log)
 - Check widget updates DOM in message handler
 - Check DOM elements exist before updating
 - Check for JavaScript errors in console
+- Check message data structure matches expected format
+
+### 12.5 Auto-Managed Widget Not Showing/Hiding
+- Check widget sets visibility state property in message handlers
+- Check WidgetManager checks correct state property
+- Check state property is set BEFORE WidgetManager calls `updateVisibility()`
+- Check conditions for visibility are correct
+- Check widget receives messages needed to determine visibility
 
 ---
 
@@ -898,76 +975,60 @@ If you have a Component that should be in the widget panel:
 
 ---
 
-## 14. SUMMARY
+## 14. ADDING NEW WIDGET CHECKLIST
 
-### 14.1 Architecture Strengths
+### 14.1 Required Steps
+- [ ] Create widget class file in `public/js/widgets/YourWidget.js`
+- [ ] Extend Widget base class (NOT Component)
+- [ ] Implement `render()` method (returns root DOM element)
+- [ ] Implement `onAttach()` method (DOM lookups, event listeners)
+- [ ] Implement `onDetach()` method (cleanup event listeners, intervals)
+- [ ] Implement `onMessage()` method (handle backend messages)
+- [ ] Add widget definition to `widget_registry.js`
+- [ ] Import widget class in `WidgetManager.js`
+- [ ] Add widget to `WIDGET_CLASSES` mapping in `WidgetManager.js`
+- [ ] Use standardized CSS classes from `widget-shared.css`
+- [ ] Add CSS theme if needed (optional)
+- [ ] Test widget appears and functions correctly
+- [ ] Test message routing (if widget receives messages)
+- [ ] Test visibility logic (requirements and toggle state)
+- [ ] Test cleanup on detach (no memory leaks)
+
+### 14.2 Optional Steps
+- [ ] Add message routing in `WidgetManager.subscribeToGameEvents()` (if new message type)
+- [ ] Add localStorage persistence (if widget needs state persistence)
+- [ ] Add auto-refresh interval (if widget needs periodic updates)
+- [ ] Add toggle switch (use canonical structure)
+- [ ] Add modal dialogs (use broadcast modal pattern as reference)
+
+---
+
+## 15. SUMMARY
+
+### 15.1 Architecture Strengths
 - **Standardized CSS** - Consistent styling across all widgets
-- **Flexible base classes** - Supports both render and DOM-based patterns
+- **Flexible base classes** - Supports render-based widgets and DOM-based components
 - **Centralized management** - WidgetManager handles all lifecycle
 - **Clean message routing** - Single entry point for widget messages
 - **Requirement system** - Easy way to gate widgets by player state
 - **Theme system** - Easy way to customize widget appearance
+- **Auto-management** - Smart visibility control for context-sensitive widgets
 
-### 14.2 Key Files
+### 15.2 Key Files
 - **WidgetManager.js** - Core widget management
-- **Widget.js** - Render-based widget base class
-- **Component.js** - DOM-based widget base class
+- **Widget.js** - Render-based widget base class (ALL panel widgets)
+- **Component.js** - DOM-based component base class (non-panel UI only)
 - **widget_registry.js** - Widget definitions
 - **widget-shared.css** - Shared styling
 
-### 14.3 Adding New Widget Checklist
-- [ ] Create widget class file
-- [ ] Extend Widget or Component
-- [ ] Implement required methods (render, onAttach, onMessage)
-- [ ] Add to widget_registry.js
-- [ ] Import in WidgetManager.js
-- [ ] Add to WIDGET_CLASSES mapping
-- [ ] Use standardized CSS classes
-- [ ] Add theme CSS if needed
-- [ ] Test widget appears and functions
-- [ ] Test message routing
-- [ ] Test visibility logic
-
----
-
-## 15. WIDGET-SPECIFIC FEATURES
-
-### 15.1 CommsWidget Broadcast Feature
-
-**Implementation:**
-- **File:** `public/js/widgets/CommsWidget.js`
-- **Mode:** Broadcast tab added alongside Talk, Resonate, Telepath
-- **Layout:** Two-slot wide when broadcast mode active
-- **Groups List:** Left side with numbered badges, scrollable
-- **Conversation:** Right side with history and input
-- **Management:** Double-click group to open management modal
-
-**Database Integration:**
-- Groups stored in `broadcast_groups` table
-- Members in `broadcast_group_members` table
-- Messages in `broadcast_messages` table
-- All messages written to `terminal_history` for offline players
-
-**Terminal Commands:**
-- `-N "message"` - Send message to group by ID number
-- `createbroadcastgroup <name>` or `cbg <name>` - Create group
-- `addtobroadcast <groupName> <playerName>` or `atb` - Add member
-- `removefrombroadcast <groupName> <playerName>` or `rfb` - Remove member
-- `listbroadcastgroups` or `lbg` - List groups
-
-**Modal Features:**
-- Create Group Modal: Group name input, player dropdown, add members, create button
-- Management Modal: View members, add/remove members, delete group
-- All players (online and offline) available for selection
-- Current player excluded from selection lists
-
-**Message Routing:**
-- `broadcast` - Received broadcast message
-- `broadcastGroups` - Groups list update
-- `broadcastHistory` - Message history for all groups
-- `broadcastGroupMembers` - Members list for management
-- `broadcastGroupDeleted` - Group deletion notification
-- `allPlayers` - All players list for modals
+### 15.3 Critical Rules
+1. **ALL panel widgets MUST extend Widget** (not Component)
+2. **ALL panel widgets MUST implement render()** method
+3. **NO DOM lookups in init()** - Only in onAttach()
+4. **Use event delegation** - Prevents losing listeners on re-render
+5. **Auto-managed widgets MUST set visibility state properties**
+6. **Use canonical toggle switch structure** - Exact HTML required
+7. **Use standardized CSS classes** - Maintain consistency
 
 ---
 

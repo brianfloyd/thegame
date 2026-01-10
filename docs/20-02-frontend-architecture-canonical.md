@@ -97,14 +97,32 @@ Rules:
 ### 4.1 WebSocket Layer
 - Single WebSocket connection per tab
 - URL derived from `location.host` and page protocol
-- On connect, client sends `authenticateSession` with `windowId`/tab ID
+- On connect, client sends `authenticateSession` with `windowId`/tab ID and stored `playerName`
 - On message:
   - JSON is parsed
   - `Game.handleMessage()` dispatches based on `type`
   - Appropriate MessageBus event(s) are emitted
+
+#### Disconnect & Reconnection Behavior
 - On disconnect:
-  - Game shows a disconnect notice
-  - Attempts auto-reconnect after a delay
+  - `Game` emits `game:disconnected` event (once per disconnect session)
+  - Terminal displays animated `server timeout.` message with dots incrementing every 5 seconds
+  - `scheduleReconnect()` is called with 3-second delay
+- On reconnect attempt:
+  - Clear old WebSocket and timers
+  - Prevent duplicate connections via `isReconnecting` flag
+  - Send `authenticateSession` with stored `playerName` from `sessionStorage`
+- On successful reconnect:
+  - `Game` emits `game:connected` event
+  - Terminal clears disconnect messages, shows `✓ Reconnected to server successfully.`
+  - Server sends `roomUpdate` to refresh game state
+
+#### Session Persistence
+- Player name stored in `sessionStorage` on receiving `playerStats`:
+  ```javascript
+  sessionStorage.setItem('gamePlayerName', playerName)
+  ```
+- This enables session restoration after server restarts (see `50-01-auth-and-sessions-canonical.md`)
 
 ### 4.2 MessageBus Layer
 - All inter-component communication goes through MessageBus

@@ -4,10 +4,10 @@
  * Initializes Game controller and all components.
  */
 
-import Game from './core/Game.js';
-import Terminal from './widgets/Terminal.js';
-import Inventory from './widgets/Inventory.js';
-import WidgetManager from './core/WidgetManager.js';
+import Game from './core/Game.js?v=20260109';
+import Terminal from './widgets/Terminal.js?v=20260109';
+import Inventory from './widgets/Inventory.js?v=20260109';
+import WidgetManager from './core/WidgetManager.js?v=20260109';
 import { WIDGETS } from './widgets/widget_registry.js';
 
 // Initialize game
@@ -43,8 +43,7 @@ if (commandInput) {
         if (e.key === 'Enter') {
             const command = commandInput.value.trim();
             if (command) {
-                // Echo command to terminal with `` markup (purple/bold styling)
-                terminal.addMessage(`> \`\`${command}\`\``, 'info');
+                // Command will be displayed by executeCommand function
                 executeCommand(command);
                 commandInput.value = '';
             } else {
@@ -78,6 +77,11 @@ function executeCommand(input) {
         return;
     }
     
+    // Display command with > prompt (unless it's /r repeat command)
+    if (input.toLowerCase() !== '/r' && input !== '/r') {
+        terminal.addMessage(`> \`\`${input}\`\``, 'info');
+    }
+    
     // Handle /r repeat command
     if (input.toLowerCase() === '/r' || input === '/r') {
         if (!lastCommand) {
@@ -86,6 +90,8 @@ function executeCommand(input) {
         }
         // Repeat the last command
         input = lastCommand;
+        // Display the repeated command
+        terminal.addMessage(`> \`\`${input}\`\``, 'info');
     }
     
     // Store the command (but not if it was /r itself)
@@ -493,19 +499,19 @@ function normalizeCommand(input) {
     return { type: commandType };
 }
 
-// Set up numpad movement
+// Set up numpad movement - types direction words into command input
 document.addEventListener('keydown', (e) => {
     const numpadMap = {
-        '7': 'NW', '8': 'N', '9': 'NE',
-        '4': 'W', '6': 'E',
-        '1': 'SW', '2': 'S', '3': 'SE',
-        '0': 'D'
+        '7': 'northwest', '8': 'north', '9': 'northeast',
+        '4': 'west', '6': 'east',
+        '1': 'southwest', '2': 'south', '3': 'southeast',
+        '0': 'down'
     };
     
     // Check if numpad key
     if (e.key >= '0' && e.key <= '9' && e.location === 3) {
-        const direction = numpadMap[e.key];
-        if (direction) {
+        const directionWord = numpadMap[e.key];
+        if (directionWord) {
             // Don't trigger if a ticket dialog is open
             const zorkTicketDialog = document.getElementById('zorkTicketDialog');
             const ticketDetailsDialog = document.getElementById('ticketDetailsDialog');
@@ -514,6 +520,14 @@ document.addEventListener('keydown', (e) => {
                 (ticketDetailsDialog && !ticketDetailsDialog.classList.contains('hidden')) ||
                 (addContextDialog && !addContextDialog.classList.contains('hidden'))) {
                 return; // Don't process movement keys when ticket dialogs are open
+            }
+            
+            const commandInput = document.getElementById('commandInput');
+            if (!commandInput) return;
+            
+            // If command input is focused and has content, don't override (user might be typing)
+            if (document.activeElement === commandInput && commandInput.value.trim().length > 0) {
+                return;
             }
             
             e.preventDefault();
@@ -535,18 +549,25 @@ document.addEventListener('keydown', (e) => {
                 }
                 // Small delay to ensure server processes stop before move
                 setTimeout(() => {
-                    terminal.resetIdleTimer();
-                    game.send({ type: 'move', direction: direction });
+                    // Type direction word and execute
+                    commandInput.value = directionWord;
+                    commandInput.focus();
+                    executeCommand(directionWord);
+                    commandInput.value = '';
                 }, 50);
-                return; // Don't send move immediately
+                return;
             }
             
-            terminal.resetIdleTimer();
-            game.send({ type: 'move', direction: direction });
+            // Type direction word into command input and execute
+            // This will display the command with > prompt in terminal
+            commandInput.value = directionWord;
+            commandInput.focus();
+            executeCommand(directionWord);
+            commandInput.value = '';
         }
     }
     
-    // Handle U (up) key
+    // Handle U (up) key - types "up" into command input
     const commandInput = document.getElementById('commandInput');
     if (e.key === 'u' || e.key === 'U') {
         if (commandInput && e.target === commandInput) return; // Don't trigger if typing in command input
@@ -560,6 +581,8 @@ document.addEventListener('keydown', (e) => {
             (addContextDialog && !addContextDialog.classList.contains('hidden'))) {
             return; // Don't process movement keys when ticket dialogs are open
         }
+        
+        e.preventDefault();
         
         // If auto-navigation or path execution is active, break it first
         if (isAutoNavigating || isPathExecuting) {
@@ -578,14 +601,21 @@ document.addEventListener('keydown', (e) => {
             }
             // Small delay to ensure server processes stop before move
             setTimeout(() => {
-                terminal.resetIdleTimer();
-                game.send({ type: 'move', direction: 'U' });
+                // Type direction word and execute
+                commandInput.value = 'up';
+                commandInput.focus();
+                executeCommand('up');
+                commandInput.value = '';
             }, 50);
-            return; // Don't send move immediately
+            return;
         }
         
-        terminal.resetIdleTimer();
-        game.send({ type: 'move', direction: 'U' });
+        // Type direction word into command input and execute
+        // This will display the command with > prompt in terminal
+        commandInput.value = 'up';
+        commandInput.focus();
+        executeCommand('up');
+        commandInput.value = '';
     }
 });
 

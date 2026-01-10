@@ -149,11 +149,13 @@ export default class Game {
     connect() {
         // Don't connect if already connecting/connected (unless it's actually closed)
         if (this.isReconnecting) {
+            console.log('[Game] Already reconnecting, skipping duplicate connect() call');
             return;
         }
         
         // Don't connect if we already have an active connection
         if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+            console.log('[Game] WebSocket already connected or connecting, skipping');
             return;
         }
         
@@ -167,7 +169,11 @@ export default class Game {
             
             // Close if not already closed
             if (this.ws.readyState !== WebSocket.CLOSED && this.ws.readyState !== WebSocket.CLOSING) {
-                this.ws.close();
+                try {
+                    this.ws.close();
+                } catch (e) {
+                    // Ignore close errors
+                }
             }
             this.ws = null;
         }
@@ -178,15 +184,29 @@ export default class Game {
             this.reconnectTimer = null;
         }
         
+        console.log('[Game] Attempting to connect to WebSocket:', this.wsUrl);
         this.isReconnecting = true;
-        this.ws = new WebSocket(this.wsUrl);
+        
+        try {
+            this.ws = new WebSocket(this.wsUrl);
+        } catch (error) {
+            console.error('[Game] Failed to create WebSocket:', error);
+            this.isReconnecting = false;
+            // Schedule reconnection attempt
+            this.scheduleReconnect();
+            return;
+        }
         
         this.ws.onopen = () => {
-            console.log('WebSocket connected');
-            
             // Reset flags on successful connection
             this.disconnectMessageShown = false;
             this.isReconnecting = false;
+            
+            // Cancel any pending reconnection timer
+            if (this.reconnectTimer) {
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = null;
+            }
             
             // Emit connection event
             this.messageBus.emit('game:connected', {
@@ -196,10 +216,26 @@ export default class Game {
             
             // Authenticate with session
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ 
+                // Get stored player name from sessionStorage for reconnection restore
+                let storedPlayerName = null;
+                if (typeof sessionStorage !== 'undefined') {
+                    storedPlayerName = sessionStorage.getItem('gamePlayerName');
+                }
+                
+                // Build auth message - ALWAYS include playerName if we have it stored
+                // This is critical for session restoration after server restart
+                const authMessage = {
                     type: 'authenticateSession',
                     windowId: this.windowId || null
-                }));
+                };
+                
+                // ALWAYS include stored player name if available (critical for session restoration)
+                // Regardless of whether currentPlayerName is set - the server needs this after restart
+                if (storedPlayerName) {
+                    authMessage.playerName = storedPlayerName;
+                }
+                
+                this.ws.send(JSON.stringify(authMessage));
             }
         };
         
@@ -213,12 +249,17 @@ export default class Game {
         };
         
         this.ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+            console.error('[Game] WebSocket error:', error);
+            // Note: onerror is called before onclose for connection failures
+            // onclose will handle the reconnection scheduling
         };
         
-        this.ws.onclose = () => {
-            console.log('WebSocket disconnected');
+        this.ws.onclose = (event) => {
+            console.log(`[Game] WebSocket closed (code: ${event.code}, reason: ${event.reason || 'none'}, wasClean: ${event.wasClean})`);
             this.isReconnecting = false;
+            
+            // Clean up the WebSocket reference
+            this.ws = null;
             
             // Only emit disconnect event once per disconnect session (prevents endless messages)
             if (!this.disconnectMessageShown) {
@@ -233,14 +274,43 @@ export default class Game {
                 return;
             }
             
-            // Only schedule reconnection if we don't already have one scheduled
-            if (!this.reconnectTimer) {
-                this.reconnectTimer = setTimeout(() => {
-                    this.reconnectTimer = null;
-                    this.connect();
-                }, 3000);
-            }
+            // Always schedule reconnection (onclose is called for all disconnects, including errors)
+            this.scheduleReconnect();
         };
+    }
+    
+    /**
+     * Schedule a reconnection attempt
+     */
+    scheduleReconnect() {
+        // Don't reconnect if we already have an active connection
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            console.log('[Game] WebSocket is already connected or connecting, skipping reconnect');
+            return;
+        }
+        
+        // Only schedule if we don't already have one scheduled and we're not already reconnecting
+        if (this.reconnectTimer) {
+            console.log('[Game] Reconnect already scheduled, skipping duplicate');
+            return;
+        }
+        
+        if (this.isReconnecting) {
+            console.log('[Game] Already reconnecting, skipping duplicate schedule');
+            return;
+        }
+        
+        console.log('[Game] Scheduling reconnection in 3 seconds...');
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            console.log('[Game] Reconnect timer fired, attempting connection...');
+            // Double-check we still need to reconnect
+            if (!this.ws || (this.ws.readyState !== WebSocket.OPEN && this.ws.readyState !== WebSocket.CONNECTING)) {
+                this.connect();
+            } else {
+                console.log('[Game] WebSocket connected during wait, skipping reconnect');
+            }
+        }, 3000);
     }
     
     /**
@@ -375,6 +445,10 @@ export default class Game {
             case 'playerStats':
                 if (data.stats?.playerName) {
                     this.currentPlayerName = data.stats.playerName;
+                    // Store player name in sessionStorage for reconnection
+                    if (typeof sessionStorage !== 'undefined') {
+                        sessionStorage.setItem('gamePlayerName', this.currentPlayerName);
+                    }
                     // Strip @ symbols from player name for page title
                     const cleanPlayerName = data.stats.playerName.replace(/@/g, '');
                     document.title = `The Game - ${cleanPlayerName}`;

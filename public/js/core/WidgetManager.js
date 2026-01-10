@@ -77,10 +77,8 @@ export default class WidgetManager {
             }
             this.updateToggleBar();
             // Route to widgets FIRST so they can update their state
-            console.log('[WidgetManager] room:update received, routing to widgets');
             this.handleMessage({ type: 'roomUpdate', ...data });
             // THEN update visibility after widgets have processed the message
-            console.log('[WidgetManager] Updating visibility after room update');
             this.updateVisibility();
         });
         
@@ -88,10 +86,8 @@ export default class WidgetManager {
             this.playerState.inFactoryRoom = data.room?.roomType === 'factory';
             this.updateToggleBar();
             // Route to widgets FIRST so they can update their state
-            console.log('[WidgetManager] room:moved received, routing to widgets');
             this.handleMessage({ type: 'moved', ...data });
             // THEN update visibility after widgets have processed the message
-            console.log('[WidgetManager] Updating visibility after room moved');
             this.updateVisibility();
         });
         
@@ -237,7 +233,6 @@ export default class WidgetManager {
                 this.widgets.set(widgetDef.id, widget);
                 
                 if (widgetDef.id === 'npc') {
-                    console.log('[WidgetManager] NPC widget created and initialized');
                 }
                 
                 // Initialize active widgets from defaultActive
@@ -490,21 +485,26 @@ export default class WidgetManager {
             const widgetDef = this.registry.find(w => w.id === id);
             const isAutoManaged = widgetDef?.autoManaged === true;
             
-            if (isAutoManaged || widget.attached) {
+            // IMPORTANT: Always route ticketsList to tickets widget, even if not attached
+            // This allows the widget to receive data and update its state
+            const shouldRoute = isAutoManaged || widget.attached || (msg.type === 'ticketsList' && id === 'tickets');
+            
+            if (shouldRoute) {
                 try {
                     // Check if widget has onMessage method (Widget-based widgets)
                     // Component-based widgets use MessageBus subscriptions instead
                     if (typeof widget.onMessage === 'function') {
-                        if (id === 'npc' && (msg.type === 'roomUpdate' || msg.type === 'moved')) {
-                            console.log(`[WidgetManager] Routing ${msg.type} to NPC widget`);
-                        }
                         widget.onMessage(msg);
                     } else if (isAutoManaged) {
                         console.warn(`[WidgetManager] Auto-managed widget ${id} does not have onMessage method`);
+                    } else if (msg.type === 'ticketsList' && id === 'tickets') {
+                        console.error(`[WidgetManager] TicketsWidget does not have onMessage method!`);
                     }
                 } catch (error) {
                     console.error(`[WidgetManager] Error in widget ${id} onMessage:`, error);
                 }
+            } else if (msg.type === 'ticketsList' && id === 'tickets') {
+                console.warn(`[WidgetManager] TicketsWidget is NOT attached (attached=${widget.attached}) and not auto-managed, so ticketsList message not routed`);
             }
         });
     }
@@ -526,11 +526,6 @@ export default class WidgetManager {
                     // NPC widget manages its own visibility based on harvest state
                     // Widget sets this.activeNPC when NPC is active
                     shouldShow = !!widget.activeNPC;
-                    if (shouldShow) {
-                        console.log('[WidgetManager] NPC widget should show, activeNPC:', widget.activeNPC?.name, 'activeNPC type:', typeof widget.activeNPC);
-                    } else {
-                        console.log('[WidgetManager] NPC widget should hide, activeNPC:', widget.activeNPC, 'activeNPC type:', typeof widget.activeNPC);
-                    }
                 } else if (widgetDef.id === 'factory') {
                     // Factory widget manages its own visibility based on room type
                     // Widget sets this.inFactoryRoom when in factory room

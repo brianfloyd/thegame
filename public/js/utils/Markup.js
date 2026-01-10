@@ -52,7 +52,6 @@ async function loadConventions() {
             if (stored) {
                 try {
                     markupConventions = JSON.parse(stored);
-                    console.log('[Markup] Loaded conventions from localStorage fallback');
                     conventionsLoaded = true;
                     return;
                 } catch (e) {
@@ -95,7 +94,6 @@ async function loadConventions() {
         }
         
         conventionsLoaded = true;
-        console.log(`[Markup] Loaded ${Object.keys(markupConventions).length} conventions from API`);
     } catch (e) {
         console.error('[Markup] Failed to load markup conventions:', e);
         markupConventions = {};

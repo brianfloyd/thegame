@@ -21,7 +21,6 @@ async function loadMessageCache(category = null) {
     messages.forEach(msg => {
       messageCache.set(msg.message_key, msg);
     });
-    console.log(`[MessageCache] Loaded ${messages.length} messages${category ? ` (category: ${category})` : ''}`);
   } catch (error) {
     console.error('[MessageCache] Error loading messages:', error);
   }

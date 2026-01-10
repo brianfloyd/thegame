@@ -52,18 +52,12 @@ const HARVEST_SAFE_COMMANDS = [
  */
 async function sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, message, messageType = 'info', db = null) {
   if (!harvestingPlayerId || !connectedPlayers) {
-    console.log(`[sendToHarvestingPlayer] Missing data: harvestingPlayerId=${harvestingPlayerId}, connectedPlayers=${!!connectedPlayers}`);
     return false;
   }
   
   // Pre-process markup on server side for proper rendering
   const { formatMessageForTerminal } = require('../utils/markupService');
   const html = formatMessageForTerminal(message, messageType, '#00ffff');
-  
-  // Debug: log markup processing
-  if (message.includes('..')) {
-    console.log(`[sendToHarvestingPlayer] Markup debug - raw: "${message.substring(0, 80)}..." html: "${html.substring(0, 100)}..."`);
-  }
   
   // Try to find player by playerId - check both exact match and type-coerced match
   for (const [connId, playerData] of connectedPlayers.entries()) {
@@ -159,8 +153,6 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
     }
   }
   
-  console.log(`[endHarvestSession] Ending harvest for room_npc ${roomNpcId}, reason=${reason}`);
-  
   // Calculate effective cooldown time based on fortitude (if enabled)
   let effectiveCooldownTime = baseCooldownTime;
   if (startCooldown && npcDef && npcDef.enable_fortitude_bonuses !== false && state.harvesting_player_fortitude) {
@@ -171,7 +163,6 @@ async function endHarvestSession(db, roomNpcId, startCooldown = true, reason = '
         // Use the same multiplier calculation (but for fortitude instead of resonance)
         const multiplier = calculateCycleTimeMultiplier(state.harvesting_player_fortitude, cooldownConfig);
         effectiveCooldownTime = Math.round(baseCooldownTime * multiplier);
-        console.log(`[endHarvestSession] Cooldown reduction applied: base=${baseCooldownTime}ms, effective=${effectiveCooldownTime}ms, fortitude=${state.harvesting_player_fortitude}`);
       }
     } catch (err) {
       console.error(`[endHarvestSession] Error calculating cooldown reduction:`, err);
@@ -294,9 +285,7 @@ async function applyVitalisDrainOnHarvest(db, connectedPlayers, roomNpc, baseDra
     });
     const drainSent = await sendToHarvestingPlayer(connectedPlayers, harvestingPlayerId, drainMessage, 'info', db);
     if (!drainSent) {
-      console.log(`[NPC Cycle] WARNING: Failed to send ${messageKey} message to player ${harvestingPlayerId}`);
-    } else {
-      console.log(`[NPC Cycle] Sent ${messageKey} message: ${drainMessage.substring(0, 50)}...`);
+      console.warn(`[NPC Cycle] Failed to send ${messageKey} message to player ${harvestingPlayerId}`);
     }
     
     // Update player stats widget immediately
@@ -307,20 +296,16 @@ async function applyVitalisDrainOnHarvest(db, connectedPlayers, roomNpc, baseDra
     // Check for depletion - only end harvest if vitalis is actually 0 or below
     // CRITICAL: Double-check that vitalis is actually 0 or negative before ending harvest
     const isDepleted = checkVitalisDepletion(newVitalis);
-    console.log(`[NPC Cycle] Vitalis drain applied: ${drainAmount} drained, new vitalis: ${newVitalis}/${maxVitalis}, depleted: ${isDepleted}`);
     
     // Only end harvest if vitalis is actually 0 or negative
     // CRITICAL: Never end harvest if vitalis > 0 - this is a safety check
     if (newVitalis > 0) {
-      console.log(`[NPC Cycle] Vitalis is ${newVitalis}, harvest should continue (not depleted)`);
       return true; // Continue harvest - vitalis is still above 0
     }
     
     // Only reach here if vitalis is <= 0
     if (isDepleted && newVitalis <= 0) {
       // Vitalis depleted - end harvest immediately
-      // Double-check: only end if vitalis is actually 0 or negative
-      console.log(`[NPC Cycle] Vitalis depleted for player ${harvestingPlayerId} (vitalis: ${newVitalis}), ending harvest for room_npc ${roomNpc.id}`);
       
       // Get player info before ending session
       let playerName = playerData?.playerName || 'Someone';
@@ -1320,7 +1305,6 @@ function startNPCCycleEngine(db, npcLogic, connectedPlayers, sendRoomUpdate) {
     }
   }, NPC_TICK_INTERVAL);
   
-  console.log(`NPC Cycle Engine started (interval: ${NPC_TICK_INTERVAL}ms)`);
 }
 
 // Track last room update time per player
@@ -1478,7 +1462,6 @@ function startRoomUpdateTimer(db, connectedPlayers, sendRoomUpdate) {
     }
   }, 1000); // Check every second
   
-  console.log(`Room update timer started (per-player intervals, global default: ${GLOBAL_ROOM_UPDATE_INTERVAL}ms, checking every 1000ms)`);
 }
 
 module.exports = {

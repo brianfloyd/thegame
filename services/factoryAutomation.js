@@ -24,7 +24,6 @@ async function handleAutoLoadIngredients(event, options = {}) {
   // 2. Automatically transfer ingredients to factory slots
   // 3. Respect player-configured automation rules
   
-  console.log('[factoryAutomation] handleAutoLoadIngredients - STUB (not implemented)');
   return;
 }
 
@@ -40,7 +39,6 @@ async function handleAutoRouteOutputs(event, options = {}) {
   // 2. Route outputs to designated warehouse
   // 3. Handle overflow to secondary locations
   
-  console.log('[factoryAutomation] handleAutoRouteOutputs - STUB (not implemented)');
   return;
 }
 
@@ -56,7 +54,6 @@ async function handleAutoSell(event, options = {}) {
   // 2. Find best market/merchant for items
   // 3. Automatically sell at market price or configured minimum
   
-  console.log('[factoryAutomation] handleAutoSell - STUB (not implemented)');
   return;
 }
 
@@ -87,8 +84,6 @@ async function processFactoryEvent(event) {
       // No automation for this event type
       break;
   }
-  
-  console.log(`[factoryAutomation] processFactoryEvent - STUB (event type: ${event.event_type})`);
 }
 
 /**
@@ -101,8 +96,6 @@ function registerAutomationListeners(messageBus) {
   // 1. Subscribe to FACTORY_OUTPUT_CREATED events
   // 2. Subscribe to FACTORY_CRAFT_SUCCESS events
   // 3. Process events through automation rules
-  
-  console.log('[factoryAutomation] registerAutomationListeners - STUB (not implemented)');
 }
 
 /**
@@ -115,7 +108,6 @@ async function getPlayerAutomationConfig(playerId) {
   // 1. Load automation rules from database
   // 2. Return player's configured automation settings
   
-  console.log('[factoryAutomation] getPlayerAutomationConfig - STUB (not implemented)');
   return null;
 }
 
@@ -129,8 +121,6 @@ async function updatePlayerAutomationConfig(playerId, config) {
   // STUB: Future implementation will:
   // 1. Validate configuration
   // 2. Save to database
-  
-  console.log('[factoryAutomation] updatePlayerAutomationConfig - STUB (not implemented)');
   return;
 }
 

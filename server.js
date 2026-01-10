@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Game Server - Main Entry Point
  * 
  * Sets up Express server, WebSocket server, and wires together all modules.
  * This is the main server file that imports handlers, middleware, and services.
  * 
- * Test restart trigger - testing ZORK reconnect fix v3
+ * Test restart trigger - testing session restoration fix v6
  */
 
 const express = require('express');
@@ -120,7 +120,6 @@ setInterval(() => {
       if (!sessionStore.has(sessionId)) {
         // Double-check: verify no active connections (already checked above)
         // Only then delete from activeAccountSessions
-        console.log(`Cleaning up orphaned account session: account ${accountId}, session ${sessionId.substring(0, 8)}... (no active connections)`);
         activeAccountSessions.delete(accountId);
       }
     }
@@ -187,8 +186,6 @@ setupRoutes(app, {
 // ============================================================
 
 wss.on('connection', (ws, req) => {
-  console.log('New WebSocket connection');
-  
   let connectionId = null;
   let sessionId = null;
   let playerName = null;
@@ -198,7 +195,10 @@ wss.on('connection', (ws, req) => {
   const session = getSessionFromRequest(req);
   if (session) {
     sessionId = session.sessionId;
-    playerName = session.sessionData.playerName;
+    // Only set playerName if sessionData exists (might be null after server restart)
+    if (session.sessionData && session.sessionData.playerName) {
+      playerName = session.sessionData.playerName;
+    }
   }
 
   ws.on('message', async (message) => {
@@ -339,8 +339,6 @@ wss.on('connection', (ws, req) => {
         type: 'systemMessage',
         message: leftMessage
       });
-
-      console.log(`Player ${disconnectedPlayerName} disconnected (${connId})`);
     }
   });
 });
@@ -398,12 +396,7 @@ async function startServer() {
           const interval = roomUpdateConfig.min_value || roomUpdateConfig.min_resonance;
           if (interval && interval > 0) {
             setGlobalRoomUpdateInterval(interval);
-            console.log(`[Server] Loaded global room update interval: ${interval}ms`);
-          } else {
-            console.log(`[Server] Invalid room update interval config, using default: 30000ms`);
           }
-        } else {
-          console.log(`[Server] Using default room update interval: 30000ms`);
         }
       } catch (err) {
         console.warn(`[Server] Failed to load room update interval config, using default:`, err.message);

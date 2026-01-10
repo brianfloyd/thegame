@@ -235,6 +235,67 @@ On disconnect:
 
 ---
 
+# 11.1 Session Restoration After Server Restart
+
+When the server restarts, in-memory sessions are cleared. However, the client retains its session cookie (`gameSession`). The system supports **graceful session restoration** to preserve player experience.
+
+## 11.1.1 Client-Side Behavior
+
+The client stores the current player name in `sessionStorage`:
+```javascript
+sessionStorage.setItem('gamePlayerName', playerName)
+```
+
+On WebSocket reconnection, the client sends `authenticateSession` with:
+```javascript
+{
+  type: 'authenticateSession',
+  windowId: <tabId>,
+  playerName: <storedPlayerName>  // From sessionStorage
+}
+```
+
+## 11.1.2 Server-Side Restoration Flow
+
+When `authenticateSession` is received:
+
+1. **Check existing session**: If `sessionStore` contains valid session data, proceed normally
+2. **Detect restoration need**: If session cookie exists but `sessionStore` is empty (server restart scenario):
+   - `getSessionFromRequest` returns `{ sessionId, sessionData: null, needsRestore: true }`
+3. **Restore session**: If `playerName` is provided in the message:
+   - Look up player by name in `players` table
+   - Retrieve `account_id` from `user_characters` table
+   - Rebuild session in `sessionStore`:
+     ```javascript
+     {
+       accountId: <from user_characters>,
+       playerName: <from request>,
+       playerId: <from players table>,
+       createdAt: Date.now(),
+       expiresAt: Date.now() + SESSION_DURATION
+     }
+     ```
+   - Update `session.sessionData` and `session.needsRestore = false`
+4. **Complete authentication**: Send `playerStats`, `roomUpdate`, etc.
+
+## 11.1.3 Terminal Feedback
+
+During disconnection, the terminal displays:
+```
+server timeout.
+```
+
+Dots animate every 5 seconds (up to 100 dots, then reset).
+
+On successful reconnection:
+```
+✓ Reconnected to server successfully.
+```
+
+Previous disconnect messages are automatically cleared.
+
+---
+
 # 12. Forbidden Behavior
 The auth/session system must **never**:
 - Auto-create characters
@@ -250,8 +311,10 @@ Future additions require updating this spec before coding.
 
 Allowed future extensions (if added here first):
 - Multi-factor authentication
-- Session persistence across reconnects
 - Device authorization
+
+**Implemented extensions:**
+- ✅ Session persistence across reconnects (see Section 11.1)
 
 ---
 

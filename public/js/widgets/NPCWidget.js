@@ -205,7 +205,6 @@ export default class NPCWidget extends Widget {
      * Handle backend messages routed from WidgetManager
      */
     onMessage(msg) {
-        console.log('[NPCWidget] onMessage called with type:', msg.type);
         
         if (msg.type === 'roomUpdate' || msg.type === 'moved') {
             this.handleRoomUpdate(msg);
@@ -225,11 +224,9 @@ export default class NPCWidget extends Widget {
                                 (typeof msg.stats.pulseEchoes === 'number' ? msg.stats.pulseEchoes : 0);
                 
                 const oldEchoes = this.currentPulseEchoes;
-                console.log('[NPCWidget] Pulse echoes update:', 'old:', oldEchoes, 'new:', newEchoes, 'activeNPC:', !!this.activeNPC, 'harvestStartStats:', !!this.harvestStartStats);
                 
             // Initialize harvestStartStats if we have an active NPC but haven't started tracking yet
             if (this.activeNPC && !this.harvestStartStats) {
-                console.log('[NPCWidget] ⚠️ Late initialization: Initializing harvest tracking from pulse echoes update (may miss first drop)');
                 this.trackHarvestStart();
             }
             
@@ -241,12 +238,9 @@ export default class NPCWidget extends Widget {
                 const harvestAge = this.harvestStartStats.timestamp ? (Date.now() - this.harvestStartStats.timestamp) : 0;
                 if (harvestAge < 2000) {
                     this.harvestStartStats.pulseEchoes = newEchoes;
-                    console.log('[NPCWidget] ✅ Recorded starting pulse echoes (early capture):', newEchoes, 'harvestAge:', harvestAge + 'ms');
                 } else {
                     // Harvest has been going for a while - this value might already include gains
-                    // Use current value but log a warning
                     this.harvestStartStats.pulseEchoes = newEchoes;
-                    console.log('[NPCWidget] ⚠️ Recorded starting pulse echoes (late capture, may miss first drop):', newEchoes, 'harvestAge:', harvestAge + 'ms');
                 }
             }
                 
@@ -255,13 +249,6 @@ export default class NPCWidget extends Widget {
                 // Update gains display - always try to update if we have rootElement
                 if (this.rootElement) {
                     this.updateResourceGains();
-                } else {
-                    console.log('[NPCWidget] Cannot update gains - rootElement is null');
-                }
-                
-                // Log if echoes changed
-                if (oldEchoes !== null && newEchoes !== oldEchoes) {
-                    console.log('[NPCWidget] Pulse echoes changed:', oldEchoes, '->', newEchoes);
                 }
             }
         } else if (msg.type === 'inventoryList' || msg.type === 'inventory:update') {
@@ -276,10 +263,7 @@ export default class NPCWidget extends Widget {
      * Handle room update events
      */
     handleRoomUpdate(data) {
-        console.log('[NPCWidget] handleRoomUpdate called, npcs:', data.npcs?.length || 0);
-        
         if (!data.npcs || data.npcs.length === 0) {
-            console.log('[NPCWidget] No NPCs, clearing activeNPC');
             this.activeNPC = null;
             return;
         }
@@ -625,11 +609,8 @@ export default class NPCWidget extends Widget {
      * This is the most accurate method - receives updates immediately when resources are produced
      */
     handleDirectResourceGain(msg) {
-        console.log('[NPCWidget] Direct resource gain from NPC cycle engine:', msg);
-        
         if (!this.harvestStartStats && this.activeNPC) {
             // Initialize tracking if not already started
-            console.log('[NPCWidget] Initializing tracking from direct resource gain');
             this.trackHarvestStart();
         }
         

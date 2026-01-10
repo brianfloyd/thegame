@@ -2,210 +2,40 @@
 
 **Document Type:** Canonical Reference  
 **Last Updated:** Based on codebase analysis  
-**Purpose:** Complete specification of widget operation for gameplay, including features, methods, and requirements.
+**Purpose:** Complete specification of how widgets currently operate in gameplay, including existing widget behaviors, message handling, and player interactions.
+
+**Note:** For guidelines on creating new widgets, see `20-11-widget-architecture-canonical.md`.
 
 ---
 
-## 1. WIDGET SYSTEM OVERVIEW
+## 1. CURRENT WIDGET SYSTEM OVERVIEW
 
-### 1.1 Source of Truth
-- **Widget Registry:** `public/js/widgets/widget_registry.js` (lines 22-155)
-  - Defines all available widgets with configuration
-  - Each widget has: `id`, `name`, `icon`, `slot`, `requiresGod`, `requiresWarehouse`, `requiresFactory`, `autoManaged`, `defaultActive`, `order`
-- **Widget Manager:** `public/js/core/WidgetManager.js` (lines 36-508)
-  - Manages widget lifecycle, message routing, and visibility
-- **Base Classes:**
-  - `Widget` class: `public/js/widgets/Widget.js` (lines 11-79) - Extends Component, provides render-based widgets
-  - `Component` class: `public/js/core/Component.js` (lines 7-85) - Base class with MessageBus integration
+### 1.1 Widget Registry
+**File:** `public/js/widgets/widget_registry.js`
 
-### 1.2 Widget Types
-**File:** `public/js/widgets/widget_registry.js` (lines 22-155)
+The widget registry defines all available widgets in the game. Each widget has configuration fields that control its visibility, behavior, and placement. See Architecture document for details on these fields.
 
-1. **Standard Widgets** (`slot: 'standard'`):
-   - `stats` - Player Stats (order: 10, defaultActive: true)
-   - `compass` - Compass (order: 20, defaultActive: true)
-   - `map` - Map (order: 30, defaultActive: true)
-   - `comms` - Communication (order: 40, defaultActive: true)
-   - `warehouse` - Warehouse (order: 50, requiresWarehouse: true)
-   - `godmode` - God Mode (order: 60, requiresGod: true)
-   - `runekeeper` - Rune Keeper (order: 80)
+### 1.2 Widget Manager
+**File:** `public/js/core/WidgetManager.js`
 
-2. **Fullwidth Widgets** (`slot: 'fullwidth'`):
-   - `automation` - Automation (order: 70)
-   - `tickets` - Tickets (order: 90, requiresGod: true)
-
-3. **Auto-Managed Widgets** (`autoManaged: true`):
-   - `npc` - NPC Activity (order: 100, shows during harvest/cooldown)
-   - `factory` - Factory Machine (order: 110, requiresFactory: true, shows in factory rooms)
+The WidgetManager handles widget lifecycle, message routing, and visibility management. It is the single entry point for all widget messages.
 
 ---
 
-## 2. WIDGET CONFIGURATION FIELDS
+## 2. EXISTING WIDGETS IN GAMEPLAY
 
-**File:** `public/js/widgets/widget_registry.js` (lines 8-21)
+### 2.1 Standard Widgets (`slot: 'standard'`)
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | Yes | Unique identifier (matches `data-widget` attribute) |
-| `name` | string | Yes | Display name shown in toggle bar tooltip |
-| `icon` | string | Yes | SVG path data for icon (empty string uses first letter fallback) |
-| `slot` | string | Yes | Layout type: `'standard'`, `'fullwidth'`, or `'special'` |
-| `requiresGod` | boolean | No | Only visible to god mode players (default: false) |
-| `requiresWarehouse` | boolean | No | Only visible when player has warehouse deed (default: false) |
-| `requiresFactory` | boolean | No | Only visible in factory rooms (default: false) |
-| `autoManaged` | boolean | No | Visibility controlled by game state, not user toggle (default: false) |
-| `defaultActive` | boolean | No | Whether widget is active by default (default: false) |
-| `order` | number | Yes | Display order in toggle bar (lower = earlier) |
-
----
-
-## 3. WIDGET LIFECYCLE OPERATIONS
-
-### 3.1 Initialization
-**File:** `public/js/main.js` (lines 33-35)
-```javascript
-game.widgetManager = new WidgetManager(game, WIDGETS);
-game.widgetManager.mountAll();
-```
-
-**File:** `public/js/core/WidgetManager.js` (lines 156-216)
-- `mountAll()` creates widget-host container and toggle bar
-- Instantiates all widgets from registry
-- Calls `widget.init()` on each widget
-- Sets default active widgets from `defaultActive` flag
-- Updates toggle bar and visibility
-
-### 3.2 Widget Creation
-**File:** `public/js/core/WidgetManager.js` (lines 182-209)
-- Widgets are instantiated with `new WidgetClass(game, widgetDef.id)` or `new WidgetClass(game)` (fallback)
-- Each widget must implement `init()` method
-- Widgets stored in `this.widgets` Map keyed by widget ID
-
-### 3.3 Attachment/Detachment
-**File:** `public/js/core/WidgetManager.js` (lines 372-437)
-
-**Attach Process:**
-1. Check if widget has `render()` method (Widget-based) or finds existing DOM (Component-based)
-2. For Widget-based: Call `render()` to get root element, insert into DOM in sorted order
-3. Set `widget.attached = true` and `widget.rootElement = rootElement`
-4. Call `widget.onAttach()` if available
-
-**Detach Process:**
-1. Call `widget.onDetach()` if available
-2. Remove `rootElement` from DOM
-3. Set `widget.attached = false` and `widget.rootElement = null`
-
-### 3.4 Visibility Management
-**File:** `public/js/core/WidgetManager.js` (lines 469-507)
-
-**Auto-Managed Widgets:**
-- `npc`: Visible when `widget.activeNPC` is truthy (harvest/cooldown active)
-- `factory`: Visible when `playerState.inFactoryRoom === true`
-
-**Regular Widgets:**
-- Check requirements (`requiresGod`, `requiresWarehouse`, `requiresFactory`)
-- Check toggle state (`activeWidgets.has(widgetId)`)
-- Attach/detach based on combined conditions
-
----
-
-## 4. WIDGET MESSAGE ROUTING
-
-### 4.1 Message Entry Point
-**File:** `public/js/core/WidgetManager.js` (lines 443-464)
-- **ONLY** `WidgetManager.handleMessage()` routes messages to widgets
-- Widgets receive messages via `onMessage()` callback, NOT direct MessageBus subscriptions
-- Messages routed to all attached widgets and all auto-managed widgets (even if not attached)
-
-### 4.2 Subscribed Events
-**File:** `public/js/core/WidgetManager.js` (lines 57-150)
-
-**Player State Events:**
-- `player:stats` - Routes to widgets as `{ type: 'playerStats', stats: data.stats }`
-- `room:update` - Routes as `{ type: 'roomUpdate', ...data }`
-- `room:moved` - Routes as `{ type: 'moved', ...data }`
-
-**Communication Events:**
-- `talked` - Routes as `{ type: 'talked', ...data }`
-- `resonated` - Routes as `{ type: 'resonated', ...data }`
-- `telepath` - Routes as `{ type: 'telepath', ...data }`
-- `telepathSent` - Routes as `{ type: 'telepathSent', ...data }`
-
-**Factory Events:**
-- `factoryWidgetState` - Routes as `{ type: 'factoryWidgetState', ...data }`
-- `factoryCraftStarted` - Routes as `{ type: 'factoryCraftStarted', ...data }`
-- `factoryCraftComplete` - Routes as `{ type: 'factoryCraftComplete', ...data }`
-- `factoryCraftFizzle` - Routes as `{ type: 'factoryCraftFizzle', ...data }`
-
-**Map/Pathing Events:**
-- `map:data`, `map:update`
-- `pathing:modeStarted`, `pathing:room`, `pathing:saved`
-- `paths:all`, `paths:details`, `paths:executionStarted`, `paths:executionResumed`, `paths:executionComplete`, `paths:executionStopped`, `paths:executionFailed`
-- `autonav:started`, `autonav:complete`, `autonav:failed`
-- `pathSaved`, `pathDeleted`
-
-**Ticket Events:**
-- `ticketsList`, `ticketUpdated`, `ticketFeedbackAdded`
-
-**Config Events:**
-- `widget:config` - Updates `activeWidgets` from server
-
-### 4.3 Widget Message Handling
-**File:** `public/js/widgets/Widget.js` (lines 58-60)
-- Widgets override `onMessage(msg)` to handle specific message types
-- Example: `StatsWidget.onMessage()` handles `playerStats` messages (lines 59-64)
-
----
-
-## 5. WIDGET BASE CLASS METHODS
-
-### 5.1 Widget Class (Render-Based)
-**File:** `public/js/widgets/Widget.js`
-
-**Required Methods:**
-- `render()` - **MUST** be overridden, returns single root DOM element (lines 33-35)
-- `init()` - Optional override, sets up widget state (NO DOM lookups) (lines 23-26)
-- `onAttach()` - Optional override, called after widget attached to DOM (lines 41-43)
-- `onDetach()` - Optional override, called before widget detached (lines 49-51)
-- `onMessage(msg)` - Optional override, handles backend messages (lines 58-60)
-- `update()` - Re-renders widget by replacing root element (lines 66-78)
-
-**Properties:**
-- `this.id` - Widget ID from registry
-- `this.rootElement` - Root DOM element (set after render)
-- `this.attached` - Boolean attachment state
-- `this.game` - Game instance (from Component)
-
-### 5.2 Component Class (DOM-Based)
-**File:** `public/js/core/Component.js`
-
-**Methods:**
-- `init()` - Override to set up component (lines 23-25)
-- `render()` - Override to update DOM (lines 31-33)
-- `destroy()` - Override to clean up (lines 39-44)
-- `subscribe(event, callback)` - Subscribe to MessageBus events (lines 51-59)
-- `emit(event, data)` - Emit MessageBus events (lines 66-72)
-- `send(message)` - Send message to game server (lines 78-84)
-
-**Properties:**
-- `this.game` - Game instance
-- `this.messageBus` - MessageBus instance
-- `this.subscriptions` - Array of unsubscribe functions
-
----
-
-## 6. WIDGET FEATURES BY TYPE
-
-### 6.1 StatsWidget
+#### StatsWidget (`id: 'stats'`)
 **File:** `public/js/widgets/StatsWidget.js`
 
-**Features:**
+**Gameplay Features:**
 - Displays player stats organized by category (stats, abilities, resources, flags)
 - Shows assignable points with increment/decrement controls (top 4 attributes only)
 - Displays resource bars (HP, Mana) with current/max values
 - Shows Pulse Echo progression (echoes and tier)
 - Shows Encumbrance with progress bar
-- Handles attribute point assignment via `assignAttributePoint` message
+- **Default Active:** Yes (order: 10)
 
 **Message Types Handled:**
 - `playerStats` - Updates stats display
@@ -213,15 +43,65 @@ game.widgetManager.mountAll();
 **Server Messages Sent:**
 - `assignAttributePoint` - `{ type: 'assignAttributePoint', statKey: string, action: 'increment'|'decrement' }`
 
-### 6.2 CommsWidget
+**Player Interaction:**
+- Players click increment/decrement buttons to assign attribute points
+- Updates are sent immediately to server
+
+---
+
+#### CompassWidget (`id: 'compass'`)
+**File:** `public/js/widgets/CompassWidget.js`
+
+**Gameplay Features:**
+- Displays directional compass
+- Shows available exits from current room
+- **Default Active:** Yes (order: 20)
+
+**Message Types Handled:**
+- `roomUpdate` - Updates compass with current room exits
+- `moved` - Updates compass on room change
+
+---
+
+#### MapWidget (`id: 'map'`)
+**File:** `public/js/widgets/MapWidget.js`
+
+**Gameplay Features:**
+- Displays room map visualization
+- Shows current room and surrounding rooms
+- Handles map updates and pathing visualization
+- **Default Active:** Yes (order: 30)
+
+**Message Types Handled:**
+- `map:data` - Initial map data
+- `map:update` - Map updates
+- `pathing:modeStarted` - Pathing mode activation
+- `pathing:room` - Pathing room selection
+- `pathing:saved` - Path saved confirmation
+- `paths:all` - All paths list
+- `paths:details` - Path details
+- `paths:executionStarted` - Path execution started
+- `paths:executionResumed` - Path execution resumed
+- `paths:executionComplete` - Path execution complete
+- `paths:executionStopped` - Path execution stopped
+- `paths:executionFailed` - Path execution failed
+- `autonav:started` - Auto-navigation started
+- `autonav:complete` - Auto-navigation complete
+- `autonav:failed` - Auto-navigation failed
+
+---
+
+#### CommsWidget (`id: 'comms'`)
 **File:** `public/js/widgets/CommsWidget.js`
 
-**Features:**
-- Three communication modes: Talk, Resonate, Telepath
+**Gameplay Features:**
+- Three communication modes: Talk, Resonate, Telepath, Broadcast
 - Stores message history in localStorage per player
 - Parses markup in messages (especially ZORK responses)
 - Layout: Mode buttons → Input box → Chat history (scrollable)
 - Auto-scrolls to bottom on new messages
+- **Broadcast Mode:** Expands to 2 slots wide, shows broadcast groups list and conversation history
+- **Default Active:** Yes (order: 40)
 
 **Message Types Handled:**
 - `talked` - Adds to talk history
@@ -229,73 +109,61 @@ game.widgetManager.mountAll();
 - `telepath` - Adds received telepath to history
 - `telepathSent` - Adds sent telepath to history
 - `playerAuthenticated` - Reloads history
+- `broadcast` - Received broadcast message
+- `broadcastGroups` - Groups list update
+- `broadcastHistory` - Message history for all groups
+- `broadcastGroupMembers` - Members list for management
+- `broadcastGroupDeleted` - Group deletion notification
+- `allPlayers` - All players list for modals
 
 **Storage:**
 - localStorage key: `comms_history_${playerName}`
-- Stores arrays: `{ talk: [], resonate: [], telepath: [] }`
+- Stores arrays: `{ talk: Message[], resonate: Message[], telepath: Message[], broadcast: {} }`
 - Keeps last 100 messages per channel
 
-### 6.3 MapWidget
-**File:** `public/js/widgets/MapWidget.js` (referenced in registry)
+**Player Interaction:**
+- Players select communication mode via buttons
+- Input box for typing messages
+- For telepath: Select target player from dropdown
+- For broadcast: Select group, double-click to manage, use modals to add/remove members
+- History persists across sessions
 
-**Features:**
-- Displays room map visualization
-- Shows current room and surrounding rooms
-- Handles map updates and pathing visualization
+**Broadcast Features:**
+- Left side: List of broadcast groups with numbered badges
+- Right side: Conversation history and input box
+- Double-click group to open management modal
+- Management modal: View members, add/remove members, delete group
+- Full conversation history regardless of player presence
+- Messages persist in database and appear in terminal_history for offline players
 
-**Message Types Handled:**
-- `map:data`, `map:update`
-- `pathing:*` events
+---
 
-### 6.4 NPCWidget (Auto-Managed)
-**File:** `public/js/widgets/NPCWidget.js`
+#### WarehouseWidget (`id: 'warehouse'`)
+**File:** `public/js/widgets/WarehouseWidget.js`
 
-**Features:**
-- Auto-shows during NPC harvest or cooldown
-- Displays NPC name, status, and progress bar
-- Only shows for NPCs being harvested by current player
-- Uses existing DOM element (`#widget-npc`)
-
-**Visibility Logic:**
-- Shows when NPC has `harvestStatus === 'active'` or `harvestStatus === 'cooldown'`
-- Checks `harvesting_player_id` matches current player ID
-- Hides when no active harvest/cooldown
-
-**Message Types Handled:**
-- `room:update` - Checks for active NPCs
-- `room:moved` - Checks for active NPCs
-- `player:stats` - Gets player ID
-
-### 6.5 FactoryWidget (Auto-Managed)
-**File:** `public/js/widgets/FactoryWidget.js`
-
-**Features:**
-- Auto-shows in factory-type rooms
-- Displays 5 factory slots with drag-and-drop
-- Shows crafting progress and status
-- Handles recipe matching and crafting initiation
-- Uses existing DOM element (`#widget-factory`)
-
-**Visibility Logic:**
-- Shows when `room.roomType === 'factory'`
-- Hides when leaving factory rooms
+**Gameplay Features:**
+- Only visible with warehouse deed (`requiresWarehouse: true`)
+- Displays warehouse inventory
+- Handles item storage and retrieval
+- Order: 50
 
 **Message Types Handled:**
-- `room:update` - Checks room type
-- `room:moved` - Checks room type
-- `factoryWidgetState` - Updates factory state
-- `factoryCraftStarted` - Shows progress
-- `factoryCraftComplete` - Resets state
-- `factoryCraftFizzle` - Shows error
+- `warehouseState` - Warehouse inventory and capacity updates
 
-### 6.6 GodModeWidget
-**File:** `public/js/widgets/GodModeWidget.js` (referenced in registry)
+**Requirements:**
+- Player must have warehouse deed (checked via `playerState.hasWarehouseDeed`)
 
-**Features:**
-- Only visible to god mode players
+---
+
+#### GodModeWidget (`id: 'godmode'`)
+**File:** `public/js/widgets/GodModeWidget.js`
+
+**Gameplay Features:**
+- Only visible to god mode players (`requiresGod: true`)
 - Provides access to game editors and admin tools
 - Grid layout with editor buttons (2 columns, 4 rows)
-- Editor buttons include: Map, NPC, Items, Player, Crafting, Tickets, Formulas, Markup
+- Editor buttons: Map, NPC, Items, Player, Crafting, Tickets, Formulas, Markup
+- Order: 60
 
 **Editor Buttons:**
 1. **Map** - Opens map editor (`/map`)
@@ -307,143 +175,348 @@ game.widgetManager.mountAll();
 7. **Formulas** - Opens global formula editor (`/formulas`)
 8. **Markup** - Opens markup convention editor (`/markup`)
 
-**Button Click Handling:**
-- Each button has `data-action` attribute matching editor name
-- Click handler navigates to appropriate route via `window.location.href`
+**Player Interaction:**
+- Click editor button to navigate to editor route
 - Routes defined in `handleEditorClick()` method
 
 **Requirements:**
-- `requiresGod: true`
+- Player must have god mode (checked via `playerState.isGod`)
 
-### 6.7 WarehouseWidget
-**File:** `public/js/widgets/WarehouseWidget.js` (referenced in registry)
+---
 
-**Features:**
-- Only visible with warehouse deed
-- Displays warehouse inventory
-- Handles item storage and retrieval
+#### RuneKeeperWidget (`id: 'runekeeper'`)
+**File:** `public/js/widgets/RuneKeeperWidget.js`
 
-**Requirements:**
-- `requiresWarehouse: true`
+**Gameplay Features:**
+- Displays rune information
+- Order: 80
 
-### 6.8 AutomationWidget
-**File:** `public/js/widgets/AutomationWidget.js` (referenced in registry)
+**Message Types Handled:**
+- TBD (implementation-specific)
 
-**Features:**
+---
+
+### 2.2 Fullwidth Widgets (`slot: 'fullwidth'`)
+
+#### AutomationWidget (`id: 'automation'`)
+**File:** `public/js/widgets/AutomationWidget.js`
+
+**Gameplay Features:**
 - Fullwidth widget for automation controls
 - Path execution and auto-navigation
 - Path creation and management
+- Order: 70
 
 **Message Types Handled:**
-- `paths:*` events
-- `autonav:*` events
+- `paths:all` - All paths list
+- `paths:details` - Path details
+- `paths:executionStarted` - Path execution started
+- `paths:executionResumed` - Path execution resumed
+- `paths:executionComplete` - Path execution complete
+- `paths:executionStopped` - Path execution stopped
+- `paths:executionFailed` - Path execution failed
+- `autonav:started` - Auto-navigation started
+- `autonav:complete` - Auto-navigation complete
+- `autonav:failed` - Auto-navigation failed
+- `pathSaved` - Path saved confirmation
+- `pathDeleted` - Path deleted confirmation
 
-### 6.9 TicketsWidget
-**File:** `public/js/widgets/TicketsWidget.js` (referenced in registry)
+---
 
-**Features:**
-- Only visible to god mode players
-- Displays ticket list and details
+#### TicketsWidget (`id: 'tickets'`)
+**File:** `public/js/widgets/TicketsWidget.js`
+
+**Gameplay Features:**
+- Only visible to god mode players (`requiresGod: true`)
+- Displays ticket list with tabs: Open/Pending, Testing, Backlog
+- Shows ticket details (title, status, priority, type, description, repro steps, resolution notes)
 - Handles ticket updates and feedback
+- Auto-refreshes every 5 seconds
+- Order: 90
+
+**Message Types Handled:**
+- `ticketsList` - List of tickets from server
+- `ticketUpdated` - Ticket update notification
+- `ticketFeedbackAdded` - Feedback added notification
+
+**Player Interaction:**
+- Tabs: Switch between Open/Pending, Testing, Backlog
+- Click ticket to view details
+- Create new ticket button
+- Refresh button
+- Tab selection persists in localStorage
+- Filter status persists in localStorage
+
+**Tab Behavior:**
+- **Open/Pending:** Shows tickets with status `'open'`
+- **Testing:** Shows tickets with status `'in_progress'`
+- **Backlog:** Shows tickets with status `'backlog'`
 
 **Requirements:**
-- `requiresGod: true`
+- Player must have god mode (checked via `playerState.isGod`)
+
+---
+
+#### InstructionsWidget (`id: 'instructions'`)
+**File:** `public/js/widgets/InstructionsWidget.js`
+
+**Gameplay Features:**
+- Displays game instructions and help
+- Order: 120
 
 **Message Types Handled:**
-- `ticketsList`
-- `ticketUpdated`
-- `ticketFeedbackAdded`
+- TBD (implementation-specific)
 
 ---
 
-## 7. WIDGET TOGGLE BAR
+### 2.3 Auto-Managed Widgets (`autoManaged: true`)
 
-### 7.1 Toggle Bar Creation
-**File:** `public/js/core/WidgetManager.js` (lines 221-287)
+#### NPCWidget (`id: 'npc'`)
+**File:** `public/js/widgets/NPCWidget.js`
 
-**Structure:**
+**Gameplay Features:**
+- Auto-shows during NPC harvest or cooldown
+- Displays NPC name, status, and progress bar
+- Only shows for NPCs being harvested by current player
+- Tracks resource gains (pulse echoes, pulse resin) during harvest
+- Order: 100
+
+**Visibility Logic:**
+- Shows when NPC has `harvestStatus === 'active'` or `harvestStatus === 'cooldown'`
+- Checks `harvesting_player_id` matches current player ID
+- Widget sets `this.activeNPC = npc` when NPC has active harvest/cooldown
+- Widget sets `this.activeNPC = null` when no active NPC
+- WidgetManager checks: `shouldShow = !!widget.activeNPC`
+
+**Message Types Handled:**
+- `roomUpdate` - Checks for active NPCs, updates harvest progress
+- `roomMoved` - Checks for active NPCs
+- `playerStats` - Gets player ID for filtering
+- `npcWidget:resourceGain` - Direct resource gain updates from server (pulse echoes, pulse resin)
+
+**Direct Server Messaging:**
+- Server sends `npcWidget:resourceGain` messages directly during harvest cycles
+- Ensures accurate tracking of first item drops even if widget attachment is delayed
+- Format: `{ type: 'npcWidget:resourceGain', resourceType: 'pulseEchoes'|'pulseResin', amount: number, total: number }`
+
+**Resource Tracking:**
+- Tracks starting stats when harvest begins
+- Calculates gains by comparing current vs starting stats
+- Handles late attachment by calculating baseline from (current - amount) if starting value not set
+
+---
+
+#### FactoryWidget (`id: 'factory'`)
+**File:** `public/js/widgets/FactoryWidget.js`
+
+**Gameplay Features:**
+- Auto-shows in factory-type rooms (`requiresFactory: true`)
+- Displays 5 factory slots with drag-and-drop
+- Shows crafting progress and status
+- Handles recipe matching and crafting initiation
+- Order: 110
+
+**Visibility Logic:**
+- Shows when `room.roomType === 'factory'`
+- Widget sets `this.inFactoryRoom = true` when room type is 'factory'
+- Widget sets `this.inFactoryRoom = false` when not in factory room
+- WidgetManager checks: `shouldShow = widget.inFactoryRoom !== undefined ? widget.inFactoryRoom : this.playerState.inFactoryRoom`
+
+**Message Types Handled:**
+- `roomUpdate` - Checks room type, updates factory state
+- `roomMoved` - Checks room type
+- `factoryWidgetState` - Updates factory state (slots, items, recipes)
+- `factoryCraftStarted` - Shows progress bar
+- `factoryCraftComplete` - Resets state, shows completion
+- `factoryCraftFizzle` - Shows error message
+
+**Player Interaction:**
+- Drag items from inventory to factory slots
+- Click craft button to start crafting
+- View recipe requirements and match status
+- Progress bar shows crafting progress
+
+**Requirements:**
+- Player must be in factory room (checked via `room.roomType === 'factory'`)
+
+---
+
+## 3. WIDGET MESSAGE ROUTING IN GAMEPLAY
+
+### 3.1 Message Flow
+1. **Server** → Sends WebSocket message to client
+2. **Game.js** → Receives message, emits to MessageBus
+3. **WidgetManager** → Subscribes to MessageBus events, routes to widgets via `handleMessage()`
+4. **Widget** → Receives message in `onMessage()` method, updates display
+
+### 3.2 Currently Routed Message Types
+
+**Player State Events:**
+- `player:stats` → Routes as `{ type: 'playerStats', stats: data.stats }`
+- `room:update` → Routes as `{ type: 'roomUpdate', ...data }`
+- `room:moved` → Routes as `{ type: 'moved', ...data }`
+
+**Communication Events:**
+- `talked` → Routes as `{ type: 'talked', ...data }`
+- `resonated` → Routes as `{ type: 'resonated', ...data }`
+- `telepath` → Routes as `{ type: 'telepath', ...data }`
+- `telepathSent` → Routes as `{ type: 'telepathSent', ...data }`
+
+**Factory Events:**
+- `factoryWidgetState` → Routes as `{ type: 'factoryWidgetState', ...data }`
+- `factoryCraftStarted` → Routes as `{ type: 'factoryCraftStarted', ...data }`
+- `factoryCraftComplete` → Routes as `{ type: 'factoryCraftComplete', ...data }`
+- `factoryCraftFizzle` → Routes as `{ type: 'factoryCraftFizzle', ...data }`
+
+**Map/Pathing Events:**
+- `map:data`, `map:update`
+- `pathing:modeStarted`, `pathing:room`, `pathing:saved`
+- `paths:all`, `paths:details`, `paths:executionStarted`, `paths:executionResumed`, `paths:executionComplete`, `paths:executionStopped`, `paths:executionFailed`
+- `autonav:started`, `autonav:complete`, `autonav:failed`
+- `pathSaved`, `pathDeleted`
+
+**Ticket Events:**
+- `ticketsList` → Routes as `{ type: 'ticketsList', tickets: data.tickets }`
+- `ticketUpdated` → Routes as `{ type: 'ticketUpdated', ticket: data.ticket }`
+- `ticketFeedbackAdded` → Routes as `{ type: 'ticketFeedbackAdded', ...data }`
+
+**NPC Events:**
+- `npcWidget:resourceGain` → Routes directly from server for accurate resource tracking
+
+**Broadcast Events:**
+- `broadcast` → Received broadcast message
+- `broadcastGroups` → Groups list update
+- `broadcastHistory` → Message history for all groups
+- `broadcastGroupMembers` → Members list for management
+- `broadcastGroupDeleted` → Group deletion notification
+- `allPlayers` → All players list for modals
+
+**Config Events:**
+- `widget:config` → Updates `activeWidgets` from server, restores widget toggle state
+
+---
+
+## 4. WIDGET LIFECYCLE IN GAMEPLAY
+
+### 4.1 Initialization Flow
+1. **Game Startup:** `Game` instance created in `main.js`
+2. **WidgetManager Creation:** `game.widgetManager = new WidgetManager(game, WIDGETS)`
+3. **Mount All:** `game.widgetManager.mountAll()` called
+4. **Widget Creation:** All widgets from registry instantiated, `init()` called on each
+5. **Default Active:** Widgets with `defaultActive: true` are activated
+6. **Server Config:** Widget config restored from server via `widget:config` message
+7. **Visibility Update:** WidgetManager updates visibility based on requirements and toggle state
+
+### 4.2 Attachment/Detachment Flow
+
+**Attachment:**
+1. Widget requirements checked (god mode, warehouse deed, factory room)
+2. Toggle state checked (`activeWidgets.has(widgetId)`)
+3. If conditions met: `render()` called (if Widget-based) → DOM inserted → `onAttach()` called
+4. Widget receives messages via `onMessage()`
+
+**Detachment:**
+1. `onDetach()` called (cleanup event listeners, intervals)
+2. DOM element removed
+3. Widget stops receiving messages (unless auto-managed)
+4. Toggle state saved to server
+
+### 4.3 Visibility Management
+
+**Regular Widgets:**
+- Visibility controlled by requirements AND toggle state
+- Requirements: `requiresGod`, `requiresWarehouse`, `requiresFactory`
+- Toggle: User clicks icon in toggle bar
+- Both conditions must be met for widget to show
+
+**Auto-Managed Widgets:**
+- Visibility controlled by widget's internal state
+- Widget sets state properties in message handlers:
+  - NPCWidget: `this.activeNPC = npc` or `null`
+  - FactoryWidget: `this.inFactoryRoom = true` or `false`
+- WidgetManager checks state properties after routing messages
+- No toggle button (widget appears/disappears automatically)
+
+---
+
+## 5. WIDGET TOGGLE BAR
+
+### 5.1 Toggle Bar Location
 - Created in `.right-panel` container
 - Contains widget icon buttons (only non-auto-managed widgets)
-- Includes exit button moved from elsewhere
+- Includes exit button
+
+### 5.2 Toggle Bar Behavior
 - Icons use SVG paths from registry or first letter fallback
-
-### 7.2 Toggle Bar Updates
-**File:** `public/js/core/WidgetManager.js` (lines 292-324)
-
-**Update Triggers:**
-- Player state changes (god mode, warehouse deed, factory room)
-- Widget toggle actions
-- Initial mount
-
-**Icon States:**
 - `active` class when widget is toggled on
 - `hidden` class when widget requirements not met
+- Updates when player state changes (god mode, warehouse deed, factory room)
+- Updates on widget toggle actions
+- Updates on initial mount
 
-### 7.3 Widget Toggle
-**File:** `public/js/core/WidgetManager.js` (lines 329-350)
-
-**Process:**
-1. Check widget requirements (god, warehouse, factory)
-2. Toggle `activeWidgets` Set
-3. Attach/detach widget
-4. Update toggle bar
-5. Save config to server via `updateWidgetConfig` message
-
-**Server Message:**
-- `updateWidgetConfig` - `{ type: 'updateWidgetConfig', config: { activeWidgets: string[] } }`
+### 5.3 Toggle Action Flow
+1. Player clicks widget icon in toggle bar
+2. WidgetManager checks requirements (god, warehouse, factory)
+3. If requirements met: Toggle `activeWidgets` Set
+4. Attach/detach widget based on new toggle state
+5. Update toggle bar visual state
+6. Save config to server via `updateWidgetConfig` message
+7. Server persists `activeWidgets` array
 
 ---
 
-## 8. WIDGET CONFIGURATION PERSISTENCE
+## 6. WIDGET CONFIGURATION PERSISTENCE
 
-### 8.1 Server Storage
-**File:** `public/js/core/WidgetManager.js` (lines 355-367)
+### 6.1 Server Storage
 - Widget configuration saved to server via WebSocket
 - Stores `activeWidgets` array of widget IDs
 - Sent on every toggle action
+- **Message:** `updateWidgetConfig` - `{ type: 'updateWidgetConfig', config: { activeWidgets: string[] } }`
 
-### 8.2 Server Restoration
-**File:** `public/js/core/WidgetManager.js` (lines 144-150)
-- Receives `widget:config` message from server
+### 6.2 Server Restoration
+- Receives `widget:config` message from server on game start
 - Restores `activeWidgets` Set from `data.config.activeWidgets`
 - Updates toggle bar and visibility
+- Widgets attach/detach based on restored state
+
+### 6.3 Local Storage
+- **CommsWidget:** Stores `comms_history_${playerName}` in localStorage
+  - Format: `{ talk: Message[], resonate: Message[], telepath: Message[], broadcast: {} }`
+  - Keeps last 100 messages per channel
+- **TicketsWidget:** Stores `ticketsWidget_tab` and `ticketsWidget_filter` in localStorage
+  - Persists selected tab and filter across sessions
 
 ---
 
-## 9. WIDGET REQUIREMENTS & VALIDATION
+## 7. WIDGET REQUIREMENTS IN GAMEPLAY
 
-### 9.1 Requirement Checks
-**File:** `public/js/core/WidgetManager.js` (lines 300-308, 334-336, 488-493)
+### 7.1 God Mode Requirement
+- Checked via `playerState.isGod` (from `player:stats` event)
+- Source: `stats.godMode` or `stats.flag_god_mode`
+- Widgets: `godmode`, `tickets`
 
-**God Mode:**
-- Checked via `playerState.isGod` (from `player:stats` event, `stats.godMode` or `stats.flag_god_mode`)
+### 7.2 Warehouse Requirement
+- Checked via `playerState.hasWarehouseDeed` (from `room:update` event)
+- Source: `data.hasWarehouseDeed`
+- Widgets: `warehouse`
 
-**Warehouse:**
-- Checked via `playerState.hasWarehouseDeed` (from `room:update` event, `data.hasWarehouseDeed`)
-
-**Factory:**
-- Checked via `playerState.inFactoryRoom` (from `room:update` or `room:moved`, `room.roomType === 'factory'`)
-
-### 9.2 Missing Validations
-- **NOT VALIDATED:** Widget ID uniqueness in registry
-- **NOT VALIDATED:** Widget class existence before instantiation (warns only)
-- **NOT VALIDATED:** Widget render() return value type (errors if null)
-- **NOT VALIDATED:** Widget order conflicts (multiple widgets can have same order)
+### 7.3 Factory Requirement
+- Checked via `playerState.inFactoryRoom` (from `room:update` or `room:moved`)
+- Source: `room.roomType === 'factory'`
+- Widgets: `factory` (auto-managed, also checks `widget.inFactoryRoom`)
 
 ---
 
-## 10. BEHAVIORAL RULES & INVARIANTS
+## 8. BEHAVIORAL RULES & INVARIANTS
 
-### 10.1 Enforced Rules
-1. **WidgetManager is ONLY message entry point** - Widgets receive messages via `onMessage()`, not direct MessageBus subscriptions (Widget-based widgets)
-2. **Component-based widgets use MessageBus** - NPCWidget and FactoryWidget subscribe directly to MessageBus events
-3. **Auto-managed widgets always receive messages** - Even when not attached, for state management
-4. **Widget order determines DOM insertion order** - Lower order = earlier in DOM
-5. **Toggle bar only shows non-auto-managed widgets** - Auto-managed widgets have no toggle button
-6. **Widget attachment requires render() or existing DOM** - Widget-based widgets must implement `render()`, Component-based widgets find existing elements
+### 8.1 Enforced Rules
+1. **WidgetManager is ONLY message entry point** - Widgets receive messages via `onMessage()`, not direct MessageBus subscriptions (for Widget-based widgets)
+2. **Auto-managed widgets always receive messages** - Even when not attached, for state management
+3. **Widget order determines DOM insertion order** - Lower order = earlier in DOM
+4. **Toggle bar only shows non-auto-managed widgets** - Auto-managed widgets have no toggle button
+5. **Widget attachment requires render()** - Widget-based widgets must implement `render()` method
 
-### 10.2 State Transitions
-**File:** `public/js/core/WidgetManager.js`
+### 8.2 State Transitions
 
 **Widget Lifecycle:**
 1. **Created** → `init()` called → Stored in `widgets` Map
@@ -458,54 +531,61 @@ game.widgetManager.mountAll();
 
 ---
 
-## 11. INTERACTIONS WITH OTHER SYSTEMS
+## 9. INTERACTIONS WITH OTHER SYSTEMS
 
-### 11.1 Game Core
+### 9.1 Game Core
 - **Game instance** - All widgets receive `game` instance for `send()` and `getWebSocket()`
 - **MessageBus** - WidgetManager subscribes to events, routes to widgets
 - **WebSocket** - Widgets send messages via `game.send()`
 
-### 11.2 Terminal
+### 9.2 Terminal
 - Some widgets use `window.terminal.addMessage()` for error messages
 - Terminal is separate component, not a widget
+- Broadcast messages appear in terminal_history for offline players
 
-### 11.3 Inventory
+### 9.3 Inventory
 - Inventory is separate component, not a widget
-- Some widgets may interact with inventory data
+- FactoryWidget interacts with inventory for drag-and-drop items
+- WarehouseWidget displays warehouse inventory (separate from player inventory)
 
-### 11.4 Server Handlers
+### 9.4 Server Handlers
 - Widget messages sent to server handled by `handlers/game.js`
 - Server sends widget config updates via `widget:config` message
+- Server sends game state updates via various message types (playerStats, roomUpdate, etc.)
 
 ---
 
-## 12. FAILURE STATES & ERROR HANDLING
+## 10. FAILURE STATES & ERROR HANDLING
 
-### 12.1 Widget Creation Failures
-**File:** `public/js/core/WidgetManager.js` (lines 189-208)
+### 10.1 Widget Creation Failures
+**File:** `public/js/core/WidgetManager.js`
+
 - **Widget class not found:** Warns and skips widget
 - **Widget instantiation error:** Catches and logs error, skips widget
-- **Widget missing render():** Throws error in Widget base class (line 34)
+- **Widget missing render():** Throws error in Widget base class
 
-### 12.2 Widget Attachment Failures
-**File:** `public/js/core/WidgetManager.js` (lines 384-388)
+### 10.2 Widget Attachment Failures
+**File:** `public/js/core/WidgetManager.js`
+
 - **render() returns null:** Logs error and skips attachment
 - **DOM insertion fails:** Browser throws, widget not attached
 
-### 12.3 Message Handling Failures
-**File:** `public/js/core/WidgetManager.js` (lines 459-461)
+### 10.3 Message Handling Failures
+**File:** `public/js/core/WidgetManager.js`
+
 - **onMessage() throws error:** Caught and logged, other widgets still receive message
 
-### 12.4 Missing Error Handling
+### 10.4 Missing Error Handling
 - **NOT HANDLED:** WebSocket disconnection during widget message send
 - **NOT HANDLED:** localStorage quota exceeded for CommsWidget history
 - **NOT HANDLED:** Invalid widget config from server
 
 ---
 
-## 13. SERIALIZATION & DATA FLOW
+## 11. SERIALIZATION & DATA FLOW
 
-### 13.1 Server to Client
+### 11.1 Server to Client
+
 **Widget Config:**
 - `widget:config` message contains `{ config: { activeWidgets: string[] } }`
 
@@ -513,63 +593,79 @@ game.widgetManager.mountAll();
 - Player stats, room data, NPCs, factory state sent via various message types
 - Widgets receive via `onMessage()` callback
 
-### 13.2 Client to Server
+**Ticket Data:**
+- `ticketsList` message contains `{ tickets: Ticket[] }`
+- Tickets mapped from database rows using `mapRowsToTickets()` from `ticket.js` model
+
+### 11.2 Client to Server
+
 **Widget Config:**
 - `updateWidgetConfig` message contains `{ type: 'updateWidgetConfig', config: { activeWidgets: string[] } }`
 
 **Widget Actions:**
-- Various messages sent by widgets (e.g., `assignAttributePoint`, `talk`, `resonate`, `telepath`)
+- `assignAttributePoint` - `{ type: 'assignAttributePoint', statKey: string, action: 'increment'|'decrement' }`
+- `talk` - `{ type: 'talk', message: string }`
+- `resonate` - `{ type: 'resonate', message: string }`
+- `telepath` - `{ type: 'telepath', targetPlayer: string, message: string }`
+- `broadcast` - `{ type: 'broadcast', groupId: number, message: string }`
+- `factoryWidgetAddItem` - `{ type: 'factoryWidgetAddItem', slotIndex: number, itemName: string }`
+- `factoryWidgetRemoveItem` - `{ type: 'factoryWidgetRemoveItem', slotIndex: number }`
+- `factoryCraft` - `{ type: 'factoryCraft' }`
+- `getTickets` - `{ type: 'getTickets', status?: string, limit?: number, includeResolved?: boolean }`
 
-### 13.3 Local Storage
+### 11.3 Local Storage
+
 **CommsWidget:**
 - Stores `comms_history_${playerName}` in localStorage
-- Format: `{ talk: Message[], resonate: Message[], telepath: Message[] }`
+- Format: `{ talk: Message[], resonate: Message[], telepath: Message[], broadcast: {} }`
 - Message format: `{ playerName: string, message: string, isReceived: boolean, targetPlayer?: string, timestamp: number }`
+
+**TicketsWidget:**
+- Stores `ticketsWidget_tab` - Current tab selection ('openPending', 'testing', 'backlog')
+- Stores `ticketsWidget_filter` - Current filter status ('open', 'in_progress', 'resolved', 'all')
 
 ---
 
-## 14. KNOWN GAPS & MISSING FEATURES
+## 12. KNOWN GAPS & MISSING FEATURES
 
-### 14.1 Missing Implementations
+### 12.1 Missing Implementations
 1. **Widget resize/drag** - Widgets cannot be resized or repositioned by user
-2. **Widget state persistence** - Only activeWidgets persisted, not widget-specific state (except CommsWidget localStorage)
+2. **Widget state persistence** - Only activeWidgets persisted, not widget-specific state (except CommsWidget localStorage, TicketsWidget localStorage)
 3. **Widget error boundaries** - No error recovery mechanism for widget failures
 4. **Widget loading states** - No loading indicators during widget initialization
 5. **Widget animations** - No transition animations for show/hide
 6. **Widget keyboard shortcuts** - No keyboard shortcuts for widget toggling
 7. **Widget tooltips** - Only icon tooltips, no widget content tooltips
-8. **Widget refresh** - No manual refresh mechanism for widgets
+8. **Widget refresh** - No manual refresh mechanism for widgets (except TicketsWidget auto-refresh)
 9. **Widget export/import** - Cannot export/import widget configurations
 10. **Widget themes** - CSS themes exist but not user-selectable
 
-### 14.2 Partial Implementations
+### 12.2 Partial Implementations
 1. **Widget order** - Defined but not enforced (duplicates allowed)
 2. **Widget validation** - Basic checks but no comprehensive validation
 3. **Widget cleanup** - `onDetach()` exists but not always called on page unload
 
 ---
 
-## 15. SUMMARY
+## 13. SUMMARY
 
-### 15.1 Strengths
+### 13.1 Current Widget System Strengths
 - **Centralized management** - WidgetManager provides single point of control
 - **Message routing** - Clean separation between MessageBus and widget message handling
-- **Flexible architecture** - Supports both render-based (Widget) and DOM-based (Component) widgets
-- **Auto-management** - Smart visibility control for context-sensitive widgets
+- **Auto-management** - Smart visibility control for context-sensitive widgets (NPC, Factory)
 - **Requirement system** - Clean way to gate widgets by player state
-- **CSS standardization** - Shared CSS provides consistent styling
+- **State persistence** - Widget toggle state persists across sessions
+- **Direct server messaging** - NPCWidget receives direct resource updates for accurate tracking
 
-### 15.2 Weaknesses
-- **Mixed patterns** - Two base classes (Widget vs Component) can be confusing
+### 13.2 Current Widget System Weaknesses
 - **Limited error handling** - Many failure cases not handled gracefully
-- **No state persistence** - Widget-specific state not persisted (except CommsWidget)
+- **No state persistence** - Widget-specific state not persisted (except CommsWidget, TicketsWidget)
 - **No validation** - Registry validation is minimal
 - **Hardcoded dependencies** - WidgetManager imports all widgets statically
 
-### 15.3 Risks
+### 13.3 Current Risks
 - **Widget class missing** - If widget class not found, widget silently fails
 - **Message routing errors** - Errors in one widget's `onMessage()` don't affect others, but no recovery
-- **DOM conflicts** - Component-based widgets assume DOM elements exist
 - **State desync** - Widget state can desync if messages arrive out of order
 - **Memory leaks** - Event listeners may not be cleaned up if `onDetach()` not called
 

@@ -198,42 +198,88 @@ function stripPlayerNameMarkup(playerName) {
 }
 
 async function authenticateSession(ctx, data) {
-  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, playerName, activeCharacterWindows } = ctx;
+  const { ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, session, sessionId, activeCharacterWindows } = ctx;
+  // Use let for playerName since it may be updated during session restoration
+  let playerName = ctx.playerName;
   
   // Get windowId from message data or context (fallback to context for backward compatibility)
   const windowId = data.windowId || ctx.windowId || null;
   
-  // DEV MODE: Test bypass - allow direct authentication with playerName in data
+  // DEV MODE: Test bypass - allow direct authentication with playerName in data (only if no session exists)
   // This allows MCP test tools to connect without HTTP session
-  console.log(`[authenticateSession] session=${!!session}, sessionId=${sessionId}, data.playerName=${data.playerName}, ctx.playerName=${playerName}`);
-  
   let testPlayerName = null;
-  const hasValidSession = session && sessionId && session.sessionData && session.sessionData.playerName;
+  let hasValidSession = session && sessionId && session.sessionData && session.sessionData.playerName;
   
-  // Check for test bypass BEFORE validating session
-  if (data.playerName) {
-    console.log(`[DEV MODE] Attempting test bypass for player: ${data.playerName}`);
+  // SESSION RESTORATION: Try to restore session FIRST if we have sessionId (cookie exists) but no sessionData (server restart)
+  // This must happen BEFORE test bypass check to properly restore sessions
+  const needsRestore = session && session.needsRestore;
+  if (!hasValidSession && sessionId && (needsRestore || !session?.sessionData) && data.playerName) {
+    const restorePlayerName = data.playerName;
+    const restorePlayer = await db.getPlayerByName(restorePlayerName);
+    
+    if (restorePlayer) {
+      // Get account_id for this player from user_characters table
+      const userCharacterResult = await db.query(
+        'SELECT account_id FROM user_characters WHERE player_id = $1 LIMIT 1',
+        [restorePlayer.id]
+      );
+      
+      if (userCharacterResult && userCharacterResult.rows && userCharacterResult.rows.length > 0) {
+        const accountId = userCharacterResult.rows[0].account_id;
+        
+        // Restore session in sessionStore (imported from middleware)
+        const { sessionStore } = require('../middleware/session');
+        const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        sessionStore.set(sessionId, {
+          accountId: accountId,
+          playerName: restorePlayerName,
+          playerId: restorePlayer.id,
+          createdAt: Date.now(),
+          expiresAt: expiresAt
+        });
+        
+        console.log(`[authenticateSession] ✅ Restored session for ${restorePlayerName} after server restart`);
+        
+        // Re-fetch session from store to get updated data
+        const restoredSessionData = sessionStore.get(sessionId);
+        
+        // Update session object to reflect restored session (session is passed by reference)
+        if (session) {
+          session.sessionData = restoredSessionData;
+          session.needsRestore = false; // Clear the restore flag
+        }
+        
+        // Update context playerName for downstream use (use restored name)
+        ctx.playerName = restorePlayerName;
+        // Also update local playerName variable to use restored value
+        playerName = restorePlayerName;
+        
+        // Mark session as valid now that it's restored
+        hasValidSession = true;
+      }
+    }
+  }
+  
+  // Only use test bypass if we still don't have a valid session and no sessionId (no cookie = dev mode)
+  if (!hasValidSession && !sessionId && data.playerName) {
     // Verify player exists
     const testPlayer = await db.getPlayerByName(data.playerName);
     if (testPlayer) {
       testPlayerName = data.playerName;
-      console.log(`[DEV MODE] ✅ Test bypass authentication approved for player: ${testPlayerName}`);
-    } else {
-      console.log(`[DEV MODE] ❌ Test bypass denied - player not found: ${data.playerName}`);
+      console.log(`[authenticateSession] Using test bypass for ${testPlayerName} (no session cookie)`);
     }
   }
   
   // Validate session (or test bypass)
   if (!hasValidSession) {
     if (!testPlayerName) {
-      console.log(`[authenticateSession] ❌ No valid session and no test bypass. session=${!!session}, sessionId=${sessionId}, testPlayerName=${testPlayerName}`);
       ws.send(JSON.stringify({ type: 'error', message: 'No valid session. Please select a character first.' }));
       return { authenticated: false };
     }
-    console.log(`[authenticateSession] ✅ Using test bypass for: ${testPlayerName}`);
   }
 
-  const effectivePlayerName = testPlayerName || playerName;
+  // Use playerName from context if it was updated during restoration
+  const effectivePlayerName = testPlayerName || (ctx.playerName || playerName);
   const player = await db.getPlayerByName(effectivePlayerName);
   if (!player) {
     ws.send(JSON.stringify({ type: 'error', message: 'Player not found' }));
@@ -282,15 +328,12 @@ async function authenticateSession(ctx, data) {
     
     // If same windowId and old connection is closed, this is a reconnection - allow it
     if (existingWindowId === windowId && windowId !== null && !oldConnectionOpen) {
-      console.log(`Player ${player.name} reconnecting with same windowId (${windowId}), old connection was closed...`);
       // Remove old closed connection entry
       connectedPlayers.delete(existingConnectionId);
       cancelLoreKeeperEngagement(existingConnectionId);
       // Continue below to create new connection
     } else if (oldConnectionOpen) {
       // Old connection is still open - disconnect it (new window opened or different windowId)
-      console.log(`Player ${player.name} already connected (${existingConnectionId}), disconnecting old connection...`);
-      
       // End any active harvest sessions for the old connection
       if (oldPlayerData.playerId) {
         const activeSession = await findPlayerHarvestSession(db, oldPlayerData.playerId);
@@ -365,11 +408,8 @@ async function authenticateSession(ctx, data) {
         type: 'systemMessage',
         message: leftMessage
       });
-      
-      console.log(`Old connection ${existingConnectionId} for player ${player.name} has been disconnected`);
     } else {
       // Old connection is closed but different windowId - just clean up
-      console.log(`Player ${player.name} old connection (${existingConnectionId}) was closed, cleaning up...`);
       connectedPlayers.delete(existingConnectionId);
       cancelLoreKeeperEngagement(existingConnectionId);
       // Continue below to create new connection
@@ -393,7 +433,6 @@ async function authenticateSession(ctx, data) {
   // This prevents harvests from continuing after logout/login
   const activeSession = await findPlayerHarvestSession(db, player.id);
   if (activeSession) {
-    console.log(`[authenticateSession] Ending stale harvest session for player ${player.name} (playerId: ${player.id}) on room_npc ${activeSession.roomNpcId}`);
     await endHarvestSession(db, activeSession.roomNpcId, true, 'player_reconnected');
   }
   
@@ -417,13 +456,11 @@ async function authenticateSession(ctx, data) {
       openedAt: Date.now(), // Reset grace period on reconnection
       connectionId: connectionId
     });
-    console.log(`Registered/updated window ${windowId} for player ${player.name} (playerId: ${player.id})`);
   }
 
   // Editor connections: Send sessionAuthenticated and skip game-specific setup
   if (data.isEditor === true) {
     ws.send(JSON.stringify({ type: 'sessionAuthenticated' }));
-    console.log(`Editor connection authenticated for player ${effectivePlayerName} (${connectionId})`);
     return { authenticated: true, connectionId };
   }
 
@@ -435,7 +472,6 @@ async function authenticateSession(ctx, data) {
   if (loginWidgetConfig?.automation?.toggles?.autoHarvest === true) {
     loginWidgetConfig.automation.toggles.autoHarvest = false;
     await db.updatePlayerWidgetConfig(player.id, loginWidgetConfig);
-    console.log(`[authenticateSession] Reset autoHarvest toggle for player ${player.name}`);
   }
   
   // Send initial room update (with full info for first display)
@@ -539,7 +575,6 @@ async function authenticateSession(ctx, data) {
   // This ensures the room description is shown after the backscroll
   await look({ ws, db, connectedPlayers, factoryWidgetState, warehouseWidgetState, connectionId }, {});
 
-  console.log(`Player ${effectivePlayerName} connected (${connectionId}) in room ${room.name}`);
   return { authenticated: true, connectionId };
 }
 
@@ -635,13 +670,10 @@ async function move(ctx, data) {
         const moveDirection = data.direction ? data.direction.toUpperCase() : null;
         const expectedDirection = expectedStep.direction ? expectedStep.direction.toUpperCase() : null;
         // If this move matches the expected step, allow it (it's from path execution)
-        console.log(`[Path Execution Check] currentStep=${currentStep}, actualStep=${actualStep}, moveDirection=${moveDirection}, expectedDirection=${expectedDirection}, stepCount=${steps.length}, isLooping=${isLooping}`);
         if (moveDirection && expectedDirection && moveDirection === expectedDirection) {
           // This is the path execution move, allow it to proceed
-          console.log(`[Path Execution] Move allowed: ${moveDirection}`);
         } else {
           // Manual move detected during path execution - stop path execution and allow move
-          console.log(`[Path Execution] Manual move detected - stopping path execution`);
           clearPathExecution(connectedPlayers, connectionId);
           ws.send(JSON.stringify({ 
             type: 'paths:executionStopped',
@@ -651,7 +683,6 @@ async function move(ctx, data) {
         }
       } else {
         // Invalid step index - stop path execution and allow move
-        console.log(`[Path Execution] Invalid step index - stopping path execution`);
         clearPathExecution(connectedPlayers, connectionId);
         ws.send(JSON.stringify({ 
           type: 'paths:executionStopped',
@@ -671,7 +702,6 @@ async function move(ctx, data) {
         // This is the auto-navigation move, allow it to proceed
       } else {
         // Manual move detected during auto-navigation - stop auto-navigation and allow move
-        console.log(`[Auto-Navigation] Manual move detected - stopping auto-navigation`);
         if (playerData.autoNavigation.timeoutId) {
           clearTimeout(playerData.autoNavigation.timeoutId);
         }
@@ -684,7 +714,6 @@ async function move(ctx, data) {
       }
     } else {
       // Path complete but auto-navigation still active - stop it and allow move
-      console.log(`[Auto-Navigation] Path complete - stopping auto-navigation`);
       if (playerData.autoNavigation.timeoutId) {
         clearTimeout(playerData.autoNavigation.timeoutId);
       }
@@ -1147,8 +1176,6 @@ async function move(ctx, data) {
 
   // Trigger Lore Keeper engagement for entering the new room
   await triggerLoreKeeperEngagement(db, connectedPlayers, connectionId, targetRoom.id);
-
-  console.log(`Player ${playerName} moved from room ${oldRoomId} to room ${targetRoom.id}`);
   
   // Continue path execution or auto-navigation if active
   if (playerData.pathExecution && playerData.pathExecution.isActive) {
@@ -1233,7 +1260,6 @@ async function look(ctx, data) {
     const playerActuallyMoved = oldRoomId && oldRoomId !== currentRoom.id;
     
     if (lookPlayerData.roomId !== currentRoom.id) {
-      console.log(`[LOOK COMMAND] Room mismatch detected: connectedPlayers has room ${lookPlayerData.roomId}, database has room ${currentRoom.id}. Updating...`);
       lookPlayerData.roomId = currentRoom.id;
       connectedPlayers.set(connectionId, lookPlayerData);
       
@@ -1596,7 +1622,6 @@ async function factoryWidgetAddItem(ctx, data) {
   
   // Parse slot index - accept both string and number
   const slotIndex = parseInt(data.slotIndex, 10);
-  console.log('[factoryWidgetAddItem] Parsed slotIndex:', slotIndex, 'from raw value:', data.slotIndex);
   
   if (isNaN(slotIndex) || slotIndex < 0 || slotIndex > 4) {
     ws.send(JSON.stringify({ type: 'error', message: `Invalid slot index. Must be 0-4. Received: ${data.slotIndex}` }));
@@ -1640,8 +1665,6 @@ async function factoryWidgetAddItem(ctx, data) {
   // Use the canonical item name from inventory (might differ from client-sent name)
   const canonicalItemName = inventoryItem.item_name;
   
-  console.log(`[factoryWidgetAddItem] Looking up item - canonicalName: "${canonicalItemName}", originalName: "${itemName}"`);
-  
   // Ensure requested quantity doesn't exceed available inventory
   const actualQuantity = Math.min(requestedQuantity, inventoryItem.quantity);
   if (actualQuantity < requestedQuantity) {
@@ -1651,12 +1674,10 @@ async function factoryWidgetAddItem(ctx, data) {
   
   // Get full item data (including item_type and rune_color) - use canonical name from inventory
   let itemData = await db.getItemByName(canonicalItemName);
-  console.log(`[factoryWidgetAddItem] First lookup result for "${canonicalItemName}":`, itemData ? `Found (id: ${itemData.id}, name: "${itemData.name}")` : 'Not found');
   
   if (!itemData) {
     // Try with the original itemName as fallback
     itemData = await db.getItemByName(itemName);
-    console.log(`[factoryWidgetAddItem] Fallback lookup result for "${itemName}":`, itemData ? `Found (id: ${itemData.id}, name: "${itemData.name}")` : 'Not found');
     
     if (!itemData) {
       // Try a case-insensitive search directly in the database
@@ -1667,7 +1688,6 @@ async function factoryWidgetAddItem(ctx, data) {
         );
         if (caseInsensitiveResult && caseInsensitiveResult.rows && caseInsensitiveResult.rows.length > 0) {
           itemData = caseInsensitiveResult.rows[0];
-          console.log(`[factoryWidgetAddItem] Case-insensitive lookup found:`, itemData.name);
         }
       } catch (dbError) {
         console.error(`[factoryWidgetAddItem] Database query error:`, dbError);
@@ -1696,7 +1716,6 @@ async function factoryWidgetAddItem(ctx, data) {
             encumbrance: 1,
             rune_color: defaultItemType === 'rune' ? '#0000FF' : null
           });
-          console.log(`[factoryWidgetAddItem] Created item "${canonicalItemName}" with type "${defaultItemType}"`);
         } catch (createError) {
           console.error(`[factoryWidgetAddItem] Failed to create item "${canonicalItemName}":`, createError);
           ws.send(JSON.stringify({ type: 'error', message: `Item "${canonicalItemName}" not found in database and could not be created. Please contact an administrator.` }));
@@ -1839,8 +1858,6 @@ async function factoryWidgetRemoveItem(ctx, data) {
   
   // Send updated player stats (encumbrance changed)
   await sendPlayerStats(connectedPlayers, db, connectionId);
-  
-  console.log(`[Factory] Player ${playerName} emptied slot ${slotIndex}, returned ${slot.quantity}x ${slot.itemName} to inventory`);
 }
 
 /**
@@ -1911,7 +1928,6 @@ async function factoryCraft(ctx, data) {
   if (!recipes || recipes.length === 0) {
     // No recipes available - create a fizzle craft
     isFizzle = true;
-    console.log(`[Factory] Player ${playerName} starting fizzle craft (no recipes available)`);
     
     // Create a dummy recipe for fizzle (just for timing/display purposes)
     recipe = {
@@ -1948,7 +1964,6 @@ async function factoryCraft(ctx, data) {
     if (!matchResult) {
       // No recipe matched - create a fizzle craft that will run normally then eject everything
       isFizzle = true;
-      console.log(`[Factory] Player ${playerName} starting fizzle craft (invalid recipe)`);
       
       // Create a dummy recipe for fizzle (just for timing/display purposes)
       recipe = {
@@ -1974,7 +1989,6 @@ async function factoryCraft(ctx, data) {
       };
     } else {
       recipe = matchResult.recipe;
-      console.log(`[Factory] Player ${playerName} starting craft: ${recipe.name}`);
       
       // Execute the craft
       craftResult = factoryCraftingEngine.executeCraft({
@@ -2007,14 +2021,12 @@ async function factoryCraft(ctx, data) {
   // Process result
   if (isFizzle) {
     // Fizzle: Eject all items from machine to ground
-    console.log(`[Factory] Player ${playerName} craft fizzled: ${craftResult.message}`);
     
     // Eject all items from all slots to the ground
     for (let i = 0; i < factoryState.slots.length; i++) {
       const slot = factoryState.slots[i];
       if (slot && slot.itemName) {
         await db.addRoomItem(currentRoom.id, slot.itemName, slot.quantity);
-        console.log(`[Factory] Ejected ${slot.quantity}x ${slot.itemName} to ground (fizzle)`);
       }
     }
     
@@ -2048,7 +2060,6 @@ async function factoryCraft(ctx, data) {
     // Send updated room (items on floor have changed)
     await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom);
     
-    console.log(`[Factory] Player ${playerName} craft fizzled: ${craftResult.message}`);
     return; // Exit early for fizzle - don't process success/failure
     
   } else if (craftResult.success) {
@@ -2058,8 +2069,6 @@ async function factoryCraft(ctx, data) {
       item_id: item.item_id || null,
       quantity: item.quantity || 1
     }));
-    
-    console.log(`[Factory] Routing ${normalizedOutputs.length} output items:`, normalizedOutputs);
     
     // Route outputs to inventory or floor
     const routingResult = await factoryOutputRouter.routeOutputs(
@@ -2094,7 +2103,6 @@ async function factoryCraft(ctx, data) {
       const productionRune = factoryState.slots[productionRuneSlot];
       await db.addRoomItem(currentRoom.id, productionRune.itemName, productionRune.quantity);
       factoryState.slots[productionRuneSlot] = null; // Clear slot 2
-      console.log(`[Factory] Ejected production rune ${productionRune.itemName} to ground`);
     }
     
     // Keep other runes (speed/efficiency) in slots
@@ -2133,8 +2141,6 @@ async function factoryCraft(ctx, data) {
       wornTriggered: craftResult.outputs.wornTriggered
     }));
     
-    console.log(`[Factory] Player ${playerName} ${craftResult.critical ? 'CRITICAL ' : ''}crafted ${recipe.name}`);
-    
   } else {
     // Craft failed
     
@@ -2170,8 +2176,6 @@ async function factoryCraft(ctx, data) {
       message: craftResult.message,
       returnedIngredients: craftResult.returnedIngredients
     }));
-    
-    console.log(`[Factory] Player ${playerName} FAILED crafting ${recipe.name}`);
   }
   
   // Send updated factory widget state
@@ -2234,8 +2238,6 @@ async function handleCraftFizzle(ctx, factoryState, player, room, reason) {
   
   // Send updated player stats
   await sendPlayerStats(connectedPlayers, db, connectionId);
-  
-  console.log(`[Factory] Player ${player.name} craft fizzled: ${reason}`);
 }
 
 /**
@@ -2429,7 +2431,6 @@ async function harvest(ctx, data) {
     try {
       const { calculateEffectiveHarvestableTime } = require('../utils/harvestFormulas');
       effectiveHarvestableTime = await calculateEffectiveHarvestableTime(baseHarvestableTime, npcState.harvesting_player_fortitude, db);
-      console.log(`[Harvest] Harvestable time increase applied: base=${baseHarvestableTime}ms, effective=${effectiveHarvestableTime}ms, fortitude=${npcState.harvesting_player_fortitude}`);
     } catch (err) {
       console.error(`[Harvest] Error calculating harvestable time increase:`, err);
     }
@@ -2443,7 +2444,7 @@ async function harvest(ctx, data) {
   // By setting this to 0, timeSinceLastProduction will be ~current timestamp (huge), guaranteeing first cycle fires
   npcState.last_harvest_item_production = 0;
   
-  console.log(`[Harvest] Starting harvest for player ${player.name} on ${roomNpc.name} (room_npc ${roomNpc.id}), harvestableTime=${effectiveHarvestableTime}ms, resonance=${npcState.harvesting_player_resonance}, fortitude=${npcState.harvesting_player_fortitude}`);
+  
   
   // Update NPC state in database
   await db.updateNPCState(roomNpc.id, npcState, roomNpc.last_cycle_run || now);
@@ -2455,7 +2456,6 @@ async function harvest(ctx, data) {
       // state is now JSONB, so it's already an object
       const savedState = verifyResult.rows[0].state || {};
       if (savedState.harvest_active && savedState.harvest_start_time) {
-        console.log(`[Harvest] State saved correctly: harvest_active=${savedState.harvest_active}, harvest_start_time=${savedState.harvest_start_time}`);
       } else {
         console.error(`[Harvest] ERROR: State not saved correctly! harvest_active=${savedState.harvest_active}, harvest_start_time=${savedState.harvest_start_time}`);
       }
@@ -2551,20 +2551,15 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
     return; // No player data
   }
   
-  // Debug log
-  console.log(`[checkAndAutoHarvest] Checking room ${roomId} for player ${playerId}, autoHarvestEnabled=${autoHarvestEnabled}`);
-  
   try {
     // Get all NPCs in the room
     const npcsInRoom = await db.getNPCsInRoom(roomId);
-    console.log(`[checkAndAutoHarvest] Found ${npcsInRoom?.length || 0} NPCs in room ${roomId}`);
     if (!npcsInRoom || npcsInRoom.length === 0) {
       return; // No NPCs in room
     }
     
     const player = await db.getPlayerById(playerId);
     if (!player) {
-      console.log(`[checkAndAutoHarvest] Player ${playerId} not found`);
       return;
     }
     
@@ -2582,7 +2577,6 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
       }
       // Check if NPC type is harvestable (rhythm or harvestable)
       if (npcDef.npc_type !== 'rhythm' && npcDef.npc_type !== 'harvestable') {
-        console.log(`[checkAndAutoHarvest] Skipping NPC ${roomNpc.name} - type is ${npcDef.npc_type}, not rhythm or harvestable`);
         continue; // Not a harvestable NPC
       }
       
@@ -2705,14 +2699,12 @@ async function checkAndAutoHarvest(ctx, connectionId, roomId, playerId) {
       harvestableNPCs.push(roomNpc);
     }
     
-    console.log(`[checkAndAutoHarvest] Found ${harvestableNPCs.length} harvestable NPCs`);
     if (harvestableNPCs.length === 0) {
       return; // No harvestable NPCs
     }
     
     // Store pending NPCs and start harvesting the first one
     harvestState.pendingNpcs = harvestableNPCs.map(npc => npc.id);
-    console.log(`[checkAndAutoHarvest] Starting harvest on ${harvestableNPCs[0].name || 'NPC'} (room_npc ${harvestableNPCs[0].id})`);
     
     // Set isHarvesting flag IMMEDIATELY to prevent duplicate calls from race conditions
     harvestState.isHarvesting = true;
@@ -2828,10 +2820,8 @@ async function autoStartHarvest(ctx, connectionId, roomNpcId, playerId) {
     const verifyResult = await db.query('SELECT state FROM room_npcs WHERE id = $1', [roomNpcId]);
     if (verifyResult.rows[0]) {
       const savedState = verifyResult.rows[0].state || {};
-      if (savedState.harvest_active && savedState.harvesting_player_id === player.id) {
-        console.log(`[autoStartHarvest] ✅ State saved correctly: harvest_active=${savedState.harvest_active}, player_id=${savedState.harvesting_player_id}`);
-      } else {
-        console.error(`[autoStartHarvest] ❌ ERROR: State not saved correctly! harvest_active=${savedState.harvest_active}, player_id=${savedState.harvesting_player_id}`);
+      if (!(savedState.harvest_active && savedState.harvesting_player_id === player.id)) {
+        console.error(`[autoStartHarvest] ERROR: State not saved correctly! harvest_active=${savedState.harvest_active}, player_id=${savedState.harvesting_player_id}`);
       }
     }
     
@@ -2869,15 +2859,12 @@ async function autoStartHarvest(ctx, connectionId, roomNpcId, playerId) {
       }));
     }
     
-    console.log(`[autoStartHarvest] Started auto-harvest for player ${player.name} on ${npcName} (room_npc ${roomNpcId})`);
-    
     // Send room update so client sees the harvest state change and NPC widget appears
     // Small delay to ensure state is fully committed to database
     setTimeout(async () => {
       const { sendRoomUpdate } = require('../utils/broadcast');
       const currentRoom = await db.getRoomById(player.current_room_id);
       if (currentRoom) {
-        console.log(`[autoStartHarvest] Sending room update for room ${currentRoom.id} to show NPC widget`);
         await sendRoomUpdate(connectedPlayers, factoryWidgetState, warehouseWidgetState, db, connectionId, currentRoom, false);
       }
     }, 150);
@@ -2927,8 +2914,6 @@ async function resumeLoopAfterHarvest(ctx, connectionId, roomNpcId) {
     playerData.pathExecution.autoHarvestState.isHarvesting = false;
     playerData.pathExecution.autoHarvestState.currentNpcId = null;
     playerData.pathExecution.isPaused = false;
-    
-    console.log(`[resumeLoopAfterHarvest] Resuming path execution for player ${playerData.playerId}, currentStep: ${playerData.pathExecution.currentStep}, isActive: ${playerData.pathExecution.isActive}, isPaused: ${playerData.pathExecution.isPaused}`);
     
     // Send message
     if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
@@ -2990,10 +2975,8 @@ async function breakActiveHarvest(ctx, connectionId, playerId, reason = 'auto_ha
   const { findPlayerHarvestSession, endHarvestSession } = require('../services/npcCycleEngine');
   
   // Find active harvest session for this player
-  console.log(`[breakActiveHarvest] Looking for active harvest session for player ${playerId}`);
   const activeSession = await findPlayerHarvestSession(db, playerId);
   if (activeSession) {
-    console.log(`[breakActiveHarvest] ✅ Found active harvest session: room_npc ${activeSession.roomNpcId} (reason: ${reason})`);
     
     // End the harvest session (startCooldown = true so NPC enters cooldown properly)
     await endHarvestSession(db, activeSession.roomNpcId, true, reason);
@@ -3035,7 +3018,6 @@ async function breakActiveHarvest(ctx, connectionId, playerId, reason = 'auto_ha
       }
     }
   } else {
-      console.log(`[breakActiveHarvest] ❌ No active harvest session found for player ${playerId} - harvest may have already ended or player is not harvesting`);
       // Even if no session found, clear the harvest state in playerData
       if (playerData.pathExecution && playerData.pathExecution.autoHarvestState) {
         playerData.pathExecution.autoHarvestState.isHarvesting = false;
@@ -5766,7 +5748,6 @@ async function checkAndExecuteAutoStore(ctx, connectionId, playerId, itemName) {
   const playerData = connectedPlayers.get(connectionId);
   
   if (!playerData) {
-    console.log(`[AutoStore] No player data for connection ${connectionId}`);
     return false;
   }
   
@@ -5795,14 +5776,10 @@ async function checkAndExecuteAutoStore(ctx, connectionId, playerId, itemName) {
   const maxThreshold = autoStoreSettings.maxInventory || 10;
   const minThreshold = autoStoreSettings.minInventory || 0;
   
-  console.log(`[AutoStore] Check: ${itemName} qty=${currentQuantity}, max=${maxThreshold}, min=${minThreshold}`);
-  
   // Check if we exceed the max threshold
   if (currentQuantity <= maxThreshold) {
     return false; // Not over threshold
   }
-  
-  console.log(`[AutoStore] Triggering auto-store for player ${playerId}: ${itemName} ${currentQuantity} > ${maxThreshold}`);
   
   // Calculate how much to store (down to min threshold)
   const quantityToStore = currentQuantity - minThreshold;
@@ -5846,7 +5823,6 @@ async function checkAndExecuteAutoStore(ctx, connectionId, playerId, itemName) {
   // Pause any active path execution
   if (playerData.pathExecution && playerData.pathExecution.isActive) {
     playerData.pathExecution.isPaused = true;
-    console.log(`[AutoStore] Paused path execution for auto-store`);
   }
   
   // Calculate path to warehouse
@@ -5862,8 +5838,6 @@ async function checkAndExecuteAutoStore(ctx, connectionId, playerId, itemName) {
     }
     return false;
   }
-  
-  console.log(`[AutoStore] Starting navigation to warehouse, ${pathToWarehouse.length} steps`);
   
   // Send message to player
   if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
@@ -5919,7 +5893,6 @@ async function executeAutoStoreDeposit(ctx, connectionId, playerId, itemName, qu
     const existingItem = await db.getWarehouseItemQuantity(playerId, warehouseLocationKey, itemName);
     
     if (!existingItem && itemTypeCount >= capacity.max_item_types) {
-      console.log(`[AutoStore] Warehouse full (max item types reached)`);
       if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
         playerData.ws.send(JSON.stringify({
           type: 'terminal:message',
@@ -5937,7 +5910,6 @@ async function executeAutoStoreDeposit(ctx, connectionId, playerId, itemName, qu
     const actualQuantity = Math.min(quantity, availableSpace);
     
     if (actualQuantity <= 0) {
-      console.log(`[AutoStore] Warehouse storage full for ${itemName}`);
       if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
         playerData.ws.send(JSON.stringify({
           type: 'terminal:message',
@@ -5953,8 +5925,6 @@ async function executeAutoStoreDeposit(ctx, connectionId, playerId, itemName, qu
     
     // Add to warehouse
     await db.addWarehouseItem(playerId, warehouseLocationKey, itemName, actualQuantity);
-    
-    console.log(`[AutoStore] Deposited ${actualQuantity} ${itemName} to warehouse`);
     
     // Send confirmation message
     if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
@@ -5989,8 +5959,6 @@ async function handleAutoStoreNavigationComplete(ctx, connectionId) {
   
   if (autoStore.phase === 'navigating_to_warehouse') {
     // We've arrived at the warehouse - deposit items
-    console.log(`[AutoStore] Arrived at warehouse, depositing ${autoStore.quantityToStore} ${autoStore.itemName}`);
-    
     await executeAutoStoreDeposit(ctx, connectionId, playerData.playerId, 
       autoStore.itemName, autoStore.quantityToStore, autoStore.warehouseRoomId);
     
@@ -6006,8 +5974,6 @@ async function handleAutoStoreNavigationComplete(ctx, connectionId) {
       finishAutoStore(ctx, connectionId);
       return;
     }
-    
-    console.log(`[AutoStore] Navigating back to origin, ${pathBack.length} steps`);
     
     if (playerData.ws && playerData.ws.readyState === WebSocket.OPEN) {
       playerData.ws.send(JSON.stringify({
@@ -6030,7 +5996,6 @@ async function handleAutoStoreNavigationComplete(ctx, connectionId) {
     
   } else if (autoStore.phase === 'navigating_back') {
     // We've returned to origin - finish and resume
-    console.log(`[AutoStore] Returned to origin, finishing auto-store`);
     finishAutoStore(ctx, connectionId);
   }
 }
@@ -6936,13 +6901,10 @@ async function executeNextPathStep(ctx, connectionId) {
   const playerData = connectedPlayers.get(connectionId);
   
   if (!playerData || !playerData.pathExecution || !playerData.pathExecution.isActive || playerData.pathExecution.isPaused) {
-    console.log(`[executeNextPathStep] Early return - playerData: ${!!playerData}, pathExecution: ${!!playerData?.pathExecution}, isActive: ${playerData?.pathExecution?.isActive}, isPaused: ${playerData?.pathExecution?.isPaused}`);
     return; // Path execution not active, cleared, or paused
   }
   
-  console.log(`[executeNextPathStep] Starting step execution for connectionId: ${connectionId}, currentStep: ${playerData.pathExecution.currentStep}, totalSteps: ${playerData.pathExecution.steps?.length}`);
 
-  
   const { steps, currentStep, isLooping } = playerData.pathExecution;
   
   // Calculate the actual step index (handle loop wrapping)
@@ -7349,8 +7311,6 @@ async function getTickets(ctx, data) {
   const { status = null, limit = 100, includeResolved = false, includeDeleted = false } = data;
   
   try {
-    console.log(`[getTickets] Request: status=${status}, limit=${limit}, includeResolved=${includeResolved}, includeDeleted=${includeDeleted}`);
-    
     let tickets;
     if (status) {
       tickets = await db.listDebugTodos({ status, limit, includeDeleted });
@@ -7358,13 +7318,9 @@ async function getTickets(ctx, data) {
       tickets = await db.listDebugTodos({ limit: limit * 2, includeDeleted }); // Get more to filter
     }
     
-    console.log(`[getTickets] Retrieved ${tickets.length} tickets from database`);
-    
     // Filter out resolved if not requested
     if (!includeResolved) {
-      const beforeFilter = tickets.length;
       tickets = tickets.filter(t => t.status !== 'resolved');
-      console.log(`[getTickets] Filtered out resolved: ${beforeFilter} -> ${tickets.length}`);
     }
     
     // Filter out tickets with invalid ticket_type (from before migration 068)
@@ -7377,8 +7333,6 @@ async function getTickets(ctx, data) {
     
     // Limit results
     tickets = tickets.slice(0, limit);
-    
-    console.log(`[getTickets] Sending ${tickets.length} tickets to client`);
     
     ws.send(JSON.stringify({
       type: 'ticketsList',

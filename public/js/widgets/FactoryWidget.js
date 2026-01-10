@@ -194,7 +194,6 @@ export default class FactoryWidget extends Widget {
         // Setup craft button handler
         this.setupCraftButton();
         
-        console.log('[FactoryWidget] Attached and initialized');
     }
     
     /**
@@ -240,19 +239,16 @@ export default class FactoryWidget extends Widget {
         }
         
         const roomType = data.room.roomType || data.room.room_type;
-        console.log('[FactoryWidget] Room change detected - roomType:', roomType, 'room:', data.room.name);
         
         if (roomType === 'factory') {
             // In factory room - update state
             this.inFactoryRoom = true;
             const factoryState = data.factoryWidgetState || { slots: [null, null, null, null, null] };
-            console.log('[FactoryWidget] In factory room, updating state:', factoryState);
             this.currentState = factoryState;
             this.updateSlots(factoryState);
         } else {
             // Not in factory room
             this.inFactoryRoom = false;
-            console.log('[FactoryWidget] Not in factory room');
         }
     }
     
@@ -261,7 +257,6 @@ export default class FactoryWidget extends Widget {
      */
     handleFactoryWidgetState(data) {
         if (!data || !data.state) return;
-        console.log('[FactoryWidget] Received factoryWidgetState message:', data.state);
         this.currentState = data.state;
         this.updateSlots(data.state);
     }
@@ -272,14 +267,11 @@ export default class FactoryWidget extends Widget {
     attachSlotHandlers() {
         if (!this.rootElement) return;
         
-        console.log('[FactoryWidget] Attaching handlers to all 5 slots');
-        
         for (let i = 0; i < 5; i++) {
             this.attachHandlerToSlot(i);
         }
         
         this.delegationSetup = true;
-        console.log('[FactoryWidget] All slot handlers attached');
     }
     
     /**
@@ -297,11 +289,8 @@ export default class FactoryWidget extends Widget {
         
         // Remove old handlers by removing the marker
         if (slot._factoryHandlersAttached) {
-            console.log(`[FactoryWidget] Slot ${slotIndex} already has handlers`);
             return;
         }
-        
-        console.log(`[FactoryWidget] Attaching handlers to slot ${slotIndex}`);
         
         // Dragover handler
         slot.ondragover = function(e) {

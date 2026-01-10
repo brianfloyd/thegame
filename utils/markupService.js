@@ -46,7 +46,6 @@ async function loadConventions(db) {
         }
         
         conventionsLoaded = true;
-        console.log(`[MarkupService] Loaded ${conventions.length} markup conventions from database`);
     } catch (e) {
         console.error('[MarkupService] Failed to load markup conventions:', e);
         markupConventions = {};

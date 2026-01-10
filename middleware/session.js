@@ -337,6 +337,11 @@ function getSessionFromRequest(req) {
   
   const sessionData = sessionStore.get(sessionId);
   if (!sessionData || sessionData.expiresAt < Date.now()) {
+    // If we have a valid session cookie but no sessionData, return sessionId for restoration attempt
+    // This happens when server restarts but browser still has the cookie
+    if (sessionId) {
+      return { sessionId, sessionData: null, needsRestore: true };
+    }
     return null;
   }
   

@@ -1048,8 +1048,6 @@ function startAutomationEngine(db, connectedPlayers) {
       console.error('[Automation Engine] Error:', error);
     }
   }, AUTOMATION_TICK_INTERVAL);
-  
-  console.log(`[Automation Engine] Started with ${AUTOMATION_TICK_INTERVAL}ms tick interval`);
 }
 
 module.exports = {

@@ -1,0 +1,40 @@
+# Dependencies (will be installed on Railway)
+node_modules/
+
+# Archive folder (reference docs, not needed for runtime)
+archive/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+game.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# MCP test server (not needed for production)
+mcp-test-server/
+
+# Git
+.git/
+
+# Documentation (not needed for runtime)
+docs/
+
+# Large binary files
+*.exe

@@ -172,20 +172,16 @@ async function getPlayerById(id) {
 async function getPlayerWidgetConfig(playerId) {
   const player = await getPlayerById(playerId);
   if (!player) {
-    console.log(`[getPlayerWidgetConfig] Player ${playerId} not found`);
     return { activeWidgets: [], scriptingWidgetPosition: 'top' };
   }
   if (!player.widget_config) {
-    console.log(`[getPlayerWidgetConfig] Player ${playerId} has no widget_config, returning default`);
     return { activeWidgets: [], scriptingWidgetPosition: 'top' };
   }
   try {
     // Use safeJsonParse to handle JSONB columns that may already be objects
     const config = safeJsonParse(player.widget_config, { activeWidgets: [], scriptingWidgetPosition: 'top' }, 'widget_config');
-    console.log(`[getPlayerWidgetConfig] Loaded widget_config for player ${playerId}:`, config);
     // Ensure activeWidgets is an array
     if (!Array.isArray(config.activeWidgets)) {
-      console.log(`[getPlayerWidgetConfig] activeWidgets is not an array, fixing...`);
       config.activeWidgets = [];
     }
     return config;
