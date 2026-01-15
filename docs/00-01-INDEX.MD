@@ -14,11 +14,11 @@ This index catalogs all canonical documents in The Game's documentation library.
 |--------|--------|----------------|
 | **00-XX** | Index & Governance | 2 |
 | **01-XX** | Templates & Processes | 2 |
-| **10-XX** | Gameplay Mechanics | 9 |
+| **10-XX** | Gameplay Mechanics | 10 |
 | **20-XX** | System Architecture | 13 |
 | **30-XX** | System Integrations | 3 |
-| **50-XX** | Infrastructure & Auth | 3 |
-| **Total** | | **32 canonical documents** |
+| **50-XX** | Infrastructure & Auth | 4 |
+| **Total** | | **34 canonical documents** |
 
 ---
 
@@ -133,6 +133,11 @@ This index catalogs all canonical documents in The Game's documentation library.
 **Use When:** Determining which emoji to use in UI, messages, or game content  
 **Key Content:** Emoji standards, emoji definitions, emoji usage guidelines
 
+#### `10-19-map-coordinate-import-canonical.md`
+**Purpose:** Map coordinate system, room adjacency, and external import format  
+**Use When:** Understanding map/room coordinates, creating importable maps, building AI map generators  
+**Key Content:** Coordinate system, direction deltas, exit generation, map connections, import JSON schema
+
 ---
 
 ## 20-XX: System Architecture
@@ -245,6 +250,11 @@ This index catalogs all canonical documents in The Game's documentation library.
 **Use When:** Working with login flow, terminal login, or multi-character functionality  
 **Key Content:** Login flow, terminal interface, multi-character system, authentication UI
 
+### `50-03-railway-deployment-canonical.md`
+**Purpose:** Railway platform deployment specification and deployment operations  
+**Use When:** Deploying to Railway, managing Railway services, or configuring Railway deployment  
+**Key Content:** Railway CLI commands, deployment process, service configuration, build configuration, environment variable management
+
 ---
 
 ## 🎯 Navigation by Task
@@ -300,6 +310,11 @@ This index catalogs all canonical documents in The Game's documentation library.
 1. **`30-20-mcp-server-canonical.md`** - MCP specification
 2. **`00-README.md`** - MCP usage guidelines (forbidden tools)
 
+### Working with Deployment/Infrastructure
+1. **`50-03-railway-deployment-canonical.md`** - Railway deployment process
+2. **`50-00-environment-variables-canonical-spec.md`** - Environment variable configuration
+3. **`20-03-backend-services-canonical.md`** - Backend services architecture
+
 ---
 
 ## 🔍 Finding Documents Quickly
@@ -320,6 +335,8 @@ This index catalogs all canonical documents in The Game's documentation library.
 - **Editors**: `10-17-individual-editor-specifications.md`, `20-12-editor-architecture-canonical.md`
 - **Commands**: `10-04-commands.md`
 - **Architecture**: `20-01-system-architecture-canonical.md`, `20-02-frontend-architecture-canonical.md`, `20-03-backend-services-canonical.md`
+- **Deployment**: `50-03-railway-deployment-canonical.md`
+- **Environment Variables**: `50-00-environment-variables-canonical-spec.md`
 
 ---
 

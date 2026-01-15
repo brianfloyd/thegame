@@ -354,14 +354,30 @@ CHECK (factory_tier IS NULL OR (factory_tier >= 1 AND factory_tier <= 5))
 ## 7. Interactions with Other Systems
 
 ### Game Handlers
-- **Movement:** `handlers/game.js:555-1114` - Reads room data, validates exits, updates player position
-- **Look:** `handlers/game.js:1119-1200` - Reads room data, sends room update
-- **Take/Drop:** `handlers/game.js:1250-1450` - Modifies `room_items` via `addRoomItem`/`removeRoomItem`
+- **Movement:** `handlers/game.js:703-1286` - Reads room data, validates exits, updates player position
+- **Look:** `handlers/game.js:1291-1651` - Reads room data, sends room update
+  - **Current room**: Displays full room description, NPCs, players, items, exits
+  - **Direction view**: When `look <direction>` is used:
+    - Validates direction against available exits via `getExits()`
+    - If valid exit: Finds target room, displays full room info with "Looking {direction}..." prefix (sets `isLooking: true` flag)
+    - If invalid direction: Returns random whimsical wall message from game_messages (`look_direction_wall_1` through `look_direction_wall_5`)
+    - Uses `getRoomByCoords()` for adjacent rooms, handles map transitions
+    - Does NOT update player's `currentRoomId` when viewing (preserves actual location)
+  - **NPC description**: Supports partial name matching for `look <npc name>`
+- **Take/Drop:** `handlers/game.js:1693-1881` - Modifies `room_items` via `addRoomItem`/`removeRoomItem`
 
 ### Map Editor
 - **Create/Update/Delete:** `handlers/mapEditor.js:111-298` - Full CRUD operations
 - **Connect Maps:** `handlers/mapEditor.js:322-409` - Sets up map connections
 - **Jump to Room:** `handlers/mapEditor.js:602-756` - Teleports player to room
+- **Import/Export:** `handlers/mapEditor.js:755-830` - Map import/export handlers
+- **Get Available Connection Rooms:** `handlers/mapEditor.js:1249-1302` - Returns rooms with available exits
+- **Map Editor UI:** `public/gameeditors/map-editor.js` - Canvas-based editor with:
+  - Numpad navigation (1-9) with automatic map switching
+  - Middle mouse button drag-to-pan
+  - Room selection with available exit display
+  - Map connection UI showing rooms with available directions
+  - Import/export dialogs with validation
 
 ### NPC Cycle Engine
 - **NPC State:** `services/npcCycleEngine.js:434-1050` - Reads `room_npcs`, updates state JSON
@@ -419,6 +435,28 @@ CHECK (factory_tier IS NULL OR (factory_tier >= 1 AND factory_tier <= 5))
 - Message: `"You're moving slowly due to your load... (X.Xs)"`
 - Location: `handlers/game.js:671-678`
 - Recovery: Player must wait for cooldown to expire
+
+### Look Command Failures
+
+**Invalid direction (no exit):**
+- Message: Random whimsical message from game_messages (`look_direction_wall_1` through `look_direction_wall_5`)
+- Location: `handlers/game.js:1524-1532`
+- Recovery: Player remains in current room, no state change
+
+**Up/Down direction (not implemented):**
+- Message: `"Up/Down movement is not yet implemented, so you cannot look in that direction."`
+- Location: `handlers/game.js:1308-1313`
+- Recovery: Player remains in current room
+
+**NPC not found:**
+- Message: `"You don't see "[target]" here."`
+- Location: `handlers/game.js:1634-1639`
+- Recovery: No state change, message displayed
+
+**Player/room not found:**
+- Message: `"Player not found"` or `"Current room not found"`
+- Location: `handlers/game.js:1295-1303`
+- Recovery: Command aborted, error logged
 
 ### Room Creation Failures
 

@@ -272,7 +272,43 @@ async function updateRoom(ctx, data) {
   }
 
   try {
+    // Get the current room state to check for connection changes
+    const currentRoom = await db.getRoomById(roomId);
+    if (!currentRoom) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Room not found' }));
+      return;
+    }
+    
+    // Check if we're adding/changing a map connection
+    // Use explicit checks to allow 0 as valid coordinates
+    const hasValidX = connected_room_x !== null && connected_room_x !== undefined && connected_room_x !== '';
+    const hasValidY = connected_room_y !== null && connected_room_y !== undefined && connected_room_y !== '';
+    const isAddingConnection = connected_map_id && hasValidX && hasValidY && connection_direction;
+    const hadConnection = currentRoom.connected_map_id && currentRoom.connected_room_x !== null;
+    const connectionChanged = isAddingConnection && (
+      currentRoom.connected_map_id !== connected_map_id ||
+      currentRoom.connected_room_x !== connected_room_x ||
+      currentRoom.connected_room_y !== connected_room_y ||
+      currentRoom.connection_direction !== connection_direction
+    );
+    
+    // If we had a connection and it's changing or being removed, clean up the old reverse connection
+    if (hadConnection && (connectionChanged || !isAddingConnection)) {
+      try {
+        await db.query(
+          'UPDATE rooms SET connected_map_id = NULL, connected_room_x = NULL, connected_room_y = NULL, connection_direction = NULL WHERE map_id = $1 AND x = $2 AND y = $3 AND connected_map_id = $4 AND connected_room_x = $5 AND connected_room_y = $6',
+          [currentRoom.connected_map_id, currentRoom.connected_room_x, currentRoom.connected_room_y, currentRoom.map_id, currentRoom.x, currentRoom.y]
+        );
+      } catch (err) {
+        console.log(`Note: Could not clean up old reverse connection: ${err.message}`);
+      }
+    }
+    
     // Update room with all fields
+    // Parse coordinates, handling 0 as valid value
+    const parsedX = hasValidX ? parseInt(connected_room_x) : null;
+    const parsedY = hasValidY ? parseInt(connected_room_y) : null;
+    
     await db.updateRoom(
       roomId, 
       name, 
@@ -280,10 +316,48 @@ async function updateRoom(ctx, data) {
       validRoomType,
       factory_tier || null,
       connected_map_id || null,
-      connected_room_x || null,
-      connected_room_y || null,
+      parsedX,
+      parsedY,
       connection_direction || null
     );
+    
+    // If adding a new connection, create the reverse connection on the target room
+    let bidirectionalCreated = false;
+    let connectionWarning = null;
+    
+    if (isAddingConnection) {
+      // Calculate opposite direction
+      const oppositeDir = {
+        'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E',
+        'NE': 'SW', 'NW': 'SE', 'SE': 'NW', 'SW': 'NE'
+      };
+      const targetDirection = oppositeDir[connection_direction];
+      
+      // Find the target room and create reverse connection
+      const targetRoom = await db.getRoomByCoords(connected_map_id, parsedX, parsedY);
+      if (targetRoom) {
+        // Only update the reverse connection if it doesn't already point somewhere else
+        // (or if it points back to this room - then update is safe)
+        const canUpdateTarget = !targetRoom.connected_map_id || 
+          (targetRoom.connected_map_id === currentRoom.map_id && 
+           targetRoom.connected_room_x === currentRoom.x && 
+           targetRoom.connected_room_y === currentRoom.y);
+        
+        if (canUpdateTarget) {
+          await db.query(
+            'UPDATE rooms SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4 WHERE id = $5',
+            [currentRoom.map_id, currentRoom.x, currentRoom.y, targetDirection, targetRoom.id]
+          );
+          bidirectionalCreated = true;
+        } else {
+          connectionWarning = `Target room "${targetRoom.name}" already has a connection to another location. Reverse connection was NOT created - navigation back may not work.`;
+          console.log(`Warning: Target room ${targetRoom.id} already has a different connection, skipping reverse connection`);
+        }
+      } else {
+        connectionWarning = `Target room at (${parsedX}, ${parsedY}) not found. Connection created but may be invalid.`;
+      }
+    }
+    
     const room = await db.getRoomById(roomId);
     
     ws.send(JSON.stringify({
@@ -301,10 +375,13 @@ async function updateRoom(ctx, data) {
         factory_tier: room.factory_tier || null,
         factory_quirks: room.factory_quirks || null,
         connected_map_id: room.connected_map_id || null,
-        connected_room_x: room.connected_room_x || null,
-        connected_room_y: room.connected_room_y || null,
+        // Use explicit null check to allow 0 as valid coordinate
+        connected_room_x: room.connected_room_x !== null && room.connected_room_x !== undefined ? room.connected_room_x : null,
+        connected_room_y: room.connected_room_y !== null && room.connected_room_y !== undefined ? room.connected_room_y : null,
         connection_direction: room.connection_direction || null
-      }
+      },
+      bidirectionalCreated,
+      connectionWarning
     }));
   } catch (err) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to update room: ' + err.message }));
@@ -1158,6 +1235,189 @@ async function removeMerchantItem(ctx, data) {
   }
 }
 
+/**
+ * Import a map from canonical JSON format
+ */
+async function importMap(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  try {
+    const { importData, entranceRoom, connectionRoomId, connectionDirection } = data;
+
+    if (!importData) {
+      ws.send(JSON.stringify({ type: 'error', message: 'importData is required' }));
+      return;
+    }
+
+    // Parse if string
+    let parsedImportData = importData;
+    if (typeof importData === 'string') {
+      try {
+        parsedImportData = JSON.parse(importData);
+      } catch (e) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON in importData: ' + e.message }));
+        return;
+      }
+    }
+
+    // Import the map
+    const result = await db.importMap(
+      parsedImportData,
+      entranceRoom || null,
+      connectionRoomId || null,
+      connectionDirection || null
+    );
+
+    ws.send(JSON.stringify({
+      type: 'mapImported',
+      mapId: result.mapId,
+      roomsCreated: result.roomsCreated,
+      connectionsCreated: result.connectionsCreated,
+      warnings: result.warnings
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to import map: ' + err.message }));
+  }
+}
+
+/**
+ * Export a map to canonical JSON format
+ */
+async function exportMap(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  try {
+    const { mapId } = data;
+
+    if (!mapId) {
+      ws.send(JSON.stringify({ type: 'error', message: 'mapId is required' }));
+      return;
+    }
+
+    // Export the map
+    const exportData = await db.exportMap(mapId);
+
+    ws.send(JSON.stringify({
+      type: 'mapExported',
+      mapId: mapId,
+      exportData: exportData
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to export map: ' + err.message }));
+  }
+}
+
+/**
+ * Get available rooms that can be used as connection points
+ * Returns rooms that don't already have a connection in the specified direction
+ */
+async function getAvailableConnectionRooms(ctx, data) {
+  const { ws, db, connectedPlayers } = ctx;
+  
+  const player = await verifyGodMode(db, connectedPlayers, ws);
+  if (!player) {
+    ws.send(JSON.stringify({ type: 'error', message: 'God mode required' }));
+    return;
+  }
+
+  try {
+    const { mapId, direction } = data;
+
+    if (!mapId) {
+      ws.send(JSON.stringify({ type: 'error', message: 'mapId is required' }));
+      return;
+    }
+
+    // Get all rooms in the map
+    const rooms = await db.getRoomsByMap(mapId);
+
+    // Direction offsets for checking adjacent rooms
+    const directionOffsets = {
+      'N': { dx: 0, dy: -1 },
+      'S': { dx: 0, dy: 1 },
+      'E': { dx: 1, dy: 0 },
+      'W': { dx: -1, dy: 0 }
+    };
+
+    // Create a lookup set for quick room existence checks
+    const roomPositions = new Set(rooms.map(r => `${r.x},${r.y}`));
+
+    // Get exits for each room and determine available directions for connections
+    const roomsWithExits = await Promise.all(rooms.map(async (room) => {
+      // Get all exits for this room
+      const allExits = await getExits(db, room);
+      
+      // Available directions for map connections are cardinal directions (N, S, E, W)
+      // A direction is available if:
+      // 1. No adjacent room exists in that direction on this map, AND
+      // 2. No existing map connection uses that direction
+      const availableDirections = ['N', 'S', 'E', 'W'].filter(dir => {
+        // Check if already has a map connection in this direction
+        if (room.connected_map_id && room.connection_direction === dir) {
+          return false;
+        }
+        
+        // Check if an adjacent room exists in this direction
+        const offset = directionOffsets[dir];
+        const adjacentX = room.x + offset.dx;
+        const adjacentY = room.y + offset.dy;
+        if (roomPositions.has(`${adjacentX},${adjacentY}`)) {
+          return false; // Adjacent room exists, can't use this direction for map connection
+        }
+        
+        return true;
+      });
+
+      return {
+        id: room.id,
+        name: room.name,
+        x: room.x,
+        y: room.y,
+        mapId: room.map_id,
+        hasConnection: !!room.connected_map_id,
+        connectionDirection: room.connection_direction,
+        allExits: allExits,
+        availableDirections: availableDirections
+      };
+    }));
+
+    // Filter by direction if specified
+    let availableRooms = roomsWithExits;
+    if (direction) {
+      const validDirections = ['N', 'S', 'E', 'W'];
+      if (!validDirections.includes(direction)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid direction. Must be N, S, E, or W' }));
+        return;
+      }
+
+      availableRooms = roomsWithExits.filter(room => {
+        // Room is available if it has this direction available (not already connected in this direction)
+        return room.availableDirections.includes(direction);
+      });
+    }
+
+    ws.send(JSON.stringify({
+      type: 'availableConnectionRooms',
+      mapId: mapId,
+      rooms: availableRooms
+    }));
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to get available connection rooms: ' + err.message }));
+  }
+}
+
 module.exports = {
   getMapEditorData,
   createMap,
@@ -1182,7 +1442,10 @@ module.exports = {
   getMerchantInventory,
   addItemToMerchantRoom,
   updateMerchantItemConfig,
-  removeMerchantItem
+  removeMerchantItem,
+  importMap,
+  exportMap,
+  getAvailableConnectionRooms
 };
 
 

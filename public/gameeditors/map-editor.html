@@ -56,6 +56,8 @@
                 </div>
             </div>
             <div class="toolbar-right">
+                <button class="editor-btn" @click="exportMap()" :disabled="!currentMap || loading">Export Map</button>
+                <button class="editor-btn" @click="openImportDialog()" :disabled="loading">Import Map</button>
                 <button class="editor-btn" @click="resetView()">Reset View</button>
                 <input type="text" class="editor-input search-input" placeholder="Search rooms..." x-model="filters.search">
             </div>
@@ -168,34 +170,68 @@
                             <div class="form-grid">
                                 <div class="form-field">
                                     <label>Connected Map</label>
-                                    <select class="editor-select" x-model="formData.connected_map_id">
+                                    <select class="editor-select" 
+                                            x-model="formData.connected_map_id"
+                                            @change="loadConnectionRoomsForMap($event.target.value)">
                                         <option value="">None</option>
                                         <template x-for="map in maps" :key="map.id">
-                                            <option :value="map.id" x-text="map.name"></option>
+                                            <option :value="String(map.id)" 
+                                                    :selected="String(map.id) === formData.connected_map_id"
+                                                    x-text="map.name"></option>
                                         </template>
                                     </select>
                                 </div>
-                                <div class="form-field">
-                                    <label>Connected Room X</label>
-                                    <input type="number" class="editor-input" x-model="formData.connected_room_x" placeholder="X coordinate">
-                                </div>
-                                <div class="form-field">
-                                    <label>Connected Room Y</label>
-                                    <input type="number" class="editor-input" x-model="formData.connected_room_y" placeholder="Y coordinate">
-                                </div>
-                                <div class="form-field">
-                                    <label>Direction</label>
-                                    <select class="editor-select" x-model="formData.connection_direction">
-                                        <option value="">None</option>
-                                        <option value="N">North</option>
-                                        <option value="S">South</option>
-                                        <option value="E">East</option>
-                                        <option value="W">West</option>
-                                        <option value="NE">Northeast</option>
-                                        <option value="NW">Northwest</option>
-                                        <option value="SE">Southeast</option>
-                                        <option value="SW">Southwest</option>
+                                <div class="form-field span-3" x-show="formData.connected_map_id">
+                                    <label>Connected Room</label>
+                                    <select class="editor-select" 
+                                            x-model="formData.connected_room_id"
+                                            @change="selectConnectionRoom($event.target.value)">
+                                        <option value="">Select a room...</option>
+                                        <template x-for="room in connectionRooms" :key="room.id">
+                                            <option :value="String(room.id)" 
+                                                    :disabled="room.availableDirections.length === 0"
+                                                    :selected="String(room.id) === formData.connected_room_id"
+                                                    x-text="room.name + ' (' + room.x + ', ' + room.y + ')' + (room.hasConnection ? ' ⚠️' : '') + (room.availableDirections.length > 0 ? ' - Exits: ' + room.availableDirections.join(', ') : ' - No available exits')">
+                                            </option>
+                                        </template>
                                     </select>
+                                    <div class="form-help-text" x-show="formData.connected_map_id && connectionRooms.length === 0">
+                                        Loading rooms...
+                                    </div>
+                                    <div class="form-help-text" x-show="formData.connected_map_id && connectionRooms.length > 0">
+                                        Select a room on the target map to connect to.
+                                    </div>
+                                </div>
+                                <div class="form-field" x-show="formData.connected_room_id">
+                                    <label>Exit Direction</label>
+                                    <select class="editor-select" x-model="formData.connection_direction">
+                                        <option value="">Select direction...</option>
+                                        <template x-for="dir in getAvailableDirectionsForConnectionRoom()" :key="dir">
+                                            <option :value="dir" 
+                                                    :selected="dir === formData.connection_direction"
+                                                    x-text="getDirectionLabel(dir)"></option>
+                                        </template>
+                                    </select>
+                                    <div class="form-help-text">
+                                        Only directions with no adjacent room are available.
+                                    </div>
+                                </div>
+                                <div class="form-field span-3" x-show="formData.connected_room_id && getSelectedConnectionRoom()?.hasConnection" style="padding: 10px; background: rgba(255, 165, 0, 0.2); border: 1px solid #ffa500; border-radius: 4px;">
+                                    <div style="color: #ffa500; font-size: 0.9em;">
+                                        ⚠️ Warning: This room already has a map connection. The reverse connection will NOT be automatically created - you may need to manually set it up.
+                                    </div>
+                                </div>
+                                <div class="form-field span-3" x-show="formData.connected_room_id && formData.connection_direction && !isReverseConnectionValid()" style="padding: 10px; background: rgba(255, 0, 0, 0.2); border: 1px solid #ff4444; border-radius: 4px;">
+                                    <div style="color: #ff4444; font-size: 0.9em;">
+                                        ⚠️ Warning: The target room has an adjacent room to the <span x-text="getOppositeDirectionLabel(formData.connection_direction)"></span>. The reverse connection cannot use the expected direction - players may not be able to return via the same path.
+                                    </div>
+                                </div>
+                                <div class="form-field span-3" x-show="formData.connected_room_id && formData.connection_direction && isReverseConnectionValid()" style="padding: 10px; background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; border-radius: 4px;">
+                                    <div style="color: #00ff00; font-size: 0.9em;">
+                                        <strong>Exit:</strong> Go <span x-text="getDirectionLabel(formData.connection_direction)"></span> from here → <span x-text="getConnectionRoomName()"></span> (<span x-text="getConnectionRoomCoords()"></span>)
+                                        <br>
+                                        <strong>Return:</strong> Go <span x-text="getOppositeDirectionLabel(formData.connection_direction)"></span> from <span x-text="getConnectionRoomName()"></span> → back here
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -298,6 +334,129 @@
                 <div class="dialog-footer">
                     <button class="editor-btn" @click="resetRoomTypeColors()">Reset</button>
                     <button class="editor-btn editor-btn-success" @click="saveRoomTypeColors()">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Map Dialog -->
+        <div class="editor-dialog-overlay" x-show="showImportMapDialog" 
+             @click.self="closeImportDialog()">
+            <div class="editor-dialog" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+                <div class="dialog-header">
+                    <h3>Import Map</h3>
+                    <button class="dialog-close" @click="closeImportDialog()">x</button>
+                </div>
+                <div class="dialog-body">
+                    <div class="form-field">
+                        <label>Map JSON Data</label>
+                        <textarea class="editor-textarea" 
+                                  x-model="importMapData.jsonData" 
+                                  rows="12" 
+                                  placeholder="Paste map JSON data here..."></textarea>
+                        <div class="form-help-text">Paste the exported map JSON data in canonical format</div>
+                    </div>
+                    
+                    <div class="form-section" style="margin-top: 20px;">
+                        <div class="section-header">Connection Settings (Optional)</div>
+                        <div class="form-help-text" style="margin-bottom: 10px;">
+                            Connect this imported map to an existing map. Leave empty to import without connection.
+                        </div>
+                        
+                        <div class="form-field">
+                            <label>Entrance Room (in imported map)</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="number" class="editor-input" 
+                                       x-model="importMapData.entranceRoom.x" 
+                                       placeholder="X coordinate" 
+                                       style="flex: 1;">
+                                <input type="number" class="editor-input" 
+                                       x-model="importMapData.entranceRoom.y" 
+                                       placeholder="Y coordinate" 
+                                       style="flex: 1;">
+                            </div>
+                            <div class="form-help-text">Coordinates of the entrance room in the imported map</div>
+                        </div>
+                        
+                        <div class="form-field">
+                            <label>Connection Map</label>
+                            <select class="editor-select" 
+                                    x-model="importMapData.connectionMapId"
+                                    @change="loadImportConnectionRooms($event.target.value)">
+                                <option value="">None - Import without connection</option>
+                                <template x-for="map in maps" :key="map.id">
+                                    <option :value="map.id" x-text="map.name"></option>
+                                </template>
+                            </select>
+                            <div class="form-help-text">Select the existing map to connect to</div>
+                        </div>
+                        
+                        <div class="form-field span-3" x-show="importMapData.connectionMapId">
+                            <label>Connection Room (in existing map)</label>
+                            <select class="editor-select" 
+                                    x-model="importMapData.connectionRoomId"
+                                    @change="selectImportConnectionRoom($event.target.value)">
+                                <option value="">Select a room...</option>
+                                <template x-for="room in availableConnectionRooms" :key="room.id">
+                                    <option :value="room.id" 
+                                            :disabled="room.availableDirections.length === 0"
+                                            x-text="room.name + ' (' + room.x + ', ' + room.y + ')' + (room.availableDirections.length > 0 ? ' - Exits: ' + room.availableDirections.join(', ') : ' - No available exits')">
+                                    </option>
+                                </template>
+                            </select>
+                            <div class="form-help-text" x-show="importMapData.connectionMapId && availableConnectionRooms.length === 0">
+                                Loading rooms...
+                            </div>
+                            <div class="form-help-text" x-show="importMapData.connectionMapId && availableConnectionRooms.length > 0">
+                                Select a room from the target map. Available exits are shown for each room.
+                            </div>
+                        </div>
+                        
+                        <div class="form-field" x-show="importMapData.connectionRoomId">
+                            <label>Connection Direction</label>
+                            <select class="editor-select" x-model="importMapData.connectionDirection">
+                                <option value="">Select direction...</option>
+                                <template x-for="dir in getImportAvailableDirections()" :key="dir">
+                                    <option :value="dir" x-text="getDirectionLabel(dir)"></option>
+                                </template>
+                            </select>
+                            <div class="form-help-text">Direction from the connection room to the imported map</div>
+                        </div>
+                        
+                        <div class="form-field span-3" x-show="importMapData.connectionRoomId && importMapData.connectionDirection" style="padding: 10px; background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; border-radius: 4px;">
+                            <div style="color: #00ff00; font-size: 0.9em;">
+                                Connection will be created: <span x-text="getImportConnectionRoomName()"></span> (<span x-text="getImportConnectionRoomCoords()"></span>) → Imported map entrance via <span x-text="getDirectionLabel(importMapData.connectionDirection)"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-field" x-show="importMapData.validationErrors && importMapData.validationErrors.length > 0" 
+                         style="margin-top: 15px; padding: 10px; background: rgba(255, 0, 0, 0.1); border: 1px solid #ff0000; border-radius: 4px;">
+                        <div style="color: #ff0000; font-weight: bold; margin-bottom: 5px;">Validation Errors:</div>
+                        <ul style="margin: 0; padding-left: 20px; color: #ff6666;">
+                            <template x-for="error in importMapData.validationErrors" :key="error">
+                                <li x-text="error"></li>
+                            </template>
+                        </ul>
+                    </div>
+                    
+                    <div class="form-field" x-show="importMapData.validationWarnings && importMapData.validationWarnings.length > 0" 
+                         style="margin-top: 15px; padding: 10px; background: rgba(255, 255, 0, 0.1); border: 1px solid #ffff00; border-radius: 4px;">
+                        <div style="color: #ffff00; font-weight: bold; margin-bottom: 5px;">Validation Warnings:</div>
+                        <ul style="margin: 0; padding-left: 20px; color: #ffff99;">
+                            <template x-for="warning in importMapData.validationWarnings" :key="warning">
+                                <li x-text="warning"></li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+                <div class="dialog-footer">
+                    <button class="editor-btn" @click="validateImportMap()" :disabled="!importMapData.jsonData || loading">Validate</button>
+                    <button class="editor-btn" @click="closeImportDialog()">Cancel</button>
+                    <button class="editor-btn editor-btn-success" 
+                            @click="importMap()" 
+                            :disabled="!importMapData.jsonData || loading || (importMapData.validationErrors && importMapData.validationErrors.length > 0)">
+                        Import Map
+                    </button>
                 </div>
             </div>
         </div>

@@ -157,6 +157,363 @@ async function updateMapSize(mapId) {
   return null;
 }
 
+/**
+ * Export a map to canonical JSON format
+ * @param {number} mapId - Map ID to export
+ * @returns {Promise<object>} Map data in canonical format
+ */
+async function exportMap(mapId) {
+  const map = await getMapById(mapId);
+  if (!map) {
+    throw new Error('Map not found');
+  }
+
+  const rooms = await getRoomsByMap(mapId);
+  
+  // Build rooms array in canonical format
+  const roomsData = rooms.map(room => {
+    const roomData = {
+      x: room.x,
+      y: room.y,
+      name: room.name,
+      description: room.description,
+      room_type: room.room_type || 'normal'
+    };
+    
+    // Add optional factory fields if present
+    if (room.factory_tier !== null && room.factory_tier !== undefined) {
+      roomData.factory_tier = room.factory_tier;
+    }
+    if (room.factory_quirks) {
+      roomData.factory_quirks = room.factory_quirks;
+    }
+    
+    return roomData;
+  });
+
+  // Build map_connections array (only connections to OTHER maps)
+  const mapConnections = [];
+  for (const room of rooms) {
+    if (room.connected_map_id && room.connected_map_id !== mapId) {
+      const targetMap = await getMapById(room.connected_map_id);
+      if (targetMap) {
+        mapConnections.push({
+          source_room: { x: room.x, y: room.y },
+          target_map_name: targetMap.name,
+          target_room: { x: room.connected_room_x, y: room.connected_room_y },
+          direction: room.connection_direction
+        });
+      }
+    }
+  }
+
+  return {
+    format_version: '1.0',
+    map: {
+      name: map.name,
+      width: map.width,
+      height: map.height,
+      description: map.description || null
+    },
+    rooms: roomsData,
+    map_connections: mapConnections
+  };
+}
+
+/**
+ * Validate map import data per canonical spec
+ * @param {object} importData - Import data in canonical format
+ * @returns {Promise<{errors: string[], warnings: string[]}>} Validation results
+ */
+async function validateMapImport(importData) {
+  const errors = [];
+  const warnings = [];
+
+  // Check format version
+  if (!importData.format_version) {
+    errors.push('Missing format_version field');
+  } else if (importData.format_version !== '1.0') {
+    warnings.push(`Unknown format_version: ${importData.format_version}. Expected 1.0`);
+  }
+
+  // Check map data
+  if (!importData.map) {
+    errors.push('Missing map field');
+  } else {
+    if (!importData.map.name) {
+      errors.push('Map name is required');
+    }
+    if (importData.map.width === undefined || importData.map.width === null) {
+      errors.push('Map width is required');
+    }
+    if (importData.map.height === undefined || importData.map.height === null) {
+      errors.push('Map height is required');
+    }
+  }
+
+  // Check rooms array
+  if (!Array.isArray(importData.rooms)) {
+    errors.push('Rooms must be an array');
+  } else {
+    const coordSet = new Set();
+    const validRoomTypes = await getAllRoomTypes();
+    const validRoomTypeSet = new Set(validRoomTypes.map(rt => rt.room_type));
+
+    for (let i = 0; i < importData.rooms.length; i++) {
+      const room = importData.rooms[i];
+      const prefix = `Room ${i + 1}`;
+
+      // Check required fields
+      if (room.x === undefined || room.x === null) {
+        errors.push(`${prefix}: Missing x coordinate`);
+      }
+      if (room.y === undefined || room.y === null) {
+        errors.push(`${prefix}: Missing y coordinate`);
+      }
+      if (!room.name) {
+        errors.push(`${prefix}: Missing name`);
+      }
+      if (!room.description) {
+        errors.push(`${prefix}: Missing description`);
+      }
+      if (!room.room_type) {
+        errors.push(`${prefix}: Missing room_type`);
+      }
+
+      // Check for duplicate coordinates
+      if (room.x !== undefined && room.y !== undefined) {
+        const coordKey = `${room.x},${room.y}`;
+        if (coordSet.has(coordKey)) {
+          errors.push(`${prefix}: Duplicate coordinates (${room.x}, ${room.y})`);
+        }
+        coordSet.add(coordKey);
+      }
+
+      // Check room type validity
+      if (room.room_type && !validRoomTypeSet.has(room.room_type)) {
+        errors.push(`${prefix}: Invalid room_type "${room.room_type}". Valid types: ${Array.from(validRoomTypeSet).join(', ')}`);
+      }
+
+      // Check factory tier if present
+      if (room.factory_tier !== undefined && room.factory_tier !== null) {
+        if (typeof room.factory_tier !== 'number' || room.factory_tier < 1 || room.factory_tier > 5) {
+          errors.push(`${prefix}: factory_tier must be between 1 and 5, got ${room.factory_tier}`);
+        }
+        if (room.room_type !== 'factory') {
+          warnings.push(`${prefix}: factory_tier specified but room_type is not 'factory'`);
+        }
+      }
+
+      // Check factory_quirks if present
+      if (room.factory_quirks !== undefined && room.factory_quirks !== null) {
+        if (typeof room.factory_quirks !== 'object' || Array.isArray(room.factory_quirks)) {
+          errors.push(`${prefix}: factory_quirks must be an object`);
+        }
+        if (room.room_type !== 'factory') {
+          warnings.push(`${prefix}: factory_quirks specified but room_type is not 'factory'`);
+        }
+      }
+    }
+  }
+
+  // Check map_connections array
+  if (importData.map_connections !== undefined && !Array.isArray(importData.map_connections)) {
+    errors.push('map_connections must be an array');
+  } else if (Array.isArray(importData.map_connections)) {
+    for (let i = 0; i < importData.map_connections.length; i++) {
+      const conn = importData.map_connections[i];
+      const prefix = `Map connection ${i + 1}`;
+
+      if (!conn.source_room || conn.source_room.x === undefined || conn.source_room.y === undefined) {
+        errors.push(`${prefix}: Missing or invalid source_room`);
+      }
+      if (!conn.target_map_name) {
+        errors.push(`${prefix}: Missing target_map_name`);
+      }
+      if (!conn.target_room || conn.target_room.x === undefined || conn.target_room.y === undefined) {
+        errors.push(`${prefix}: Missing or invalid target_room`);
+      }
+      if (!conn.direction || !['N', 'S', 'E', 'W'].includes(conn.direction)) {
+        errors.push(`${prefix}: Invalid direction. Must be N, S, E, or W`);
+      }
+    }
+  }
+
+  return { errors, warnings };
+}
+
+/**
+ * Import a map from canonical JSON format
+ * @param {object} importData - Import data in canonical format
+ * @param {object} entranceRoomCoords - {x, y} coordinates of entrance room in import data
+ * @param {number|null} connectionRoomId - Room ID to connect to (optional)
+ * @param {string|null} connectionDirection - Direction from connection room (N, S, E, W) (optional)
+ * @returns {Promise<{mapId: number, roomsCreated: number, connectionsCreated: number, warnings: string[]}>}
+ */
+async function importMap(importData, entranceRoomCoords = null, connectionRoomId = null, connectionDirection = null) {
+  // Validate first
+  const validation = await validateMapImport(importData);
+  if (validation.errors.length > 0) {
+    throw new Error(`Validation failed: ${validation.errors.join('; ')}`);
+  }
+
+  // Check if map name already exists
+  const existingMap = await getMapByName(importData.map.name);
+  if (existingMap) {
+    throw new Error(`Map with name "${importData.map.name}" already exists`);
+  }
+
+  // Validate entrance room if specified
+  if (entranceRoomCoords) {
+    const entranceExists = importData.rooms.some(
+      r => r.x === entranceRoomCoords.x && r.y === entranceRoomCoords.y
+    );
+    if (!entranceExists) {
+      throw new Error(`Entrance room at (${entranceRoomCoords.x}, ${entranceRoomCoords.y}) not found in import data`);
+    }
+  }
+
+  // Validate connection if specified
+  if (connectionRoomId || connectionDirection) {
+    if (!connectionRoomId || !connectionDirection) {
+      throw new Error('Both connectionRoomId and connectionDirection must be provided for connection');
+    }
+    if (!['N', 'S', 'E', 'W'].includes(connectionDirection)) {
+      throw new Error('connectionDirection must be N, S, E, or W');
+    }
+    const connectionRoom = await getRoomById(connectionRoomId);
+    if (!connectionRoom) {
+      throw new Error('Connection room not found');
+    }
+    if (connectionRoom.connected_map_id && connectionRoom.connection_direction === connectionDirection) {
+      throw new Error(`Connection room already has a connection in direction ${connectionDirection}`);
+    }
+  }
+
+  // Use transaction for atomic import
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Create map
+    const mapResult = await client.query(
+      'INSERT INTO maps (name, width, height, description) VALUES ($1, $2, $3, $4) RETURNING id',
+      [importData.map.name, importData.map.width, importData.map.height, importData.map.description || null]
+    );
+    const newMapId = mapResult.rows[0].id;
+
+    // Create all rooms
+    let roomsCreated = 0;
+    const roomCoordMap = new Map(); // Track created rooms by coordinates
+
+    for (const roomData of importData.rooms) {
+      const roomResult = await client.query(
+        `INSERT INTO rooms (name, description, x, y, map_id, room_type, factory_tier, factory_quirks)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [
+          roomData.name,
+          roomData.description,
+          roomData.x,
+          roomData.y,
+          newMapId,
+          roomData.room_type || 'normal',
+          roomData.factory_tier || null,
+          roomData.factory_quirks ? JSON.stringify(roomData.factory_quirks) : null
+        ]
+      );
+      roomCoordMap.set(`${roomData.x},${roomData.y}`, roomResult.rows[0].id);
+      roomsCreated++;
+    }
+
+    // Create map connections (to other existing maps)
+    let connectionsCreated = 0;
+    if (Array.isArray(importData.map_connections)) {
+      for (const conn of importData.map_connections) {
+        const targetMap = await getMapByName(conn.target_map_name);
+        if (!targetMap) {
+          validation.warnings.push(`Skipping connection: target map "${conn.target_map_name}" not found`);
+          continue;
+        }
+
+        const targetRoom = await getRoomByCoords(targetMap.id, conn.target_room.x, conn.target_room.y);
+        if (!targetRoom) {
+          validation.warnings.push(`Skipping connection: target room at (${conn.target_room.x}, ${conn.target_room.y}) not found in map "${conn.target_map_name}"`);
+          continue;
+        }
+
+        // Get source room ID
+        const sourceRoomId = roomCoordMap.get(`${conn.source_room.x},${conn.source_room.y}`);
+        if (!sourceRoomId) {
+          validation.warnings.push(`Skipping connection: source room at (${conn.source_room.x}, ${conn.source_room.y}) not found in import data`);
+          continue;
+        }
+
+        // Calculate opposite direction
+        const oppositeDir = {
+          'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'
+        };
+        const targetDirection = oppositeDir[conn.direction];
+
+        // Update source room (new map) with connection
+        await client.query(
+          `UPDATE rooms SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4 WHERE id = $5`,
+          [targetMap.id, conn.target_room.x, conn.target_room.y, conn.direction, sourceRoomId]
+        );
+
+        // Update target room (existing map) with reverse connection
+        await client.query(
+          `UPDATE rooms SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4 WHERE id = $5`,
+          [newMapId, conn.source_room.x, conn.source_room.y, targetDirection, targetRoom.id]
+        );
+
+        connectionsCreated++;
+      }
+    }
+
+    // Create connection to existing map if specified
+    if (connectionRoomId && connectionDirection && entranceRoomCoords) {
+      const entranceRoomId = roomCoordMap.get(`${entranceRoomCoords.x},${entranceRoomCoords.y}`);
+      if (!entranceRoomId) {
+        throw new Error(`Entrance room at (${entranceRoomCoords.x}, ${entranceRoomCoords.y}) not found in created rooms`);
+      }
+
+      const connectionRoom = await getRoomById(connectionRoomId);
+      const oppositeDir = {
+        'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'
+      };
+      const entranceDirection = oppositeDir[connectionDirection];
+
+      // Update connection room (existing map) with connection to new map
+      await client.query(
+        `UPDATE rooms SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4 WHERE id = $5`,
+        [newMapId, entranceRoomCoords.x, entranceRoomCoords.y, connectionDirection, connectionRoomId]
+      );
+
+      // Update entrance room (new map) with reverse connection
+      await client.query(
+        `UPDATE rooms SET connected_map_id = $1, connected_room_x = $2, connected_room_y = $3, connection_direction = $4 WHERE id = $5`,
+        [connectionRoom.map_id, connectionRoom.x, connectionRoom.y, entranceDirection, entranceRoomId]
+      );
+
+      connectionsCreated++;
+    }
+
+    await client.query('COMMIT');
+
+    return {
+      mapId: newMapId,
+      roomsCreated,
+      connectionsCreated,
+      warnings: validation.warnings
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // ============================================================
 // Player Functions
 // ============================================================
@@ -3624,6 +3981,9 @@ module.exports = {
   createMap,
   getMapBounds,
   updateMapSize,
+  exportMap,
+  validateMapImport,
+  importMap,
   
   // Players
   getPlayerByName,

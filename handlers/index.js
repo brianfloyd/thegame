@@ -130,6 +130,9 @@ const handlerMap = {
   addItemToMerchantRoom: mapEditorHandlers.addItemToMerchantRoom,
   updateMerchantItemConfig: mapEditorHandlers.updateMerchantItemConfig,
   removeMerchantItem: mapEditorHandlers.removeMerchantItem,
+  importMap: mapEditorHandlers.importMap,
+  exportMap: mapEditorHandlers.exportMap,
+  getAvailableConnectionRooms: mapEditorHandlers.getAvailableConnectionRooms,
   
   // NPC editor handlers
   getAllNPCs: npcEditorHandlers.getAllNPCs,

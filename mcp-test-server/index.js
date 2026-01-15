@@ -24,6 +24,7 @@ import { knowledgeTools, handleKnowledgeTool } from './tools/knowledge.js';
 import { debugTools, handleDebugTool } from './tools/debugTodos.js';
 import { workTicketTools, handleWorkTicketTool } from './tools/workTickets.js';
 import { autoTicketTools, handleAutoTicketTool } from './tools/autoTickets.js';
+import { mapImportTools, handleMapImportTool } from './tools/mapImport.js';
 
 // Create server instance
 const server = new Server(
@@ -49,6 +50,7 @@ const allTools = [
   ...debugTools,
   ...workTicketTools,
   ...autoTicketTools,
+  ...mapImportTools,
 ];
 
 // Handle list tools request
@@ -98,6 +100,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     if (name.startsWith('auto_tickets_')) {
       return await handleAutoTicketTool(name, args);
+    }
+    
+    if (name.startsWith('map_')) {
+      return await handleMapImportTool(name, args);
     }
 
     return {

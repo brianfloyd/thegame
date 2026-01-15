@@ -37,6 +37,7 @@ window.mapEditor = function() {
         currentMap: null,
         rooms: [],
         playerCurrentLocation: null, // { mapId, roomId, room: { id, x, y } }
+        pendingRoomSelection: null, // { x, y } - room to select after map loads
         
         // Related data
         allNpcs: [],
@@ -56,6 +57,9 @@ window.mapEditor = function() {
         massNpcId: null,
         massNpcQuantity: 1,
         
+        // Event handler references (for cleanup)
+        keydownHandler: null,
+        
         // Canvas state
         canvas: null,
         ctx: null,
@@ -63,6 +67,13 @@ window.mapEditor = function() {
         panX: 0,
         panY: 0,
         resizeObserver: null,
+        
+        // Mouse drag state for panning
+        isPanning: false,
+        panStartX: 0,
+        panStartY: 0,
+        panStartPanX: 0,
+        panStartPanY: 0,
         
         // Loading state
         loading: false,
@@ -80,10 +91,15 @@ window.mapEditor = function() {
             factory_tier: 1,
             // Map connection fields
             connected_map_id: '',
+            connected_room_id: '', // Selected room ID (will be converted to x, y on save)
             connected_room_x: '',
             connected_room_y: '',
             connection_direction: ''
         },
+        
+        // Connection room data
+        connectionRooms: [], // Rooms from the selected connection map
+        pendingConnectionTarget: null, // {x, y} to select after rooms load
         
         // New map form
         newMapForm: {
@@ -104,6 +120,19 @@ window.mapEditor = function() {
         // Dialogs
         showCreateMapDialog: false,
         showRoomTypeColorsDialog: false,
+        showImportMapDialog: false,
+        
+        // Import/Export state
+        importMapData: {
+            jsonData: '',
+            entranceRoom: { x: null, y: null },
+            connectionMapId: '',
+            connectionRoomId: '',
+            connectionDirection: '',
+            validationErrors: [],
+            validationWarnings: []
+        },
+        availableConnectionRooms: [],
         
         // Constants for template
         ROOM_TYPES,
@@ -141,7 +170,14 @@ window.mapEditor = function() {
                             if (this.canvas) {
                                 this.resizeCanvas();
                             }
-                        }, 250);
+                        }, 100);
+                        
+                        // One more resize after a longer delay to catch any late layout changes
+                        setTimeout(() => {
+                            if (this.canvas) {
+                                this.resizeCanvas();
+                            }
+                        }, 500);
                     });
                 });
             });
@@ -157,8 +193,11 @@ window.mapEditor = function() {
                 }
             });
             
-            // Set up keyboard shortcuts
-            window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+            // Set up keyboard shortcuts (only once)
+            if (!this.keydownHandler) {
+                this.keydownHandler = (e) => this.handleKeyDown(e);
+                window.addEventListener('keydown', this.keydownHandler);
+            }
         },
         
         initCanvas() {
@@ -195,6 +234,15 @@ window.mapEditor = function() {
                 this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
                 this.canvas.addEventListener('wheel', (e) => this.handleCanvasWheel(e));
                 this.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+                this.canvas.addEventListener('mousedown', (e) => this.handleCanvasMouseDown(e));
+                this.canvas.addEventListener('mouseup', (e) => this.handleCanvasMouseUp(e));
+                this.canvas.addEventListener('mouseleave', (e) => this.handleCanvasMouseLeave(e));
+                // Prevent context menu on middle mouse button
+                this.canvas.addEventListener('contextmenu', (e) => {
+                    if (e.button === 1) {
+                        e.preventDefault();
+                    }
+                });
                 
                 // Initial render
                 this.render();
@@ -207,29 +255,32 @@ window.mapEditor = function() {
             if (!this.canvas) return;
             const container = this.canvas.parentElement;
             if (container) {
-                // Get actual container dimensions using multiple methods for reliability
-                const rect = container.getBoundingClientRect();
-                // Use rect dimensions if valid, otherwise fall back to computed styles
-                let width = rect.width;
-                let height = rect.height;
-                
-                // If rect dimensions are 0 or invalid, try computed styles
-                if (width <= 0 || height <= 0) {
-                    const computedStyle = window.getComputedStyle(container);
-                    width = parseFloat(computedStyle.width) || container.clientWidth || 800;
-                    height = parseFloat(computedStyle.height) || container.clientHeight || 600;
-                }
-                
-                // Ensure minimum dimensions
-                width = Math.max(width, 100);
-                height = Math.max(height, 100);
-                
-                // Only update if dimensions actually changed to avoid unnecessary renders
-                if (this.canvas.width !== width || this.canvas.height !== height) {
-                    this.canvas.width = width;
-                    this.canvas.height = height;
-                    this.render();
-                }
+                // Wait for next frame to ensure layout is complete
+                requestAnimationFrame(() => {
+                    // Get actual container dimensions using multiple methods for reliability
+                    const rect = container.getBoundingClientRect();
+                    // Use rect dimensions if valid, otherwise fall back to computed styles
+                    let width = rect.width;
+                    let height = rect.height;
+                    
+                    // If rect dimensions are 0 or invalid, try computed styles
+                    if (width <= 0 || height <= 0) {
+                        const computedStyle = window.getComputedStyle(container);
+                        width = parseFloat(computedStyle.width) || container.clientWidth || 800;
+                        height = parseFloat(computedStyle.height) || container.clientHeight || 600;
+                    }
+                    
+                    // Ensure minimum dimensions
+                    width = Math.max(width, 100);
+                    height = Math.max(height, 100);
+                    
+                    // Only update if dimensions actually changed to avoid unnecessary renders
+                    if (this.canvas.width !== width || this.canvas.height !== height) {
+                        this.canvas.width = width;
+                        this.canvas.height = height;
+                        this.render();
+                    }
+                });
             }
         },
 
@@ -291,10 +342,10 @@ window.mapEditor = function() {
                             x: r.x ?? 0,
                             y: r.y ?? 0,
                             room_type: r.roomType || r.room_type || 'normal',
-                            // Map connection fields
+                            // Map connection fields (use explicit null check to allow 0 as valid coordinate)
                             connected_map_id: r.connected_map_id || null,
-                            connected_room_x: r.connected_room_x || null,
-                            connected_room_y: r.connected_room_y || null,
+                            connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+                            connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
                             connection_direction: r.connection_direction || null,
                             // Factory fields
                             factory_tier: r.factory_tier || null
@@ -304,17 +355,31 @@ window.mapEditor = function() {
                     if (data.roomTypeColors) {
                         this.roomTypeColors = { ...ROOM_TYPE_COLORS, ...data.roomTypeColors };
                     }
-                    // Center on player's current room if available (from data.currentRoom or playerCurrentLocation)
-                    let roomToSelect = data.currentRoom;
-                    if (!roomToSelect && this.playerCurrentLocation && this.playerCurrentLocation.room &&
-                        this.currentMap && this.currentMap.id === this.playerCurrentLocation.mapId) {
-                        roomToSelect = this.playerCurrentLocation.room;
-                    }
-                    if (roomToSelect) {
-                        const currentRoom = this.rooms.find(r => r.id === roomToSelect.id);
-                        if (currentRoom) {
-                            this.centerOnRoom(currentRoom);
-                            this.selectRoom(currentRoom);
+                    
+                    // Check if we have a pending room selection (from map transition)
+                    if (this.pendingRoomSelection) {
+                        const targetRoom = this.rooms.find(r => 
+                            r.x === this.pendingRoomSelection.x && 
+                            r.y === this.pendingRoomSelection.y
+                        );
+                        if (targetRoom) {
+                            this.selectRoom(targetRoom);
+                            this.centerOnRoom(targetRoom);
+                        }
+                        this.pendingRoomSelection = null;
+                    } else {
+                        // Center on player's current room if available (from data.currentRoom or playerCurrentLocation)
+                        let roomToSelect = data.currentRoom;
+                        if (!roomToSelect && this.playerCurrentLocation && this.playerCurrentLocation.room &&
+                            this.currentMap && this.currentMap.id === this.playerCurrentLocation.mapId) {
+                            roomToSelect = this.playerCurrentLocation.room;
+                        }
+                        if (roomToSelect) {
+                            const currentRoom = this.rooms.find(r => r.id === roomToSelect.id);
+                            if (currentRoom) {
+                                this.centerOnRoom(currentRoom);
+                                this.selectRoom(currentRoom);
+                            }
                         }
                     }
                     this.loading = false;
@@ -335,10 +400,10 @@ window.mapEditor = function() {
                             x: r.x ?? 0,
                             y: r.y ?? 0,
                             room_type: r.roomType || r.room_type || 'normal',
-                            // Map connection fields
+                            // Map connection fields (use explicit null check to allow 0 as valid coordinate)
                             connected_map_id: r.connected_map_id || null,
-                            connected_room_x: r.connected_room_x || null,
-                            connected_room_y: r.connected_room_y || null,
+                            connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+                            connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
                             connection_direction: r.connection_direction || null,
                             // Factory fields
                             factory_tier: r.factory_tier || null
@@ -397,9 +462,77 @@ window.mapEditor = function() {
                         this.loadRoomNPCs(this.selectedRoom.id);
                     }
                     this.showNotification('NPC added to room', 'success');
-                    // Clear selection after successful add (will be cleared when NPCs reload)
-                    this.newRoomNPCId = '';
-                    this.loading = false;
+                    break;
+                    
+                case 'mapExported':
+                    // Download the exported map as JSON file
+                    if (data.exportData) {
+                        const jsonStr = JSON.stringify(data.exportData, null, 2);
+                        const blob = new Blob([jsonStr], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `map-${data.mapId}-${data.exportData.map.name.replace(/\s+/g, '-')}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        this.showNotification('Map exported successfully', 'success');
+                    }
+                    break;
+                    
+                case 'mapImported':
+                    // Reload maps and select the new map
+                    this.showNotification(
+                        `Map imported successfully! Created ${data.roomsCreated} rooms and ${data.connectionsCreated} connections.`,
+                        'success'
+                    );
+                    if (data.warnings && data.warnings.length > 0) {
+                        console.warn('Import warnings:', data.warnings);
+                    }
+                    this.showImportMapDialog = false;
+                    this.importMapData = {
+                        jsonData: '',
+                        entranceRoom: { x: null, y: null },
+                        connectionRoomId: '',
+                        connectionDirection: '',
+                        validationErrors: [],
+                        validationWarnings: []
+                    };
+                    // Reload maps list and select the new map
+                    this.loadMaps();
+                    setTimeout(() => {
+                        if (data.mapId) {
+                            this.selectMap(data.mapId);
+                        }
+                    }, 500);
+                    break;
+                    
+                case 'availableConnectionRooms':
+                    // This can be for import dialog or room connection
+                    // Use mapId from response to determine context
+                    if (data.mapId && this.formData && this.formData.connected_map_id && 
+                        parseInt(data.mapId) === parseInt(this.formData.connected_map_id)) {
+                        // This is for the room connection form
+                        this.connectionRooms = data.rooms || [];
+                        
+                        // If we have a pending connection target, try to find and select it
+                        if (this.pendingConnectionTarget) {
+                            const targetRoom = this.connectionRooms.find(r => 
+                                r.x === this.pendingConnectionTarget.x && 
+                                r.y === this.pendingConnectionTarget.y
+                            );
+                            if (targetRoom) {
+                                this.formData.connected_room_id = targetRoom.id.toString();
+                                // Preserve direction when loading existing connection
+                                this.selectConnectionRoom(targetRoom.id.toString(), true);
+                            }
+                            this.pendingConnectionTarget = null;
+                        }
+                    } else {
+                        // This is for the import dialog
+                        this.availableConnectionRooms = data.rooms || [];
+                    }
                     break;
                     
                 case 'npcPlacementRemoved':
@@ -435,7 +568,23 @@ window.mapEditor = function() {
                             this.populateRoomForm(room);
                         }
                         this.render();
-                        this.showNotification('Room updated', 'success');
+                        
+                        // Show appropriate notification based on connection status
+                        if (data.connectionWarning) {
+                            this.showNotification(data.connectionWarning, 'warning');
+                        } else if (data.bidirectionalCreated) {
+                            this.showNotification('Room updated with bidirectional map connection', 'success');
+                        } else {
+                            this.showNotification('Room updated', 'success');
+                        }
+                        
+                        // Reload map data to refresh connections and room data
+                        // Preserve the selected room so it remains selected after reload
+                        const selectedRoomId = this.selectedRoom?.id;
+                        if (this.currentMap) {
+                            this.selectMap(this.currentMap.id, selectedRoomId ? 
+                                { x: this.selectedRoom.x, y: this.selectedRoom.y } : null);
+                        }
                     }
                     this.loading = false;
                     break;
@@ -482,11 +631,20 @@ window.mapEditor = function() {
             EditorBase.send({ type: 'getAllItems' });
         },
         
-        selectMap(mapId) {
+        selectMap(mapId, targetRoomCoords = null) {
+            this.currentMap = this.maps.find(m => m.id === parseInt(mapId));
             this.loading = true;
             this.selectedRoom = null;
             this.selectedRooms = [];
             this.resetRoomForm();
+            
+            // Store target room coordinates if provided (for map transitions)
+            if (targetRoomCoords) {
+                this.pendingRoomSelection = targetRoomCoords;
+            } else {
+                this.pendingRoomSelection = null;
+            }
+            
             EditorBase.send({ type: 'getMapData', mapId: parseInt(mapId) });
         },
 
@@ -535,16 +693,26 @@ window.mapEditor = function() {
         },
         
         populateRoomForm(room) {
-            this.formData = {
-                name: room.name || '',
-                description: room.description || '',
-                room_type: room.room_type || 'normal',
-                factory_tier: room.factory_tier || 1,
-                connected_map_id: room.connected_map_id || '',
-                connected_room_x: room.connected_room_x || '',
-                connected_room_y: room.connected_room_y || '',
-                connection_direction: room.connection_direction || ''
-            };
+            // Update properties individually for better Alpine reactivity
+            this.formData.name = room.name || '';
+            this.formData.description = room.description || '';
+            this.formData.room_type = room.room_type || 'normal';
+            this.formData.factory_tier = room.factory_tier || 1;
+            // Convert to string for Alpine.js select binding
+            this.formData.connected_map_id = room.connected_map_id ? String(room.connected_map_id) : '';
+            this.formData.connected_room_id = ''; // Will be set after loading connection rooms
+            // Use explicit null/undefined check to allow 0 as valid coordinate
+            this.formData.connected_room_x = room.connected_room_x !== null && room.connected_room_x !== undefined ? room.connected_room_x : '';
+            this.formData.connected_room_y = room.connected_room_y !== null && room.connected_room_y !== undefined ? room.connected_room_y : '';
+            this.formData.connection_direction = room.connection_direction || '';
+            
+            // Clear connection rooms - will be loaded if room has a connection
+            this.connectionRooms = [];
+            
+            // If room has a connection, load the connection rooms for that map
+            if (room.connected_map_id) {
+                this.loadConnectionRoomsForMap(room.connected_map_id, room.connected_room_x, room.connected_room_y);
+            }
         },
         
         resetRoomForm() {
@@ -554,12 +722,14 @@ window.mapEditor = function() {
                 room_type: 'normal',
                 factory_tier: 1,
                 connected_map_id: '',
+                connected_room_id: '',
                 connected_room_x: '',
                 connected_room_y: '',
                 connection_direction: ''
             };
             this.roomNPCs = [];
             this.newRoomNPCId = '';
+            this.connectionRooms = [];
         },
 
         // ============================================
@@ -588,6 +758,18 @@ window.mapEditor = function() {
         saveRoom() {
             if (!this.selectedRoom || this.selectedRoom.isNew) return;
             
+            // Get coordinates from selected room if room ID is set
+            let connectedRoomX = this.formData.connected_room_x;
+            let connectedRoomY = this.formData.connected_room_y;
+            
+            if (this.formData.connected_room_id) {
+                const selectedConnectionRoom = this.connectionRooms.find(r => r.id === parseInt(this.formData.connected_room_id));
+                if (selectedConnectionRoom) {
+                    connectedRoomX = selectedConnectionRoom.x;
+                    connectedRoomY = selectedConnectionRoom.y;
+                }
+            }
+            
             this.loading = true;
             EditorBase.send({
                 type: 'updateRoom',
@@ -597,11 +779,156 @@ window.mapEditor = function() {
                 room_type: this.formData.room_type,
                 factory_tier: this.formData.room_type === 'factory' ? parseInt(this.formData.factory_tier) : null,
                 // Map connection fields (matching database schema)
+                // Use explicit null check to allow 0 as valid coordinate
                 connected_map_id: this.formData.connected_map_id ? parseInt(this.formData.connected_map_id) : null,
-                connected_room_x: this.formData.connected_room_x ? parseInt(this.formData.connected_room_x) : null,
-                connected_room_y: this.formData.connected_room_y ? parseInt(this.formData.connected_room_y) : null,
+                connected_room_x: connectedRoomX !== null && connectedRoomX !== undefined && connectedRoomX !== '' ? parseInt(connectedRoomX) : null,
+                connected_room_y: connectedRoomY !== null && connectedRoomY !== undefined && connectedRoomY !== '' ? parseInt(connectedRoomY) : null,
                 connection_direction: this.formData.connection_direction || null
             });
+        },
+        
+        // ============================================
+        // MAP CONNECTION HELPERS
+        // ============================================
+        
+        loadConnectionRoomsForMap(mapId, targetX = null, targetY = null) {
+            if (!mapId) {
+                this.connectionRooms = [];
+                this.formData.connected_room_id = '';
+                return;
+            }
+            
+            EditorBase.send({
+                type: 'getAvailableConnectionRooms',
+                mapId: parseInt(mapId)
+            });
+            
+            // If we have target coordinates, try to find and select that room
+            if (targetX !== null && targetY !== null) {
+                // This will be handled in the message handler after rooms load
+                this.pendingConnectionTarget = { x: targetX, y: targetY };
+            }
+        },
+        
+        selectConnectionRoom(roomId, preserveDirection = false) {
+            if (!roomId) {
+                this.formData.connected_room_x = '';
+                this.formData.connected_room_y = '';
+                this.formData.connection_direction = '';
+                return;
+            }
+            
+            const room = this.connectionRooms.find(r => r.id === parseInt(roomId));
+            if (room) {
+                this.formData.connected_room_x = room.x;
+                this.formData.connected_room_y = room.y;
+                // Only reset direction if not preserving (new selection vs loading existing)
+                if (!preserveDirection) {
+                    this.formData.connection_direction = '';
+                }
+            }
+        },
+        
+        getAvailableDirectionsForConnectionRoom() {
+            // Exit direction is based on the SOURCE room (currently selected room on current map)
+            // We can only use directions where there is NO adjacent room on the current map
+            if (!this.selectedRoom) return [];
+
+            const currentX = this.selectedRoom.x;
+            const currentY = this.selectedRoom.y;
+
+            // Direction offsets: direction -> {dx, dy}
+            const directionOffsets = {
+                'N': { dx: 0, dy: -1 },
+                'S': { dx: 0, dy: 1 },
+                'E': { dx: 1, dy: 0 },
+                'W': { dx: -1, dy: 0 },
+                'NE': { dx: 1, dy: -1 },
+                'NW': { dx: -1, dy: -1 },
+                'SE': { dx: 1, dy: 1 },
+                'SW': { dx: -1, dy: 1 }
+            };
+
+            let availableDirections = [];
+
+            // Check each direction - only include if no room exists in that direction
+            for (const [dir, offset] of Object.entries(directionOffsets)) {
+                const adjacentX = currentX + offset.dx;
+                const adjacentY = currentY + offset.dy;
+
+                // Check if a room exists at the adjacent position on the current map
+                const roomExists = this.rooms.some(r => r.x === adjacentX && r.y === adjacentY);
+
+                if (!roomExists) {
+                    availableDirections.push(dir);
+                }
+            }
+
+            // If we have a current direction set (editing existing connection),
+            // include it in the list even if it's occupied
+            // (because this connection already uses that direction)
+            if (this.formData.connection_direction && !availableDirections.includes(this.formData.connection_direction)) {
+                availableDirections.push(this.formData.connection_direction);
+            }
+
+            // Sort directions consistently: N, S, E, W, then diagonals
+            const order = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'];
+            availableDirections.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
+            return availableDirections;
+        },
+        
+        getDirectionLabel(dir) {
+            const labels = {
+                'N': 'North',
+                'S': 'South',
+                'E': 'East',
+                'W': 'West',
+                'NE': 'Northeast',
+                'NW': 'Northwest',
+                'SE': 'Southeast',
+                'SW': 'Southwest'
+            };
+            return labels[dir] || dir;
+        },
+        
+        getOppositeDirection(dir) {
+            const opposites = {
+                'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E',
+                'NE': 'SW', 'NW': 'SE', 'SE': 'NW', 'SW': 'NE'
+            };
+            return opposites[dir] || dir;
+        },
+        
+        getOppositeDirectionLabel(dir) {
+            return this.getDirectionLabel(this.getOppositeDirection(dir));
+        },
+        
+        getSelectedConnectionRoom() {
+            if (!this.formData.connected_room_id) return null;
+            return this.connectionRooms.find(r => r.id === parseInt(this.formData.connected_room_id)) || null;
+        },
+
+        // Check if the target room has the opposite direction available
+        // Returns true if the reverse connection can be created (no room exists in that direction on target map)
+        isReverseConnectionValid() {
+            if (!this.formData.connection_direction) return true;
+            const targetRoom = this.getSelectedConnectionRoom();
+            if (!targetRoom) return true;
+
+            const oppositeDir = this.getOppositeDirection(this.formData.connection_direction);
+            // Check if the target room has the opposite direction available
+            return targetRoom.availableDirections && targetRoom.availableDirections.includes(oppositeDir);
+        },
+
+        getConnectionRoomName() {
+            const room = this.getSelectedConnectionRoom();
+            return room ? room.name : '';
+        },
+
+        getConnectionRoomCoords() {
+            const room = this.getSelectedConnectionRoom();
+            return room ? `(${room.x}, ${room.y})` : '';
         },
         
         deleteRoom() {
@@ -853,15 +1180,40 @@ window.mapEditor = function() {
                 ctx.fillRect(screenX, screenY, scaledCellSize, scaledCellSize);
             }
             
-            // Draw zoom level
-            ctx.fillStyle = '#00ff00';
+            // Draw info box background
+            const infoLines = [
+                `Zoom: ${(this.zoom * 100).toFixed(0)}%`,
+                `Mode: ${this.editorMode}`,
+                this.currentMap ? `Map: ${this.currentMap.name}` : 'Map: None'
+            ];
+            
             ctx.font = '12px Courier New';
             ctx.textAlign = 'left';
-            ctx.fillText(`Zoom: ${(this.zoom * 100).toFixed(0)}%`, 10, 20);
-            ctx.fillText(`Mode: ${this.editorMode}`, 10, 35);
-            if (this.currentMap) {
-                ctx.fillText(`Map: ${this.currentMap.name}`, 10, 50);
-            }
+            ctx.textBaseline = 'top';
+            
+            // Calculate box dimensions
+            const padding = 8;
+            const lineHeight = 15;
+            const maxWidth = Math.max(...infoLines.map(line => ctx.measureText(line).width));
+            const boxWidth = maxWidth + (padding * 2);
+            const boxHeight = (infoLines.length * lineHeight) + (padding * 2);
+            const boxX = 10;
+            const boxY = 10;
+            
+            // Draw background box
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Draw border
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Draw text
+            ctx.fillStyle = '#00ff00';
+            infoLines.forEach((line, index) => {
+                ctx.fillText(line, boxX + padding, boxY + padding + (index * lineHeight));
+            });
         },
 
         // ============================================
@@ -869,6 +1221,11 @@ window.mapEditor = function() {
         // ============================================
         
         handleCanvasClick(e) {
+            // Ignore middle mouse button clicks (used for panning)
+            if (e.button === 1) {
+                return;
+            }
+            
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -887,7 +1244,68 @@ window.mapEditor = function() {
         },
         
         handleCanvasMouseMove(e) {
-            // Could add hover effects here
+            if (this.isPanning && (e.buttons & 4) === 4) {
+                // Middle mouse button (button 4) is still held down
+                const rect = this.canvas.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const currentY = e.clientY - rect.top;
+                
+                // Calculate pixel delta
+                const deltaX = currentX - this.panStartX;
+                const deltaY = currentY - this.panStartY;
+                
+                // Convert pixel movement to map coordinate movement
+                // Need to account for zoom level
+                const width = this.canvas.width;
+                const height = this.canvas.height;
+                const gridWidth = GRID_SIZE * CELL_SIZE;
+                const gridHeight = GRID_SIZE * CELL_SIZE;
+                const baseScale = Math.min(width / gridWidth, height / gridHeight, 1);
+                const scaledCellSize = CELL_SIZE * baseScale * this.zoom;
+                
+                // Convert pixel delta to map coordinate delta
+                // Negative deltaX means dragging right (pan left in map coords)
+                // Positive deltaY means dragging down (pan down in map coords)
+                const mapDeltaX = -deltaX / scaledCellSize;
+                const mapDeltaY = deltaY / scaledCellSize;
+                
+                // Update pan position
+                this.panX = this.panStartPanX + mapDeltaX;
+                this.panY = this.panStartPanY + mapDeltaY;
+                
+                this.render();
+            }
+        },
+        
+        handleCanvasMouseDown(e) {
+            // Check for middle mouse button (button 1 = left, 2 = right, 4 = middle)
+            if (e.button === 1) {
+                e.preventDefault(); // Prevent default middle-click behavior (scroll)
+                this.isPanning = true;
+                const rect = this.canvas.getBoundingClientRect();
+                this.panStartX = e.clientX - rect.left;
+                this.panStartY = e.clientY - rect.top;
+                this.panStartPanX = this.panX;
+                this.panStartPanY = this.panY;
+                
+                // Change cursor to indicate panning
+                this.canvas.style.cursor = 'grabbing';
+            }
+        },
+        
+        handleCanvasMouseUp(e) {
+            if (e.button === 1) {
+                this.isPanning = false;
+                this.canvas.style.cursor = 'default';
+            }
+        },
+        
+        handleCanvasMouseLeave(e) {
+            // Stop panning if mouse leaves canvas
+            if (this.isPanning) {
+                this.isPanning = false;
+                this.canvas.style.cursor = 'default';
+            }
         },
         
         screenToMapCoords(screenX, screenY) {
@@ -948,10 +1366,45 @@ window.mapEditor = function() {
                     return;
             }
             
-            // Numpad navigation: only works in create mode when a room is selected
-            if (e.code?.startsWith('Numpad') && this.editorMode === 'create' && this.selectedRoom) {
+            // Numpad navigation: works when a room is selected (any mode)
+            if (e.code?.startsWith('Numpad') && this.selectedRoom && !this.selectedRoom.isNew) {
                 e.preventDefault();
+                e.stopPropagation(); // Prevent event from bubbling to other handlers
                 
+                // Map numpad keys to directions
+                const numpadToDirection = {
+                    'Numpad7': 'NW',
+                    'Numpad8': 'N',
+                    'Numpad9': 'NE',
+                    'Numpad4': 'W',
+                    'Numpad6': 'E',
+                    'Numpad1': 'SW',
+                    'Numpad2': 'S',
+                    'Numpad3': 'SE',
+                    'Numpad5': null // No direction
+                };
+                
+                const direction = numpadToDirection[e.code];
+                if (!direction) {
+                    // Numpad5 - just refresh
+                    this.render();
+                    return;
+                }
+                
+                // Check if current room has a map connection in this direction
+                if (this.selectedRoom.connected_map_id && 
+                    this.selectedRoom.connection_direction === direction) {
+                    // This is a map transition - switch to the connected map
+                    const targetMapId = this.selectedRoom.connected_map_id;
+                    const targetX = this.selectedRoom.connected_room_x;
+                    const targetY = this.selectedRoom.connected_room_y;
+                    
+                    // Switch to the connected map with target room coordinates
+                    this.selectMap(targetMapId, { x: targetX, y: targetY });
+                    return;
+                }
+                
+                // Normal same-map navigation
                 // Get current room position
                 const currentX = this.selectedRoom.x;
                 const currentY = this.selectedRoom.y;
@@ -960,37 +1413,34 @@ window.mapEditor = function() {
                 
                 // Calculate new position based on numpad direction
                 switch (e.code) {
-                    case 'Numpad4': // Left
+                    case 'Numpad4': // West
                         newX = currentX - 1;
                         break;
-                    case 'Numpad6': // Right
+                    case 'Numpad6': // East
                         newX = currentX + 1;
                         break;
-                    case 'Numpad8': // Up
+                    case 'Numpad8': // North
                         newY = currentY + 1;
                         break;
-                    case 'Numpad2': // Down
+                    case 'Numpad2': // South
                         newY = currentY - 1;
                         break;
-                    case 'Numpad7': // Up-Left
+                    case 'Numpad7': // Northwest
                         newX = currentX - 1;
                         newY = currentY + 1;
                         break;
-                    case 'Numpad9': // Up-Right
+                    case 'Numpad9': // Northeast
                         newX = currentX + 1;
                         newY = currentY + 1;
                         break;
-                    case 'Numpad1': // Down-Left
+                    case 'Numpad1': // Southwest
                         newX = currentX - 1;
                         newY = currentY - 1;
                         break;
-                    case 'Numpad3': // Down-Right
+                    case 'Numpad3': // Southeast
                         newX = currentX + 1;
                         newY = currentY - 1;
                         break;
-                    case 'Numpad5': // Center (no movement)
-                        this.render();
-                        return;
                     default:
                         return;
                 }
@@ -998,10 +1448,11 @@ window.mapEditor = function() {
                 // Check if room exists at new position
                 const existingRoom = this.rooms.find(r => r.x === newX && r.y === newY);
                 if (existingRoom) {
-                    // Room exists - just navigate to it (no creation)
+                    // Room exists - navigate to it
                     this.selectRoom(existingRoom);
-                } else {
-                    // No room exists - create new room instantly
+                    this.centerOnRoom(existingRoom);
+                } else if (this.editorMode === 'create') {
+                    // No room exists and we're in create mode - create new room
                     if (!this.currentMap) return;
                     this.loading = true;
                     EditorBase.send({
@@ -1014,6 +1465,9 @@ window.mapEditor = function() {
                         room_type: 'normal'
                     });
                     // The room will be created via the roomCreated message handler
+                } else {
+                    // Room doesn't exist and not in create mode - just show notification
+                    this.showNotification(`No room at (${newX}, ${newY})`, 'info');
                 }
                 this.render();
                 return;
@@ -1059,6 +1513,178 @@ window.mapEditor = function() {
             this.panX = 0;
             this.panY = 0;
             this.render();
+        },
+        
+        // ============================================
+        // MAP IMPORT/EXPORT
+        // ============================================
+        
+        exportMap() {
+            if (!this.currentMap) {
+                this.showNotification('No map selected', 'error');
+                return;
+            }
+            
+            this.loading = true;
+            EditorBase.send({
+                type: 'exportMap',
+                mapId: this.currentMap.id
+            });
+        },
+        
+        async validateImportMap() {
+            if (!this.importMapData.jsonData) {
+                this.showNotification('Please paste map JSON data', 'error');
+                return;
+            }
+            
+            try {
+                // Parse JSON to validate structure
+                const parsed = JSON.parse(this.importMapData.jsonData);
+                
+                // Send validation request (we'll need to add a validate endpoint or use import with dry-run)
+                // For now, we'll do basic client-side validation
+                this.importMapData.validationErrors = [];
+                this.importMapData.validationWarnings = [];
+                
+                if (!parsed.format_version) {
+                    this.importMapData.validationErrors.push('Missing format_version field');
+                }
+                if (!parsed.map) {
+                    this.importMapData.validationErrors.push('Missing map field');
+                } else {
+                    if (!parsed.map.name) {
+                        this.importMapData.validationErrors.push('Map name is required');
+                    }
+                }
+                if (!Array.isArray(parsed.rooms)) {
+                    this.importMapData.validationErrors.push('Rooms must be an array');
+                }
+                
+                if (this.importMapData.validationErrors.length === 0) {
+                    this.showNotification('Basic validation passed. Import will perform full validation.', 'success');
+                } else {
+                    this.showNotification('Validation found errors', 'error');
+                }
+            } catch (e) {
+                this.importMapData.validationErrors = ['Invalid JSON: ' + e.message];
+                this.showNotification('Invalid JSON format', 'error');
+            }
+        },
+        
+        loadAvailableConnectionRooms() {
+            if (!this.currentMap) return;
+            EditorBase.send({
+                type: 'getAvailableConnectionRooms',
+                mapId: this.currentMap.id
+            });
+        },
+        
+        openImportDialog() {
+            this.showImportMapDialog = true;
+            // Reset connection map selection
+            this.importMapData.connectionMapId = '';
+            this.availableConnectionRooms = [];
+        },
+        
+        loadImportConnectionRooms(mapId) {
+            if (!mapId) {
+                this.availableConnectionRooms = [];
+                this.importMapData.connectionRoomId = '';
+                return;
+            }
+            
+            EditorBase.send({
+                type: 'getAvailableConnectionRooms',
+                mapId: parseInt(mapId)
+            });
+        },
+        
+        selectImportConnectionRoom(roomId) {
+            if (!roomId) {
+                this.importMapData.connectionDirection = '';
+                return;
+            }
+            
+            // Reset direction to allow user to select from available
+            this.importMapData.connectionDirection = '';
+        },
+        
+        getImportAvailableDirections() {
+            if (!this.importMapData.connectionRoomId) return [];
+            
+            const room = this.availableConnectionRooms.find(r => r.id === parseInt(this.importMapData.connectionRoomId));
+            if (!room) return [];
+            
+            return room.availableDirections || [];
+        },
+        
+        getImportConnectionRoomName() {
+            if (!this.importMapData.connectionRoomId) return '';
+            const room = this.availableConnectionRooms.find(r => r.id === parseInt(this.importMapData.connectionRoomId));
+            return room ? room.name : '';
+        },
+        
+        getImportConnectionRoomCoords() {
+            if (!this.importMapData.connectionRoomId) return '';
+            const room = this.availableConnectionRooms.find(r => r.id === parseInt(this.importMapData.connectionRoomId));
+            return room ? `(${room.x}, ${room.y})` : '';
+        },
+        
+        closeImportDialog() {
+            this.showImportMapDialog = false;
+            // Reset import data
+            this.importMapData = {
+                jsonData: '',
+                entranceRoom: { x: null, y: null },
+                connectionMapId: '',
+                connectionRoomId: '',
+                connectionDirection: '',
+                validationErrors: [],
+                validationWarnings: []
+            };
+            this.availableConnectionRooms = [];
+        },
+        
+        importMap() {
+            if (!this.importMapData.jsonData) {
+                this.showNotification('Please paste map JSON data', 'error');
+                return;
+            }
+            
+            try {
+                // Parse JSON to ensure it's valid
+                const parsed = JSON.parse(this.importMapData.jsonData);
+                
+                // Build import request
+                const importRequest = {
+                    type: 'importMap',
+                    importData: parsed
+                };
+                
+                // Add entrance room if specified
+                if (this.importMapData.entranceRoom.x !== null && 
+                    this.importMapData.entranceRoom.x !== undefined &&
+                    this.importMapData.entranceRoom.y !== null && 
+                    this.importMapData.entranceRoom.y !== undefined) {
+                    importRequest.entranceRoom = {
+                        x: parseInt(this.importMapData.entranceRoom.x),
+                        y: parseInt(this.importMapData.entranceRoom.y)
+                    };
+                }
+                
+                // Add connection if specified
+                if (this.importMapData.connectionMapId && this.importMapData.connectionRoomId && this.importMapData.connectionDirection) {
+                    importRequest.connectionRoomId = parseInt(this.importMapData.connectionRoomId);
+                    importRequest.connectionDirection = this.importMapData.connectionDirection;
+                }
+                
+                this.loading = true;
+                EditorBase.send(importRequest);
+            } catch (e) {
+                this.showNotification('Invalid JSON format: ' + e.message, 'error');
+                this.loading = false;
+            }
         },
 
         // ============================================

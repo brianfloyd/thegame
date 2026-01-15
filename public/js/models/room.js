@@ -104,10 +104,10 @@ export function mapRowToRoom(row) {
         y: row.y ?? 0,
         room_type: row.room_type || row.roomType || 'normal',
         
-        // Map connection fields
+        // Map connection fields (use explicit null check to allow 0 as valid coordinate)
         connected_map_id: row.connected_map_id || null,
-        connected_room_x: row.connected_room_x || null,
-        connected_room_y: row.connected_room_y || null,
+        connected_room_x: row.connected_room_x !== null && row.connected_room_x !== undefined ? row.connected_room_x : null,
+        connected_room_y: row.connected_room_y !== null && row.connected_room_y !== undefined ? row.connected_room_y : null,
         connection_direction: row.connection_direction || null,
         
         // Factory fields (from migration 071)

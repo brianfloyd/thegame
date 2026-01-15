@@ -116,10 +116,27 @@ n, s, e, w, ne, nw, se, sw, u, d
 ```
 
 ### 4.3 Numpad Mapping  
-Numpad keys map to movement (exact mapping left to implementation):
+Numpad keys map to movement:
 
-- `0` = down  
-- `1–9` = directional equivalents  
+- `7` = northwest
+- `8` = north
+- `9` = northeast
+- `4` = west
+- `6` = east
+- `1` = southwest
+- `2` = south
+- `3` = southeast
+- `0` = down
+- `5` = **ignored** (no mapping, prevents text input interference)
+
+**Behavior:**
+- Numpad keys only trigger movement when command input is empty or not focused
+- Unmapped numpad keys (like `5`) are ignored and do not interfere with text input
+- Numpad keys break auto-navigation and path execution when pressed
+
+**Evidence:**
+- `public/js/main.js:593-598` - Numpad mapping definition
+- `public/js/main.js:601-603` - Unmapped numpad keys are ignored with `preventDefault()`  
 
 ### 4.4 Auto-path interruption  
 ANY movement command **immediately cancels auto-navigation loops**, including:
@@ -137,17 +154,44 @@ Quantity handling is universal across commands that involve stackable items:
 - `all` → all of item  
 - `<number>` → specific quantity  
 
-Examples:
+## 5.1 Quantity Position
+
+Quantity can be specified **before OR after** the item name for all item commands:
+
 ```
-take all resin
-drop 10 glimmer
-withdraw 5 pulse resin
-sell all resin
+store 10 pulse resin    (quantity before item - preferred)
+store pulse resin 10    (quantity after item - also supported)
+store pulse resin       (quantity omitted - defaults to 1)
+store all pulse resin   (quantity "all" after item)
 ```
+
+This flexible positioning applies to: `take`, `drop`, `store`, `withdraw`, `buy`, `sell`
+
+**Evidence:**
+- `public/js/main.js:426-436` - Store and withdraw parsing support both positions
+- `public/js/main.js:410-420` - Buy and sell parsing support both positions
+
+## 5.2 Quantity Auto-Adjustment
+
+When a player requests more quantity than available, the system **automatically adjusts** to use all available instead of erroring:
+
+- Requesting `store 10 pulse resin` with only 9 available → stores all 9 with message: "You only have 9 pulse resin. Storing all 9."
+- Requesting `take 50 glimmer` with only 30 available → takes all 30
+- Requesting `sell 100 pulse resin` with only 85 available → sells all 85
+
+This behavior prevents errors and provides better user experience.
+
+**Evidence:**
+- `handlers/game.js:4617-4625` - Store command auto-adjusts quantity
+- `handlers/game.js:1853-1860` - Drop command auto-adjusts quantity
+- `handlers/game.js:4699-4706` - Withdraw command auto-adjusts quantity
+
+## 5.3 Default Quantity
 
 If quantity is omitted:
 ```
 take resin  → defaults to 1
+store resin → defaults to 1
 ```
 
 ---
@@ -163,18 +207,64 @@ Partial-name matching applies to:
 - **harvest targets**
 - **lore keeper NPCs**
 
-Examples:
+## 6.1 Matching Algorithm (Fuzzy Logic)
+
+The item matching system uses a **prioritized scoring algorithm** to find the best matches:
+
+### Match Priority (highest to lowest score):
+
+1. **Exact Match** (score: 1000)
+   - Query exactly matches item name (case-insensitive)
+   - Example: `"pulse resin"` matches `"Pulse Resin"` exactly
+
+2. **Starts-With Match** (score: 800+)
+   - Item name starts with query string
+   - Longer matches get higher scores
+   - Example: `"pulse"` matches `"Pulse Resin"` and `"Pulse Crystal"`
+
+3. **Word-Boundary Match** (score: 600+)
+   - All query words match the start of item words (word-boundary matching)
+   - All query words must match word starts, not just substrings
+   - Example: `"pulse resin"` matches `"Pulse Resin"` (both words match starts)
+   - Example: `"pulse resin"` does NOT match `"Pulse Crystal"` (resin ≠ crystal)
+   - Bonus score when item word count matches query word count
+
+4. **Substring Match** (score: 400+)
+   - Query appears anywhere in item name (lowest priority)
+   - Longer matching substrings get higher scores
+   - Only used if no word-boundary matches found
+
+### Scoring Details:
+
+- Shorter item names are preferred when scores are equal (more specific)
+- Exact matches always win over partial matches
+- Multi-word queries require all words to match for word-boundary scoring
+
+**Evidence:**
+- `handlers/game.js:1660-1726` - `findMatchingItems()` function implements the scoring algorithm
+
+## 6.2 Examples
+
 ```
-take res         → matches “pulse resin”
-harvest rat      → matches “rhythm rat”
-ask keeper clue  → matches “Riddle Keeper of Echoes”
+take res         → matches "Pulse Resin" (word-boundary: "res" matches "resin" start)
+take pulse resin → matches "Pulse Resin" exactly (exact match wins)
+take pulse       → matches "Pulse Resin" and "Pulse Crystal" (ambiguous - both start with "pulse")
+harvest rat      → matches "Rhythm Rat" (word-boundary matching)
+ask keeper clue  → matches "Riddle Keeper of Echoes" (word-boundary matching)
 ```
 
-Rules:
-- case-insensitive  
-- must match *start* of a token  
-- longest unique match wins  
-- ambiguity triggers “be more specific”  
+## 6.3 Ambiguity Resolution
+
+If multiple items match with the same or similar scores:
+- System shows: `"Which did you mean: Pulse Resin, Pulse Crystal?"`
+- Player must be more specific to disambiguate
+- More specific queries (longer, exact matches) resolve ambiguity automatically
+
+**Rules:**
+- Case-insensitive matching
+- Word-boundary matching prevents false matches (e.g., "pulse resin" won't match "pulse crystal")
+- Longest unique match wins when scores are equal
+- Ambiguity triggers "be more specific" message  
 
 ---
 
@@ -184,19 +274,33 @@ Some major command families expressed canonically:
 
 ### 7.1 Items  
 ```
+take [qty] <item>    (quantity optional, can be before or after)
 take <item> [qty]
-drop <item> [qty]
 take all <item>
+drop [qty] <item>
+drop <item> [qty]
 drop all <item>
 ```
 
 ### 7.2 Warehouse  
 ```
+store [qty] <item>    (quantity optional, can be before or after)
 store <item> [qty]
+store all <item>
+withdraw [qty] <item>
 withdraw <item> [qty]
 withdraw all <item>
 warehouse  (opens warehouse widget)
 ```
+
+**Quantity Behavior:**
+- Quantity can be specified before or after item name
+- If quantity > available, automatically uses all available (no error)
+- Default quantity is 1 if omitted
+
+**Evidence:**
+- `public/js/main.js:426-436` - Store/withdraw support flexible quantity positioning
+- `handlers/game.js:4617-4625` - Store auto-adjusts quantity if insufficient
 
 Special letter handling applies:  
 ```
@@ -207,9 +311,19 @@ w <qty/item> = withdraw
 ### 7.3 Merchant  
 ```
 list
+buy [qty] <item>      (quantity optional, can be before or after)
 buy <item> [qty]
+sell [qty] <item>
 sell <item> [qty]
 ```
+
+**Quantity Behavior:**
+- Quantity can be specified before or after item name
+- If quantity > available (for sell), automatically sells all available (no error)
+- Default quantity is 1 if omitted
+
+**Evidence:**
+- `public/js/main.js:410-420` - Buy/sell support flexible quantity positioning
 
 Special letter handling applies:  
 ```

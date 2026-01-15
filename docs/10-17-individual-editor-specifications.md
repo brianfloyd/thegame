@@ -475,10 +475,11 @@ formData: {
     room_type: 'normal',
     factory_tier: 1,             // Only if room_type === 'factory'
     // Map connection fields
-    connected_map_id: '',
-    connected_room_x: '',
-    connected_room_y: '',
-    connection_direction: ''      // N, S, E, W, NE, NW, SE, SW
+    connected_map_id: '',        // Selected map ID
+    connected_room_id: '',       // Selected room ID (converted to x, y on save)
+    connected_room_x: '',        // Auto-filled from selected room
+    connected_room_y: '',        // Auto-filled from selected room
+    connection_direction: ''      // N, S, E, W (filtered by available exits)
 }
 ```
 
@@ -494,12 +495,33 @@ newMapForm: {
 ```javascript
 zoom: 1.0,                       // 0.5 to 5.0
 panX: 0,
-panY: 0
+panY: 0,
+isPanning: false,                // Middle mouse button drag state
+panStartX: 0,
+panStartY: 0,
+panStartPanX: 0,
+panStartPanY: 0
 ```
 
 **Editor Modes:**
 - `'select'` - Select existing rooms
 - `'create'` - Create new rooms
+
+**Import/Export State:**
+```javascript
+importMapData: {
+    jsonData: '',
+    entranceRoom: { x: null, y: null },
+    connectionMapId: '',
+    connectionRoomId: '',
+    connectionDirection: '',
+    validationErrors: [],
+    validationWarnings: []
+}
+availableConnectionRooms: []     // Rooms with available exits for connections
+connectionRooms: []              // Rooms from selected connection map
+pendingRoomSelection: null       // { x, y } - room to select after map loads
+```
 
 **Filters:**
 ```javascript
@@ -526,6 +548,9 @@ filters: {
 - `createRoom` - Create new room
 - `updateRoom` - Update existing room
 - `deleteRoom` - Delete room
+- `importMap` - Import map from canonical JSON format
+- `exportMap` - Export map to canonical JSON format
+- `getAvailableConnectionRooms` - Get rooms from a map with available exits
 
 **WebSocket Messages (Server → Client):**
 - `allMaps` - Map list response
@@ -535,22 +560,33 @@ filters: {
 - `roomUpdated` - Update success
 - `roomDeleted` - Deletion success
 - `mapCreated` - Map creation success
+- `mapImported` - Import success with statistics
+- `mapExported` - Export response with JSON data
+- `availableConnectionRooms` - List of rooms with available exit directions
 - `error` - Error response
 
 **CRUD Operations:**
 - `loadMaps()` - Loads all maps
-- `selectMap(mapId)` - Loads rooms for map
+- `selectMap(mapId, targetRoomCoords)` - Loads rooms for map, optionally selects target room after load
 - `createMap()` - Creates new map
 - `createRoom()` - Creates new room at selected coordinates
 - `saveRoom()` - Updates existing room
 - `deleteRoom()` - Deletes room
+- `exportMap()` - Exports current map to downloadable JSON file
+- `importMap()` - Imports map from JSON with optional connection setup
+- `validateImportMap()` - Validates import data before importing
+- `loadConnectionRoomsForMap(mapId)` - Loads rooms from target map with available exits
+- `loadImportConnectionRooms(mapId)` - Loads rooms for import dialog connection selection
 
 **Canvas Operations:**
-- `render()` - Renders map on canvas
+- `render()` - Renders map on canvas with info box overlay
 - `initCanvas()` - Initializes canvas element
 - `resizeCanvas()` - Resizes canvas to container
 - `handleCanvasClick(e)` - Handles room selection/creation
 - `handleCanvasWheel(e)` - Handles zoom
+- `handleCanvasMouseDown(e)` - Handles middle mouse button for panning
+- `handleCanvasMouseMove(e)` - Handles drag-to-pan with middle mouse button
+- `handleCanvasMouseUp(e)` - Ends panning operation
 - `screenToMapCoords(x, y)` - Converts screen to map coordinates
 
 **References:**
@@ -608,6 +644,13 @@ filters: {
 
 **Room Selection:**
 - Click room in list or canvas → `selectRoom(room)` → `populateRoomForm(room)` → Form ready
+- If room has map connection, connection map's rooms are loaded automatically
+
+**Numpad Navigation:**
+- Select room → Press numpad key (1-9) → Navigate to adjacent room
+- If target room is on different map, automatically switches to that map
+- In 'create' mode, creates new room if target doesn't exist
+- Automatically centers view on target room after navigation
 
 **References:**
 - `public/gameeditors/map-editor.js:360-366` (selectMap)
@@ -624,7 +667,15 @@ filters: {
 **Canvas Rendering:**
 - Custom canvas-based rendering (not using standard HTML/CSS)
 - Handles zoom, pan, grid lines, room rendering
-- Keyboard shortcuts for navigation (arrow keys, numpad)
+- Info box overlay in top-left showing zoom, mode, and map name
+- Keyboard shortcuts for navigation:
+  - Arrow keys - Pan canvas
+  - Numpad keys (1-9) - Navigate between rooms (when room selected)
+  - Numpad navigation automatically switches maps when crossing map connections
+- Mouse controls:
+  - Middle mouse button drag - Pan canvas
+  - Mouse wheel - Zoom in/out
+  - Click - Select/create room
 
 **Room Type Colors:**
 - Loaded from database
@@ -671,15 +722,24 @@ filters: {
 
 ### 3.10 Known Gaps, Missing Features, or TODOs
 
+**Implemented Features:**
+- ✅ Map import/export via WebSocket handlers and MCP tools
+- ✅ Map connection UI with room selection and available exit display
+- ✅ Numpad navigation with automatic map switching
+- ✅ Middle mouse button drag-to-pan
+- ✅ Canvas info box overlay for readability
+
 **Missing Features:**
-- No room import/export
 - No bulk room operations
 - No room templates
-- No validation of map connections
+- No validation of map connections (partial - checks available exits)
 - No room item management in editor (handled separately)
 
 **References:**
-- No implementation found
+- `handlers/mapEditor.js:755-830` - Import/export handlers
+- `database.js:160-320` - Import/export database functions
+- `mcp-test-server/tools/mapImport.js` - MCP tools
+- `public/gameeditors/map-editor.js:1287-1380` - Numpad navigation with map switching
 
 ---
 

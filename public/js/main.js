@@ -600,6 +600,11 @@ document.addEventListener('keydown', (e) => {
     // Check if numpad key
     if (e.key >= '0' && e.key <= '9' && e.location === 3) {
         const directionWord = numpadMap[e.key];
+        // If numpad key is not mapped (e.g., '5'), ignore it and prevent default behavior
+        if (!directionWord) {
+            e.preventDefault();
+            return; // Ignore unmapped numpad keys (like 5)
+        }
         if (directionWord) {
             // Don't trigger if a ticket dialog is open
             const zorkTicketDialog = document.getElementById('zorkTicketDialog');

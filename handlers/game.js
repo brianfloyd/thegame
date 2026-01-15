@@ -65,8 +65,9 @@ async function getConnectedMapData(db, currentRoom, colorMap) {
       mapId: r.map_id,
       roomType: r.room_type || 'normal',
       connected_map_id: r.connected_map_id || null,
-      connected_room_x: r.connected_room_x || null,
-      connected_room_y: r.connected_room_y || null,
+      // Use explicit null check to allow 0 as valid coordinate
+      connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+      connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
       connection_direction: r.connection_direction || null
     }));
     
@@ -574,8 +575,9 @@ async function authenticateSession(ctx, data) {
     mapId: r.map_id,
     roomType: r.room_type || 'normal',
     connected_map_id: r.connected_map_id || null,
-    connected_room_x: r.connected_room_x || null,
-    connected_room_y: r.connected_room_y || null,
+    // Use explicit null check to allow 0 as valid coordinate
+    connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+    connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
     connection_direction: r.connection_direction || null
   }));
   
@@ -1187,8 +1189,9 @@ async function move(ctx, data) {
         mapId: r.map_id,
         roomType: r.room_type || 'normal',
         connected_map_id: r.connected_map_id || null,
-        connected_room_x: r.connected_room_x || null,
-        connected_room_y: r.connected_room_y || null,
+        // Use explicit null check to allow 0 as valid coordinate
+        connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+        connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
         connection_direction: r.connection_direction || null
       }));
       
@@ -6974,8 +6977,9 @@ async function getMapData(ctx, data) {
       mapId: r.map_id,
       roomType: r.room_type || 'normal',
       connected_map_id: r.connected_map_id || null,
-      connected_room_x: r.connected_room_x || null,
-      connected_room_y: r.connected_room_y || null,
+      // Use explicit null check to allow 0 as valid coordinate
+      connected_room_x: r.connected_room_x !== null && r.connected_room_x !== undefined ? r.connected_room_x : null,
+      connected_room_y: r.connected_room_y !== null && r.connected_room_y !== undefined ? r.connected_room_y : null,
       connection_direction: r.connection_direction || null
     }));
 

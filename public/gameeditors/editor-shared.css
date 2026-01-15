@@ -10,10 +10,13 @@
     flex-direction: column;
     height: 100vh;
     width: 100vw;
+    max-width: 100vw;
+    max-height: 100vh;
     background: #0a0a0a;
     color: #00ff00;
     font-family: 'Courier New', monospace;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 /* =============================
@@ -77,19 +80,79 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+    min-width: 0; /* Allow flex items to shrink below content size */
+    min-height: 0; /* Allow flex items to shrink below content size */
+}
+
+/* Map Editor specific layout */
+.map-editor-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+}
+
+.editor-canvas-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+.editor-canvas-pane canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.canvas-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    z-index: 10;
+}
+
+.canvas-control-btn {
+    padding: 5px 10px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.canvas-control-btn:hover {
+    background: rgba(0, 255, 0, 0.2);
 }
 
 /* =============================
    LIST PANE
    ============================= */
 .editor-list-pane {
-    width: 25%;
+    flex: 0 0 25%;
     min-width: 280px;
     max-width: 400px;
     display: flex;
     flex-direction: column;
     border-right: 2px solid #333;
     background: #080808;
+    overflow: hidden;
+    min-width: 0; /* Allow shrinking */
 }
 
 .list-header {
@@ -254,12 +317,16 @@
    DETAIL PANE
    ============================= */
 .editor-detail-pane {
-    flex: 1;
+    flex: 0 0 30%;
+    min-width: 300px;
+    max-width: 500px;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 20px;
     background: #0a0a0a;
+    min-width: 0; /* Allow shrinking */
 }
 
 .empty-detail {
